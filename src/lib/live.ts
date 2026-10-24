@@ -49,6 +49,7 @@ type RheaRow = {
 };
 
 const candles = new Map<string, Candle[]>();
+const candleAt = new Map<string, number>();
 const prints = new Map<string, Print[]>();
 let nearMcap = 0;
 let nearMcapAt = 0;
@@ -101,20 +102,60 @@ function llamaId(symbol: string) {
   return contract ? `near:${contract}` : "";
 }
 
+const PAGE = 500;
+type Book = { points: Point[]; from: number; exhausted: boolean };
+const books = new Map<string, Book>();
+const tails = new Map<string, Promise<unknown>>();
+const firstSeen = new Map<string, number>();
+
 function historyPlan(frame: string) {
-  if (frame === "1m" || frame === "5m") return { period: "5m", step: 300, chunks: 12 };
-  if (frame === "15m") return { period: "15m", step: 900, chunks: 8 };
-  if (frame === "1H") return { period: "1h", step: 3600, chunks: 10 };
-  if (frame === "4H") return { period: "4h", step: 4 * 3600, chunks: 10 };
-  return { period: "1d", step: 86400, chunks: 8 };
+  // DefiLlama has no regular 1-minute book. 1m rides the finest real series, which is 5m.
+  if (frame === "1m" || frame === "5m") return { period: "5m", step: 300, search: 1_800 };
+  if (frame === "15m") return { period: "15m", step: 900, search: 3_600 };
+  if (frame === "1H") return { period: "1h", step: 3600, search: 7_200 };
+  if (frame === "4H") return { period: "4h", step: 4 * 3600, search: 86_400 };
+  return { period: "1d", step: 86400, search: 172_800 };
 }
 
-async function llamaSeries(id: string, start: number, span: number, period: string) {
-  const response = await fetch(`${LLAMA}/chart/${id}?start=${Math.floor(start)}&span=${span}&period=${period}`);
+function enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
+  const prev = tails.get(key) ?? Promise.resolve();
+  const run = prev.then(task, task);
+  tails.set(
+    key,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
+
+async function llamaSeries(id: string, start: number, period: string, search: number) {
+  const response = await fetch(
+    `${LLAMA}/chart/${id}?start=${Math.floor(start)}&span=${PAGE}&period=${period}&searchWidth=${search}`,
+  );
+  if (response.status === 429 || response.status >= 500) return null;
   if (!response.ok) return [] as Point[];
   const body = (await response.json()) as { coins?: Record<string, { prices?: Point[] }> };
   const coin = body.coins?.[id] ?? Object.values(body.coins ?? {})[0];
   return coin?.prices ?? [];
+}
+
+async function earliest(id: string) {
+  const cached = firstSeen.get(id);
+  if (cached != null) return cached;
+  try {
+    const response = await fetch(`${LLAMA}/prices/first/${id}`);
+    if (!response.ok) return null;
+    const body = (await response.json()) as { coins?: Record<string, { timestamp?: number }> };
+    const row = body.coins?.[id] ?? Object.values(body.coins ?? {})[0];
+    const ts = Number(row?.timestamp);
+    const value = Number.isFinite(ts) && ts > 0 ? ts : 0;
+    firstSeen.set(id, value);
+    return value;
+  } catch {
+    return null;
+  }
 }
 
 function mergePoints(parts: Point[][]) {
@@ -129,7 +170,21 @@ function mergePoints(parts: Point[][]) {
     .map(([timestamp, price]) => ({ timestamp, price }));
 }
 
+function publishBook(key: string, book: Book) {
+  const next = book.points.length > 1 ? toCandles(book.points) : [];
+  candles.set(key, next);
+  candleAt.set(key, Date.now());
+  useDesk.setState((state) => ({ clock: state.clock + 1 }));
+  return next;
+}
+
+export function candleMeta(symbol: string, frame = "5m") {
+  const book = books.get(`${symbol}:${frame}`);
+  return { bars: book?.points.length ?? 0, from: book?.from ?? 0, exhausted: Boolean(book?.exhausted) };
+}
+
 const historyFlight = new Map<string, Promise<Candle[]>>();
+const olderFlight = new Map<string, Promise<boolean>>();
 
 export async function loadCandles(symbol: string, frame = "5m") {
   const key = `${symbol}:${frame}`;
@@ -138,7 +193,7 @@ export async function loadCandles(symbol: string, frame = "5m") {
   if (cached && cached.length > 1 && Date.now() - stamp < 20_000) return cached;
   const pending = historyFlight.get(key);
   if (pending) return pending;
-  const job = fetchCandles(symbol, frame, key).finally(() => historyFlight.delete(key));
+  const job = enqueue(key, () => fetchCandles(symbol, frame, key)).finally(() => historyFlight.delete(key));
   historyFlight.set(key, job);
   return job;
 }
@@ -148,20 +203,81 @@ async function fetchCandles(symbol: string, frame: string, key: string) {
   if (!id) return candles.get(key) ?? [];
   const plan = historyPlan(frame);
   const now = Math.floor(Date.now() / 1000);
-  const count = Math.min(plan.chunks, Math.max(1, Math.ceil((now - ORIGIN) / (500 * plan.step))));
-  const parts = await Promise.all(
-    Array.from({ length: count }, (_, index) => {
-      const start = now - (index + 1) * 500 * plan.step;
-      return llamaSeries(id, Math.max(ORIGIN, start), 500, plan.period).catch(() => [] as Point[]);
-    }),
-  );
-  const points = mergePoints(parts);
-  if (points.length < 2) return candles.get(key) ?? [];
-  const next = toCandles(points);
-  candles.set(key, next);
-  candleAt.set(key, Date.now());
-  useDesk.setState((state) => ({ clock: state.clock + 1 }));
-  return next;
+  let book = books.get(key);
+  if (!book) {
+    book = { points: [], from: now, exhausted: false };
+    books.set(key, book);
+  }
+  const pages = book.points.length > 1 ? 1 : 2;
+  const parts: Point[][] = [];
+  let cursor = now;
+  let reached = book.from;
+  for (let i = 0; i < pages; i++) {
+    const start = Math.max(ORIGIN, cursor - PAGE * plan.step);
+    const part = await llamaSeries(id, start, plan.period, plan.search);
+    if (part == null) break;
+    parts.push(part);
+    cursor = start;
+    reached = start;
+    if (start <= ORIGIN) break;
+  }
+  if (!parts.length) return candles.get(key) ?? [];
+  if (book.points.length === 0) book.from = reached;
+  book.points = mergePoints([book.points, ...parts]);
+  if (book.points.length < 2) return candles.get(key) ?? [];
+  return publishBook(key, book);
+}
+
+export function loadOlderCandles(symbol: string, frame = "5m") {
+  const key = `${symbol}:${frame}`;
+  if (books.get(key)?.exhausted) return Promise.resolve(false);
+  const pending = olderFlight.get(key);
+  if (pending) return pending;
+  const job = enqueue(key, () => olderCandles(symbol, frame, key)).finally(() => olderFlight.delete(key));
+  olderFlight.set(key, job);
+  return job;
+}
+
+async function olderCandles(symbol: string, frame: string, key: string) {
+  const id = llamaId(symbol);
+  if (!id) return false;
+  if (!books.get(key)) await fetchCandles(symbol, frame, key);
+  const book = books.get(key);
+  if (!book || book.exhausted) return false;
+  const plan = historyPlan(frame);
+  const born = await earliest(id);
+  if (born == null) return false;
+  if (born <= 0) {
+    book.exhausted = true;
+    if (book.points.length > 1) publishBook(key, book);
+    return false;
+  }
+  let added = 0;
+  let filled = 0;
+  for (let n = 0; n < 4; n++) {
+    if (book.from <= born + plan.step || book.from <= ORIGIN + plan.step) {
+      book.exhausted = true;
+      break;
+    }
+    const start = Math.max(ORIGIN, book.from - PAGE * plan.step);
+    if (start >= book.from) {
+      book.exhausted = true;
+      break;
+    }
+    const part = await llamaSeries(id, start, plan.period, plan.search);
+    if (part == null) break;
+    const before = book.points.length;
+    book.points = mergePoints([book.points, part]);
+    const grew = book.points.length - before;
+    added += grew;
+    book.from = start;
+    if (grew > 0) filled += 1;
+    if (start <= born || start <= ORIGIN) book.exhausted = true;
+    if (filled >= 2 || book.exhausted) break;
+  }
+  if (book.points.length > 1) publishBook(key, book);
+  else useDesk.setState((state) => ({ clock: state.clock + 1 }));
+  return added > 0;
 }
 
 export function watchCandles(symbol: string, frame: string) {
@@ -176,8 +292,6 @@ export function watchCandles(symbol: string, frame: string) {
     window.clearInterval(timer);
   };
 }
-
-const candleAt = new Map<string, number>();
 
 async function llamaSpot() {
   const ids = [...new Set(Object.values(COINGECKO))];

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Search, ShieldAlert } from "lucide-react";
 import { CandleChart, type ChartHover } from "@/components/terminal/CandleChart";
 import { SecurityGate } from "@/components/terminal/SecurityGate";
@@ -18,7 +18,7 @@ import {
   type Token,
 } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
-import { liveCandles, livePrints, loadHolders, loadPrints, watchCandles, type HolderRow } from "@/lib/live";
+import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, watchCandles, type HolderRow } from "@/lib/live";
 import { searchNearTokens } from "@/lib/dex";
 import { executeIntent, quoteIntent, type IntentQuote } from "@/lib/intents";
 
@@ -62,6 +62,11 @@ export function TokenTrade({
 
   const last = scale === "price" ? (mark ?? token.price) : token.mcapN;
   const series = scale === "price" ? liveCandles(symbol, frame) : undefined;
+  const history = candleMeta(symbol, frame);
+  const needOlder = useCallback(() => {
+    if (scale !== "price") return;
+    void loadOlderCandles(symbol, frame);
+  }, [symbol, frame, scale]);
   const bars = series && series.length > 1 ? series : [];
   const open = bars[0] ?? { o: last, h: last, l: last, c: last };
   const close = bars[bars.length - 1] ?? open;
@@ -152,7 +157,18 @@ export function TokenTrade({
             )}
           </p>
           <div className="px-3 py-3 sm:px-0 sm:py-0">
-            <CandleChart seed={`${symbol}-${frame}-${scale}`} last={last} frame={frame} compact={scale === "mcap"} live={scale === "price" ? mark : undefined} series={series} onHover={setHover} />
+            <CandleChart
+              seed={`${symbol}-${frame}-${scale}`}
+              last={last}
+              frame={frame}
+              compact={scale === "mcap"}
+              live={scale === "price" ? mark : undefined}
+              series={series}
+              historyEnded={history.exhausted}
+              historyTick={history.from}
+              onHover={setHover}
+              onNeedHistory={scale === "price" ? needOlder : undefined}
+            />
           </div>
         </section>
         <div className="order-2 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-stretch">

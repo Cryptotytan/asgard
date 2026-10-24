@@ -1,10 +1,10 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Check, ShieldAlert } from "lucide-react";
 import { CandleChart } from "@/components/terminal/CandleChart";
 import { TokenIcon, TokenPicker } from "@/components/terminal/TokenIcon";
 import { fmt, scoreLabel, tokenBySymbol, usd, type Print } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
-import { liveCandles, livePrints, loadPrints, watchCandles } from "@/lib/live";
+import { candleMeta, liveCandles, livePrints, loadOlderCandles, loadPrints, watchCandles } from "@/lib/live";
 import { executeIntent } from "@/lib/intents";
 
 const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"];
@@ -18,6 +18,10 @@ export function ChartDesk({ mode, symbol, onSymbol }: { mode: "spot" | "perp"; s
   const [picker, setPicker] = useState(false);
   const [book, setBook] = useState<"Trades" | "Positions" | "Orders">("Trades");
   const series = liveCandles(symbol, frame);
+  const history = candleMeta(symbol, frame);
+  const needOlder = useCallback(() => {
+    void loadOlderCandles(symbol, frame);
+  }, [symbol, frame]);
   const bars = series && series.length > 1 ? series : [];
   const prints = livePrints(symbol) ?? [];
   useEffect(() => watchCandles(symbol, frame), [symbol, frame]);
@@ -80,7 +84,7 @@ export function ChartDesk({ mode, symbol, onSymbol }: { mode: "spot" | "perp"; s
             {((delta / open.o) * 100).toFixed(2)}%)
           </span>
         </p>
-        <CandleChart seed={`${symbol}-${frame}`} last={mark} frame={frame} series={series} />
+        <CandleChart seed={`${symbol}-${frame}`} last={mark} frame={frame} series={series} historyEnded={history.exhausted} historyTick={history.from} onNeedHistory={needOlder} />
         <div className="mt-2 flex gap-1 overflow-auto">
           {(["Trades", "Positions", "Orders"] as const).map((item) => (
             <button
