@@ -1,4 +1,5 @@
 import { ensureToken, LEND_MARKETS, money, TOKENS, type Candle, type Print, type WindowId } from "@/lib/market";
+import { iconFor, loadIconBook, syncNearMarkets } from "@/lib/dex";
 import { useDesk } from "@/lib/store";
 
 const LLAMA = "https://coins.llama.fi";
@@ -40,6 +41,7 @@ const CONTRACTS: Record<string, string> = {
 type Point = { timestamp: number; price: number };
 type RheaRow = {
   symbol?: string;
+  token?: string;
   price?: number | string;
   supply_apy?: string;
   borrow_apy?: string;
@@ -76,7 +78,7 @@ function at(points: Point[], msAgo: number) {
 function toCandles(points: Point[]): Candle[] {
   return points.map((point, index) => {
     const prev = points[index - 1]?.price ?? point.price;
-    return { o: prev, h: Math.max(prev, point.price), l: Math.min(prev, point.price), c: point.price };
+    return { t: point.timestamp, o: prev, h: Math.max(prev, point.price), l: Math.min(prev, point.price), c: point.price };
   });
 }
 
@@ -109,15 +111,14 @@ async function nearCap() {
   return nearMcap;
 }
 
-function applyWindows(token: (typeof TOKENS)[number], series: Point[] | undefined, recent: Point[] | undefined, price: number) {
-  const points = recent && recent.length > 1 ? recent : series;
-  if (points && points.length > 1) candles.set(token.symbol, toCandles(points));
+function applyWindows(token: (typeof TOKENS)[number], series: Point[] | undefined, price: number) {
+  if (series && series.length > 1) candles.set(token.symbol, toCandles(series));
   if (!series || series.length < 2) return;
   const last = series.at(-1)!.price || price;
   token.windows = {
-    m5: pct(recent?.at(-1)?.price ?? last, recent?.at(-2)?.price),
+    m5: pct(last, series.at(-2)?.price),
     h1: pct(last, at(series, 60 * 60 * 1000)),
-    h4: pct(last, at(series, 4 * 60 * 60 * 1000)),
+    h6: pct(last, at(series, 6 * 60 * 60 * 1000)),
     h24: pct(last, series[0]?.price),
   } satisfies Record<WindowId, number>;
   token.change = token.windows.h24;
@@ -140,11 +141,12 @@ function paint(token: (typeof TOKENS)[number], price: number, liqUsd?: number) {
 export async function refreshLive() {
   const now = Math.floor(Date.now() / 1000);
   const ids = [...new Set(Object.values(COINGECKO))];
-  const [day, hour, rows, cap] = await Promise.all([
+  const [fine, coarse, rows, cap, icons] = await Promise.all([
+    llamaChart(ids, 288, "5m", now - 24 * 3600),
     llamaChart(ids, 48, "30m", now - 24 * 3600),
-    llamaChart(ids, 12, "5m", now - 3600),
     rheaRows().catch(() => [] as RheaRow[]),
     nearCap().catch(() => 0),
+    loadIconBook().catch(() => new Map<string, string>()),
   ]);
   const marks: Record<string, number> = {};
   const rheaBySymbol = new Map<string, RheaRow>();
@@ -156,20 +158,19 @@ export async function refreshLive() {
   for (const [symbol, row] of rheaBySymbol) {
     const price = Number(row.price);
     if (!Number.isFinite(price) || price <= 0) continue;
-    if (!TOKENS.some((token) => token.symbol === symbol) && Number(row.available_liquidity_price) > 10_000) {
-      ensureToken({ symbol, name: symbol, price, chain: "NEAR" });
-    }
+    const icon = iconFor(row.token, symbol) || undefined;
+    ensureToken({ symbol, name: symbol, price, chain: "NEAR", icon, address: row.token });
   }
   for (const token of TOKENS) {
     const id = COINGECKO[token.symbol] ?? COINGECKO[token.symbol.toUpperCase()];
-    const series = id ? day[id] : undefined;
-    const recent = id ? hour[id] : undefined;
+    const fineSeries = id ? fine[id] : undefined;
+    const series = fineSeries && fineSeries.length > 2 ? fineSeries : id ? coarse[id] : undefined;
     const row = rheaBySymbol.get(token.symbol) ?? rheaBySymbol.get(token.symbol.toUpperCase());
-    let price = series?.at(-1)?.price ?? recent?.at(-1)?.price ?? Number(row?.price);
+    let price = series?.at(-1)?.price ?? Number(row?.price);
     if (price == null || !Number.isFinite(price) || price <= 0) continue;
     const liq = Number(row?.available_liquidity_price);
     paint(token, price, Number.isFinite(liq) ? liq : undefined);
-    applyWindows(token, series, recent, price);
+    applyWindows(token, series, price);
     if (token.symbol === "NEAR" && cap > 0) {
       token.mcapN = cap;
       token.mcap = money(cap);
@@ -186,8 +187,10 @@ export async function refreshLive() {
     .filter((market) => market.supplyApy > 0 || market.borrowApy > 0)
     .sort((a, b) => b.supplyApy - a.supplyApy);
   if (lend.length) {
-    LEND_MARKETS.splice(0, LEND_MARKETS.length, ...lend.slice(0, 8));
+    LEND_MARKETS.splice(0, LEND_MARKETS.length, ...lend);
   }
+  const dexMarks = await syncNearMarkets(icons).catch(() => ({}) as Record<string, number>);
+  Object.assign(marks, dexMarks);
   if (Object.keys(marks).length) {
     useDesk.setState((state) => ({ marks: { ...state.marks, ...marks }, clock: state.clock + 1 }));
   }

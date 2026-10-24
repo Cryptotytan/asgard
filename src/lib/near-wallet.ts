@@ -53,6 +53,10 @@ export async function connectHereWallet() {
   await connectNamed("here-wallet");
 }
 
+export async function connectSelectorWallet(id: "intear-wallet" | "here-wallet" | "meteor-wallet" | "hot-wallet" | "nightly" | "sender") {
+  await connectNamed(id);
+}
+
 export async function connectReadOnly(raw: string) {
   const accountId = raw.trim().toLowerCase();
   if (!/^[a-z0-9._-]{2,64}$/.test(accountId)) throw new Error("Enter a NEAR account such as name.near.");
@@ -65,7 +69,7 @@ export async function connectReadOnly(raw: string) {
   await syncWallet(accountId);
 }
 
-async function connectNamed(id: "intear-wallet" | "here-wallet") {
+async function connectNamed(id: "intear-wallet" | "here-wallet" | "meteor-wallet" | "hot-wallet" | "nightly" | "sender") {
   await boot();
   const selector = await selectorPromise;
   if (!selector) throw new Error("Wallet selector did not start.");

@@ -87,9 +87,9 @@ export function LendDesk() {
   }
 
   return (
-    <div className="mx-auto flex h-full max-h-full min-h-0 w-full max-w-5xl items-center overflow-hidden">
-      <section className="deck panel max-h-full w-full overflow-hidden p-3 sm:p-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col pb-3">
+      <section className="deck panel flex min-h-0 w-full flex-1 flex-col p-3 sm:p-4">
+        <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
           <div>
             <p className="text-[10px] uppercase tracking-[0.18em] text-muted">Money market</p>
             <h2 className="text-base font-semibold sm:text-xl">Supply and borrow</h2>
@@ -105,7 +105,7 @@ export function LendDesk() {
             </div>
           </div>
         </div>
-        <label className="mt-2 flex items-center gap-3 text-[10px] uppercase tracking-wide text-muted">
+        <label className="mt-2 flex shrink-0 items-center gap-3 text-[10px] uppercase tracking-wide text-muted">
           Amount
           <input
             inputMode="decimal"
@@ -114,13 +114,13 @@ export function LendDesk() {
             className="h-9 min-w-0 flex-1 rounded-xl border border-line bg-bg px-3 font-mono text-base normal-case text-fg outline-none sm:max-w-xs"
           />
         </label>
-        <ul className="lift-deck mt-2 space-y-1.5">
+        <ul className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-1">
           {LEND_MARKETS.length === 0 && <li className="rounded-xl border border-line bg-bg p-4 text-sm text-muted">Loading live supply and borrow rates from Rhea.</li>}
           {LEND_MARKETS.map((market) => (
             <li key={market.symbol}>
               <div
                 onClick={() => setPicked(market.symbol)}
-                className={`lift rounded-xl border border-line bg-bg p-2 ${picked === market.symbol ? "is-up" : ""}`}
+                className={`rounded-xl border bg-bg p-2 ${picked === market.symbol ? "border-primary" : "border-line"}`}
               >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2">
@@ -147,7 +147,7 @@ export function LendDesk() {
             </li>
           ))}
         </ul>
-        <p className="mt-2 text-[11px] text-muted">Rates are live from Rhea. Supply and withdraw still settle through NEAR Intents into stNEAR. Borrow stays inside the 70% line.{note ? ` ${note}` : ""}</p>
+        <p className="mt-2 shrink-0 text-[11px] text-muted">Rates are live from Rhea. Supply and withdraw still settle through NEAR Intents into stNEAR. Borrow stays inside the 70% line.{note ? ` ${note}` : ""}</p>
       </section>
     </div>
   );

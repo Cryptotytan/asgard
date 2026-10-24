@@ -10,7 +10,7 @@ export type Safety = {
   holders: string;
 };
 
-export type WindowId = "m5" | "h1" | "h4" | "h24";
+export type WindowId = "m5" | "h1" | "h6" | "h24";
 
 export type Token = {
   symbol: string;
@@ -39,6 +39,9 @@ export type Token = {
   sells: number;
   holdersN: number;
   windows: Record<WindowId, number>;
+  volBy: Record<WindowId, number>;
+  address?: string;
+  listed?: boolean;
   kind: "major" | "defi" | "meme";
 };
 
@@ -60,12 +63,12 @@ export type Quote = {
   score: number;
 };
 
-export type Candle = { o: number; h: number; l: number; c: number };
+export type Candle = { o: number; h: number; l: number; c: number; t?: number };
 
 export const WINDOWS: { id: WindowId; label: string }[] = [
   { id: "m5", label: "5M" },
   { id: "h1", label: "1H" },
-  { id: "h4", label: "4H" },
+  { id: "h6", label: "6H" },
   { id: "h24", label: "24H" },
 ];
 
@@ -120,7 +123,7 @@ function tilt(key: string) {
   return h;
 }
 
-function glyph(symbol: string, hue: number) {
+export function glyph(symbol: string, hue: number) {
   const h = tilt(symbol);
   const fg = `hsl(${hue} 72% 58%)`;
   const bg = `hsl(${hue} 28% 14%)`;
@@ -198,11 +201,12 @@ function coin(d: Draft): Token {
     sells: d.txnsN - buys,
     holdersN: d.holdersN,
     windows: d.windows,
+    volBy: { m5: 0, h1: 0, h6: 0, h24: d.volN },
     kind: d.kind,
   };
 }
 
-const w = (m5: number, h1: number, h4: number, h24: number): Record<WindowId, number> => ({ m5, h1, h4, h24 });
+const w = (m5: number, h1: number, h6: number, h24: number): Record<WindowId, number> => ({ m5, h1, h6, h24 });
 
 export const TOKENS: Token[] = [
   coin({
@@ -941,15 +945,39 @@ for (const token of TOKENS) {
   token.supply = "—";
   token.change = 0;
   token.price = Number.NaN;
-  token.windows = { m5: 0, h1: 0, h4: 0, h24: 0 };
+  token.windows = { m5: 0, h1: 0, h6: 0, h24: 0 };
+  token.volBy = { m5: 0, h1: 0, h6: 0, h24: 0 };
+  token.listed = false;
   token.score = 0;
   token.safety = { top10: 0, insiders: 0, snipers: 0, bundlers: 0, dev: 0, lp: 0, buyTax: 0, sellTax: 0, holders: "—" };
   token.notes = ["DefiLlama price", "Rhea liquidity when the asset is listed"];
 }
 
-export function ensureToken(input: { symbol: string; name: string; price: number; chain?: string; icon?: string }) {
-  const found = TOKENS.find((token) => token.symbol.toUpperCase() === input.symbol.toUpperCase());
-  if (found) return found;
+export function isGeneratedIcon(icon: string | undefined) {
+  return !icon || icon.startsWith("data:image/svg+xml;utf8,");
+}
+
+export function preferIcon(current: string, incoming?: string) {
+  if (!incoming) return current;
+  if (incoming.startsWith("javascript:")) return current;
+  const real = incoming.startsWith("https://") || incoming.startsWith("/tokens/") || incoming.startsWith("data:image/");
+  if (!real) return current;
+  if (current.startsWith("/tokens/") && !incoming.startsWith("https://cdn.dexscreener.com/")) return current;
+  if (isGeneratedIcon(current)) return incoming;
+  if (incoming.startsWith("https://") && !current.startsWith("https://") && !current.startsWith("/tokens/")) return incoming;
+  return current;
+}
+
+export function ensureToken(input: { symbol: string; name: string; price: number; chain?: string; icon?: string; address?: string }) {
+  const found =
+    (input.address ? TOKENS.find((token) => token.address === input.address) : undefined) ??
+    TOKENS.find((token) => token.symbol.toUpperCase() === input.symbol.toUpperCase());
+  if (found) {
+    if (input.address) found.address = input.address;
+    if (input.icon) found.icon = preferIcon(found.icon, input.icon);
+    if (Number.isFinite(input.price) && input.price > 0 && !Number.isFinite(found.price)) found.price = input.price;
+    return found;
+  }
   const token = coin({
     symbol: input.symbol,
     name: input.name,
@@ -965,14 +993,15 @@ export function ensureToken(input: { symbol: string; name: string; price: number
     buyShare: 0.5,
     holdersN: 0,
     windows: w(0, 0, 0, 0),
-    verified: true,
+    verified: false,
     score: 0,
-    notes: ["Rhea money market"],
+    notes: ["DexScreener"],
     safety: { ...clean, top10: 0, insiders: 0, snipers: 0, bundlers: 0, dev: 0, lp: 0, holders: "—" },
     supply: "—",
     fdvN: 0,
     kind: "defi",
   });
+  token.address = input.address;
   token.mcap = "—";
   token.fdv = "—";
   token.liquidity = "—";

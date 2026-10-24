@@ -523,7 +523,7 @@ function Ticket({
   const windows = [
     ["5M", token.windows.m5],
     ["1H", token.windows.h1],
-    ["4H", token.windows.h4],
+    ["6H", token.windows.h6],
     ["24H", token.windows.h24],
   ] as const;
 

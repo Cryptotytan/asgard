@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { CHAIN_ICON, fmt, TOKENS, usd, type Token } from "@/lib/market";
+import { CHAIN_ICON, fmt, glyph, TOKENS, usd, type Token } from "@/lib/market";
 
 if (typeof window !== "undefined") {
   for (const token of TOKENS) {
@@ -19,20 +19,24 @@ if (typeof window !== "undefined") {
 export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "symbol">; className?: string }) {
   const seen = useRef(token.symbol);
   const [turn, setTurn] = useState<"a" | "b" | null>(null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
+    setFailed(false);
     if (seen.current === token.symbol) return;
     seen.current = token.symbol;
     setTurn((current) => (current === "a" ? "b" : "a"));
-  }, [token.symbol]);
+  }, [token.symbol, token.icon]);
+  const src = !failed && token.icon ? token.icon : glyph(token.symbol, 150);
   return (
     <span className={cn("icon-flip", turn && `is-${turn}`)}>
       <img
-        src={token.icon}
+        src={src}
         alt=""
         width={24}
         height={24}
         decoding="async"
         loading="eager"
+        onError={() => setFailed(true)}
         className={cn("size-6 shrink-0 rounded-full bg-surface-2 object-cover", className)}
       />
     </span>

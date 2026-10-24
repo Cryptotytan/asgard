@@ -111,26 +111,24 @@ export function Terminal() {
     }
   }
 
-  async function pickWallet(kind: "intear" | "here" | "more") {
+  async function pickWallet(kind: "intear" | "here" | "meteor" | "hot" | "nightly" | "sender") {
     setWalletError("");
+    const ids = {
+      intear: "intear-wallet",
+      here: "here-wallet",
+      meteor: "meteor-wallet",
+      hot: "hot-wallet",
+      nightly: "nightly",
+      sender: "sender",
+    } as const;
     try {
-      if (kind === "intear") {
-        const { connectIntearWallet } = await import("@/lib/near-wallet");
-        await connectIntearWallet();
-        setWalletOpen(false);
-        return;
-      }
-      if (kind === "here") {
-        const { connectHereWallet } = await import("@/lib/near-wallet");
-        await connectHereWallet();
-        setWalletOpen(false);
-        return;
-      }
-      const { openNearWallets } = await import("@/lib/near-wallet");
-      await openNearWallets();
+      const { connectSelectorWallet } = await import("@/lib/near-wallet");
+      await connectSelectorWallet(ids[kind]);
       setWalletOpen(false);
     } catch (error) {
-      setWalletError(error instanceof Error ? error.message : "Wallet did not open");
+      const message = error instanceof Error ? error.message : "Wallet did not open";
+      if (/closed/i.test(message)) return;
+      setWalletError(message);
     }
   }
 
@@ -272,7 +270,7 @@ export function Terminal() {
           </div>
         )}
         {view === "lend" && (
-          <div className="flex h-full min-h-0 flex-1 items-center overflow-hidden px-2 py-2 sm:px-4 sm:py-3">
+          <div className="flex h-full min-h-0 flex-1 overflow-hidden px-2 py-2 sm:px-4 sm:py-3">
             <LendDesk />
           </div>
         )}
@@ -331,44 +329,52 @@ function WalletSheet({
 }: {
   error: string;
   onClose: () => void;
-  onPick: (kind: "intear" | "here" | "more") => void;
+  onPick: (kind: "intear" | "here" | "meteor" | "hot" | "nightly" | "sender") => void;
   onWatch: (account: string) => void;
 }) {
   const [account, setAccount] = useState("");
+  const wallets: { kind: "intear" | "here" | "meteor" | "hot" | "nightly" | "sender"; name: string; note: string; logo: string }[] = [
+    { kind: "intear", name: "Intear Wallet", note: "Web", logo: "/wallets/intear.svg" },
+    { kind: "here", name: "HERE Wallet", note: "Web", logo: "/wallets/here.png" },
+    { kind: "meteor", name: "Meteor", note: "Extension", logo: "/wallets/meteor.png" },
+    { kind: "hot", name: "HOT Wallet", note: "Extension", logo: "/wallets/hot.png" },
+    { kind: "nightly", name: "Nightly", note: "Extension", logo: "/wallets/nightly.png" },
+    { kind: "sender", name: "Sender", note: "Extension", logo: "/wallets/sender.png" },
+  ];
   return (
-    <div className="fixed inset-0 z-[80] grid place-items-end bg-black/70 p-3 sm:place-items-center" onClick={onClose}>
-      <section className="w-full max-w-md rounded-2xl border border-line bg-bg p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-        <div className="flex items-start justify-between gap-3">
+    <div className="fixed inset-0 z-[80] grid place-items-end bg-black/75 p-3 sm:place-items-center" onClick={onClose}>
+      <section className="w-full max-w-[420px] overflow-hidden rounded-[22px] border border-[#2a302b] bg-[#0c0f0d] shadow-[0_24px_80px_rgba(0,0,0,0.55)]" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 px-5 pb-2 pt-5">
           <div>
-            <p className="text-[10px] uppercase tracking-[0.18em] text-muted">NEAR mainnet</p>
-            <h2 className="text-lg font-semibold">Connect a wallet</h2>
+            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-[#8d938c]">NEAR mainnet</p>
+            <h2 className="mt-1 text-[22px] font-semibold leading-none tracking-tight">Connect a wallet</h2>
           </div>
-          <button type="button" onClick={onClose} className="grid size-9 place-items-center rounded-full border border-line text-sm text-muted">
-            Close
+          <button type="button" onClick={onClose} aria-label="Close" className="grid size-8 place-items-center rounded-full bg-[#171b18] text-lg leading-none text-[#c8cdc6]">
+            ×
           </button>
         </div>
-        <p className="mt-2 text-sm text-muted">Intear and HERE sign on this page. Extension wallets only work if they are installed.</p>
-        <div className="mt-4 grid gap-2">
-          <button type="button" onClick={() => onPick("intear")} className="h-12 rounded-xl bg-primary px-4 text-left text-sm font-semibold text-primary-fg">
-            Intear Wallet
-            <span className="mt-0.5 block text-xs font-normal opacity-80">Signs in this page. No extension.</span>
-          </button>
-          <button type="button" onClick={() => onPick("here")} className="h-12 rounded-xl border border-line px-4 text-left text-sm font-semibold">
-            HERE Wallet
-            <span className="mt-0.5 block text-xs font-normal text-muted">Opens an overlay on this page</span>
-          </button>
-          <button type="button" onClick={() => onPick("more")} className="h-11 rounded-xl border border-line px-4 text-left text-sm text-muted">
-            Meteor, Nightly, Sender, HOT
-          </button>
-        </div>
+        <p className="px-5 pb-3 text-sm text-[#8d938c]">Intear and HERE open on this page. Extension wallets only connect if they are installed.</p>
+        <ul className="max-h-[50dvh] overflow-y-auto px-3 pb-2">
+          {wallets.map((wallet) => (
+            <li key={wallet.kind}>
+              <button type="button" onClick={() => onPick(wallet.kind)} className="flex h-[60px] w-full items-center gap-3 rounded-2xl px-2 text-left transition hover:bg-[#171b18]">
+                <img src={wallet.logo} alt="" width={40} height={40} className="size-10 shrink-0 rounded-full bg-[#171b18] object-cover" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[15px] font-semibold">{wallet.name}</span>
+                </span>
+                <span className="rounded-full bg-[#171b18] px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-[#8d938c]">{wallet.note}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
         <form
-          className="mt-4 border-t border-line pt-3"
+          className="border-t border-[#2a302b] bg-black/35 px-5 py-4"
           onSubmit={(event) => {
             event.preventDefault();
             onWatch(account);
           }}
         >
-          <label className="block text-xs text-muted" htmlFor="near-account">
+          <label className="block text-xs text-[#8d938c]" htmlFor="near-account">
             Or read a mainnet account
           </label>
           <div className="mt-2 flex gap-2">
@@ -380,15 +386,15 @@ function WalletSheet({
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 text-sm outline-none"
+              className="h-11 min-w-0 flex-1 rounded-xl border border-[#2a302b] bg-[#111513] px-3 text-sm outline-none focus:border-[#00ec97]"
             />
-            <button type="submit" className="h-11 shrink-0 rounded-xl border border-line px-3 text-sm font-semibold">
+            <button type="submit" className="h-11 shrink-0 rounded-xl bg-[#00ec97] px-4 text-sm font-semibold text-[#002116]">
               Load
             </button>
           </div>
-          <p className="mt-2 text-xs text-muted">View only. Balances come from the chain. Swaps still need Intear or HERE to sign.</p>
+          <p className="mt-2 text-xs text-[#8d938c]">View only. Swaps still need a wallet that can sign.</p>
         </form>
-        {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+        {error && <p className="px-5 pb-4 text-sm text-danger">{error}</p>}
       </section>
     </div>
   );

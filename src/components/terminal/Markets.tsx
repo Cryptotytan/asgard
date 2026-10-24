@@ -14,6 +14,7 @@ import {
   type Token,
   type WindowId,
 } from "@/lib/market";
+import { marketsSynced } from "@/lib/dex";
 import { hideToken, toggleStar, useWatch, visitToken } from "@/lib/watch";
 import { useDesk } from "@/lib/store";
 
@@ -30,7 +31,7 @@ export function Markets({
   onSwap: (symbol: string) => void;
 }) {
   const watch = useWatch();
-  useDesk((state) => state.clock);
+  const clock = useDesk((state) => state.clock);
   const [tab, setTab] = useState<Tab>("Trending");
   const [win, setWin] = useState<WindowId>("h24");
   const [chain, setChain] = useState("All");
@@ -56,16 +57,17 @@ export function Markets({
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = TOKENS.filter((token) => !watch.hidden.includes(token.symbol));
+    if (tab !== "Recents") list = list.filter((token) => token.listed && Number.isFinite(token.price) && token.price > 0);
     if (chain !== "All") list = list.filter((token) => token.chain === chain);
     if (verifiedOnly) list = list.filter((token) => token.verified);
     if (q) list = list.filter((token) => `${token.symbol} ${token.name} ${token.tag} ${token.chain}`.toLowerCase().includes(q));
     if (tab === "Recents") {
       return watch.recents.map((symbol) => list.find((token) => token.symbol === symbol)).filter((token): token is Token => Boolean(token));
     }
-    if (tab === "Newest") return [...list].sort((a, b) => a.ageH - b.ageH);
-    if (tab === "All") return [...list].sort((a, b) => b.mcapN - a.mcapN);
-    return [...list].sort((a, b) => Math.abs(b.windows[win]) - Math.abs(a.windows[win]) || b.volN - a.volN);
-  }, [chain, query, tab, verifiedOnly, watch.hidden, watch.recents, win]);
+    if (tab === "Newest") return [...list].sort((a, b) => (a.ageH > 0 ? a.ageH : Number.POSITIVE_INFINITY) - (b.ageH > 0 ? b.ageH : Number.POSITIVE_INFINITY));
+    if (tab === "All") return [...list].sort((a, b) => b.mcapN - a.mcapN || b.liqN - a.liqN);
+    return [...list].sort((a, b) => (b.volBy?.[win] ?? b.volN) - (a.volBy?.[win] ?? a.volN) || Math.abs(b.windows[win]) - Math.abs(a.windows[win]));
+  }, [chain, clock, query, tab, verifiedOnly, watch.hidden, watch.recents, win]);
 
   return (
     <div>
@@ -120,13 +122,13 @@ export function Markets({
           </button>
         </div>
       </div>
-      <p className="px-3 pb-1 text-[10px] text-muted sm:px-4">Prices and candles are DefiLlama. Liquidity is Rhea. A dash means that feed does not publish the figure.</p>
+      <p className="px-3 pb-1 text-[10px] text-muted sm:px-4">Trending, newest, and all are NEAR pairs from DexScreener. Trending follows the window’s volume. Logos are the token’s own image.</p>
 
-      {loading ? (
+      {loading || (!marketsSynced && rows.length === 0) ? (
         <Skeleton />
       ) : rows.length === 0 ? (
         <p className="px-4 py-16 text-center text-sm text-muted">
-          {tab === "Recents" ? "Tokens you open show up here." : "No tokens match that filter."}
+          {tab === "Recents" ? "Tokens you open show up here." : marketsSynced ? "No NEAR tokens match that filter." : "DexScreener did not return NEAR markets."}
         </p>
       ) : (
         <>
@@ -185,6 +187,7 @@ export function Markets({
 
 function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowProps) {
   const change = token.windows[win];
+  const volume = token.volBy?.[win] ?? token.volN;
   const sellPct = token.txnsN ? Math.round((token.sells / token.txnsN) * 1000) / 10 : 0;
   return (
     <tr className="row-lift cursor-pointer border-b border-line hover:bg-surface" onClick={onOpen}>
@@ -240,7 +243,7 @@ function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowPro
         )}
       </td>
       <td className="px-3 py-3 font-mono">{token.liqN > 0 ? money(token.liqN) : "—"}</td>
-      <td className="px-3 py-3 font-mono">{token.volN > 0 ? money(token.volN) : "—"}</td>
+      <td className="px-3 py-3 font-mono">{volume > 0 ? money(volume) : "—"}</td>
       <td className="px-3 py-3 font-mono">
         <p>{token.txnsN > 0 ? token.txnsN.toLocaleString("en-US") : "—"}</p>
       </td>
@@ -262,6 +265,7 @@ function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowPro
 
 function MobileRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowProps) {
   const change = token.windows[win];
+  const volume = token.volBy?.[win] ?? token.volN;
   return (
     <article className="row-lift border-b border-line px-3 py-2">
       <button type="button" onClick={onOpen} className="flex w-full items-center gap-2 text-left">
@@ -287,7 +291,7 @@ function MobileRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowProp
       </button>
       <div className="mt-2 flex items-center justify-between gap-2">
         <p className="text-xs text-muted">
-          Liq {token.liqN > 0 ? money(token.liqN) : "—"} · Vol {token.volN > 0 ? money(token.volN) : "—"}
+          Liq {token.liqN > 0 ? money(token.liqN) : "—"} · Vol {volume > 0 ? money(volume) : "—"}
         </p>
         <div className="flex items-center gap-1">
           <button type="button" aria-label={starred ? "Unstar" : "Star"} onClick={() => toggleStar(token.symbol)} className="grid size-9 place-items-center text-muted">

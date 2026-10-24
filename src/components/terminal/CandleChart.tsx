@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerE
 import { candles as buildCandles, fmt, money, type Candle } from "@/lib/market";
 
 const FRAME_MIN: Record<string, number> = { "1m": 1, "5m": 5, "15m": 15, "1H": 60, "4H": 240, "1D": 1440 };
-const DEFAULT_SPAN = 80;
+const DEFAULT_SPAN = 168;
+const UP = "#00e8a0";
+const DOWN = "#ff4d8d";
 
 function bucket(points: Candle[], minutes: number): Candle[] {
   const size = Math.max(1, Math.round(minutes / 5));
@@ -14,6 +16,7 @@ function bucket(points: Candle[], minutes: number): Candle[] {
     const last = slice[slice.length - 1];
     if (!first || !last) continue;
     out.push({
+      t: last.t,
       o: first.o,
       h: Math.max(...slice.map((candle) => candle.h)),
       l: Math.min(...slice.map((candle) => candle.l)),
@@ -76,36 +79,34 @@ export function CandleChart({
 
   const start = Math.max(0, Math.min(end, all.length) - span);
   const data = all.slice(start, Math.min(all.length, start + span));
-  const width = 900;
+  const width = 960;
   const height = 460;
-  const pad = { l: 0, r: 0, t: 48, b: 18 };
-  const max = Math.max(...data.map((candle) => candle.h));
-  const min = Math.min(...data.map((candle) => candle.l));
+  const pad = { l: 8, r: 72, t: 16, b: 26 };
+  const max = data.length ? Math.max(...data.map((candle) => candle.h)) : 1;
+  const min = data.length ? Math.min(...data.map((candle) => candle.l)) : 0;
   const priceSpan = max - min || 1;
-  const innerW = width - pad.l - pad.r;
-  const priceH = (height - pad.t - pad.b) * 0.78;
-  const slot = innerW / Math.max(data.length, 1);
+  const plotW = width - pad.l - pad.r;
+  const priceH = (height - pad.t - pad.b) * 0.74;
+  const slot = plotW / Math.max(data.length, 1);
+  const bodyW = Math.min(5.2, Math.max(1.5, slot * 0.58));
   const y = (price: number) => pad.t + ((max - price) / priceSpan) * priceH;
-  const vols = data.map((candle) => Math.abs(candle.c - candle.o) + (candle.h - candle.l) * 0.4);
+  const vols = data.map((candle) => Math.abs(candle.c - candle.o) + (candle.h - candle.l) * 0.35);
   const maxVol = Math.max(...vols, 1);
-  const volTop = pad.t + priceH + 14;
+  const volTop = pad.t + priceH + 10;
   const volH = height - pad.b - volTop;
   const lastCandle = data[data.length - 1] ?? { o: last, h: last, l: last, c: last };
   const lastUp = lastCandle.c >= lastCandle.o;
-  const ticks = [max, max - priceSpan * 0.33, max - priceSpan * 0.66, min];
-  const active = hover !== null ? data[hover] : null;
-  const tipX = hover === null ? 0 : ((pad.l + hover * slot + slot / 2) / width) * 100;
-  const zoomed = span !== DEFAULT_SPAN || end !== all.length;
-  const label = (n: number) => (compact || Math.abs(n) >= 100_000 ? money(n) : fmt(n, 4));
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((step) => max - priceSpan * step);
+  const label = (n: number) => (compact || Math.abs(n) >= 100_000 ? money(n) : fmt(n, Math.abs(n) >= 1 ? 4 : 6));
   const quote = live ?? lastCandle.c;
-  const pill = label(quote);
-  const shown = useRef(pill);
-  const [turn, setTurn] = useState(0);
-  useEffect(() => {
-    if (shown.current === pill) return;
-    shown.current = pill;
-    setTurn((value) => value + 1);
-  }, [pill]);
+  const zoomed = span !== DEFAULT_SPAN || end !== all.length;
+  const plotRight = pad.l + plotW;
+
+  function clock(ts?: number) {
+    if (!ts) return "";
+    const ms = ts > 1e12 ? ts : ts * 1000;
+    return new Date(ms).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  }
 
   function arm() {
     hotRef.current = true;
@@ -126,6 +127,7 @@ export function CandleChart({
   }
 
   function indexAt(px: number) {
+    if (px < pad.l || px > plotRight) return null;
     const index = Math.floor((px - pad.l) / slot);
     return index >= 0 && index < data.length ? index : null;
   }
@@ -137,10 +139,11 @@ export function CandleChart({
       onHover(null);
       return;
     }
-    const mins = (FRAME_MIN[frame] ?? 5) * (data.length - 1 - index);
-    const label = mins <= 0 ? "now" : mins >= 1440 ? `${Math.round(mins / 1440)}d ago` : mins >= 60 ? `${Math.round(mins / 60)}h ago` : `${mins}m ago`;
     const candle = data[index];
-    onHover({ o: candle.o, h: candle.h, l: candle.l, c: candle.c, label });
+    const stamp = clock(candle.t);
+    const mins = (FRAME_MIN[frame] ?? 5) * (data.length - 1 - index);
+    const when = stamp || (mins <= 0 ? "now" : mins >= 60 ? `${Math.round(mins / 60)}h ago` : `${mins}m ago`);
+    onHover({ o: candle.o, h: candle.h, l: candle.l, c: candle.c, label: when });
   }
 
   function pointer(event: PointerEvent<SVGSVGElement>) {
@@ -200,42 +203,29 @@ export function CandleChart({
     return <div className="grid h-80 place-items-center px-6 text-center text-sm text-muted">Live candles have not arrived yet. History comes from DefiLlama.</div>;
   }
 
+  const timeMarks = [0, 0.25, 0.5, 0.75, 1]
+    .map((step) => Math.min(data.length - 1, Math.round((data.length - 1) * step)))
+    .filter((value, index, list) => list.indexOf(value) === index);
+
   return (
     <div
-      className={`chart-frame relative flex h-80 flex-col overflow-hidden rounded-xl pt-10 outline-none sm:mx-4 sm:mb-2 sm:mt-0 sm:block sm:h-auto sm:min-h-16 sm:pt-7 ${armed ? "is-hot" : ""}`}
+      className={`chart-frame relative h-80 overflow-hidden outline-none sm:h-[28rem] ${armed ? "is-hot" : ""}`}
       onPointerEnter={arm}
       onPointerLeave={disarm}
       onKeyDown={key}
       tabIndex={0}
     >
       {armed && zoomed && (
-        <button type="button" onClick={reset} className="absolute left-2 top-2 z-10 h-8 rounded-lg bg-surface px-2 text-xs text-muted">
+        <button type="button" onClick={reset} className="absolute left-2 top-2 z-10 h-7 rounded-md bg-white/10 px-2 text-[11px] text-fg">
           Reset
         </button>
       )}
-      {armed && active && (
-        <div
-          className="pointer-events-none absolute top-2 z-10 rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-xs"
-          style={{ left: `${tipX}%`, transform: tipX > 68 ? "translateX(-108%)" : "translateX(8px)" }}
-        >
-          <p className={active.c >= active.o ? "text-primary" : "text-danger"}>
-            {active.c >= active.o ? "Up" : "Down"} · {label(active.c)}
-          </p>
-          <p className="text-muted">
-            O {label(active.o)} H {label(active.h)}
-          </p>
-          <p className="text-muted">
-            L {label(active.l)} C {label(active.c)}
-          </p>
-        </div>
-      )}
-      <div className="relative min-h-0 flex-1">
       <svg
         ref={svgRef}
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="none"
-        className={`block h-full w-full sm:h-80 ${armed ? "cursor-crosshair" : ""}`}
-        style={{ touchAction: "pan-y" }}
+        className={`block h-full w-full ${armed ? "cursor-crosshair" : ""}`}
+        style={{ touchAction: "none" }}
         role="img"
         aria-label="Price chart. Hover to inspect, scroll to zoom, drag to pan."
         onPointerDown={down}
@@ -245,75 +235,71 @@ export function CandleChart({
         onDoubleClick={() => hotRef.current && reset()}
       >
         {ticks.map((tick, index) => (
-          <line key={index} x1={0} x2={width} y1={y(tick)} y2={y(tick)} stroke="var(--color-line)" strokeWidth="1" />
+          <line key={index} x1={pad.l} x2={plotRight} y1={y(tick)} y2={y(tick)} stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
         ))}
+        <line x1={pad.l} x2={plotRight} y1={volTop - 4} y2={volTop - 4} stroke="rgba(255,255,255,0.08)" strokeWidth="1" />
         {data.map((candle, index) => {
           const rising = candle.c >= candle.o;
-          const color = rising ? "var(--color-primary)" : "var(--color-danger)";
+          const color = rising ? UP : DOWN;
           const x = pad.l + index * slot + slot / 2;
           const bodyTop = y(Math.max(candle.o, candle.c));
           const bodyBot = y(Math.min(candle.o, candle.c));
-          const bodyH = Math.max(1.2, bodyBot - bodyTop);
-          const bar = (vols[index] / maxVol) * volH;
-          const hot = index === hover;
+          const bodyH = Math.max(0.8, bodyBot - bodyTop);
+          const bar = Math.max(1, (vols[index] / maxVol) * volH);
           return (
-            <g key={index} opacity={hover === null || hot ? 1 : 0.45}>
-              <line x1={x} x2={x} y1={y(candle.h)} y2={y(candle.l)} stroke={color} strokeWidth={hot ? 2 : 1.25} />
-              <rect x={x - slot * 0.28} y={bodyTop} width={Math.max(1.4, slot * 0.56)} height={bodyH} fill={color} />
-              <rect x={x - slot * 0.28} y={volTop + volH - bar} width={Math.max(1.4, slot * 0.56)} height={bar} fill={color} opacity="0.85" />
+            <g key={index}>
+              <line x1={x} x2={x} y1={y(candle.h)} y2={y(candle.l)} stroke={color} strokeWidth="1" />
+              <rect x={x - bodyW / 2} y={bodyTop} width={bodyW} height={bodyH} fill={color} />
+              <rect x={x - bodyW / 2} y={volTop + volH - bar} width={bodyW} height={bar} fill={color} opacity="0.85" />
             </g>
           );
         })}
-        {hover !== null && (
-          <line
-            x1={pad.l + hover * slot + slot / 2}
-            x2={pad.l + hover * slot + slot / 2}
-            y1={pad.t}
-            y2={height - pad.b}
-            stroke="var(--color-fg)"
-            strokeDasharray="2 3"
-          />
-        )}
-        {crossY !== null && (
-          <line x1={0} x2={width} y1={crossY} y2={crossY} stroke="var(--color-muted)" strokeDasharray="2 3" />
-        )}
         <line
-          x1={0}
-          x2={width}
-          y1={y(lastCandle.c)}
-          y2={y(lastCandle.c)}
-          stroke={lastUp ? "var(--color-primary)" : "var(--color-danger)"}
-          strokeDasharray="3 4"
+          x1={pad.l}
+          x2={plotRight}
+          y1={y(quote)}
+          y2={y(quote)}
+          stroke={lastUp ? UP : DOWN}
+          strokeDasharray="3 3"
+          strokeOpacity="0.85"
         />
+        {hover !== null && (
+          <line x1={pad.l + hover * slot + slot / 2} x2={pad.l + hover * slot + slot / 2} y1={pad.t} y2={height - pad.b} stroke="rgba(255,255,255,0.45)" strokeDasharray="2 3" />
+        )}
+        {crossY !== null && <line x1={pad.l} x2={plotRight} y1={crossY} y2={crossY} stroke="rgba(255,255,255,0.35)" strokeDasharray="2 3" />}
       </svg>
-      {ticks.map((tick, index) => (
+      {ticks.map((tick) => (
         <span
-          key={index}
-          className="pointer-events-none absolute left-1.5 -translate-y-1/2 rounded bg-surface/80 px-1 font-mono text-[10px] text-muted"
+          key={tick}
+          className="pointer-events-none absolute right-1.5 -translate-y-1/2 font-mono text-[10px] text-[#8b8b8b]"
           style={{ top: `${(y(tick) / height) * 100}%` }}
         >
           {label(tick)}
         </span>
       ))}
-      <span className="flap-board pointer-events-none absolute right-1 -translate-y-1/2" style={{ top: `${(y(lastCandle.c) / height) * 100}%` }}>
-        <span
-          key={turn}
-          className={`block rounded px-1.5 py-0.5 font-mono text-[10px] text-primary-fg ${lastUp ? "bg-primary" : "bg-danger"} ${turn ? "flap" : ""}`}
-        >
-          {pill}
-        </span>
+      <span
+        className="pointer-events-none absolute right-1 z-[1] -translate-y-1/2 rounded-[3px] px-1.5 py-0.5 font-mono text-[10px] text-black"
+        style={{ top: `${(y(quote) / height) * 100}%`, background: lastUp ? UP : DOWN }}
+      >
+        {label(quote)}
       </span>
       {armed && crossY !== null && (
         <span
-          className="pointer-events-none absolute left-2 -translate-y-full font-mono text-[10px] text-fg"
+          className="pointer-events-none absolute right-1 z-[1] -translate-y-1/2 rounded-[3px] bg-[#2a2a2a] px-1.5 py-0.5 font-mono text-[10px] text-white"
           style={{ top: `${(crossY / height) * 100}%` }}
         >
           {label(priceAt(crossY))}
         </span>
       )}
-      </div>
-      {armed && <p className="hidden px-3 pb-2 text-xs text-muted sm:block">Scroll to zoom · drag to pan · double-click to reset</p>}
-      {!armed && <p className="hidden px-3 pb-2 text-xs text-muted sm:block">Point at the chart to inspect, zoom, and pan</p>}
+      {timeMarks.map((index) => (
+        <span
+          key={index}
+          className="pointer-events-none absolute bottom-1 -translate-x-1/2 font-mono text-[10px] text-[#8b8b8b]"
+          style={{ left: `${((pad.l + index * slot + slot / 2) / width) * 100}%` }}
+        >
+          {clock(data[index]?.t) || ""}
+        </span>
+      ))}
     </div>
   );
 }
