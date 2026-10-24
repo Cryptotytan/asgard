@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Search, ShieldAlert } from "lucide-react";
-import { TradingViewChart } from "@/components/terminal/TradingViewChart";
+import { CandleChart, type ChartHover } from "@/components/terminal/CandleChart";
 import { SecurityGate } from "@/components/terminal/SecurityGate";
 import { TokenIcon, VerifiedMark } from "@/components/terminal/TokenIcon";
 import { PnlCard } from "@/components/terminal/PnlCard";
@@ -18,10 +18,11 @@ import {
   type Token,
 } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
-import { livePrints, loadHolders, loadPrints, type HolderRow } from "@/lib/live";
+import { liveCandles, livePrints, loadHolders, loadPrints, watchCandles, type HolderRow } from "@/lib/live";
 import { searchNearTokens } from "@/lib/dex";
 import { executeIntent, quoteIntent, type IntentQuote } from "@/lib/intents";
 
+const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"] as const;
 const BOOKS = ["Trades", "Positions", "Orders", "Holders", "History"] as const;
 let stampedId = "";
 const PRESETS = [25, 50, 100, 250];
@@ -44,19 +45,38 @@ export function TokenTrade({
   onSymbol: (symbol: string) => void;
   onFlash: (message: string) => void;
 }) {
+  const mark = useDesk((s) => s.marks[symbol]);
   useDesk((s) => s.clock);
   const token = tokenBySymbol(symbol);
+  const [frame, setFrame] = useState<(typeof FRAMES)[number]>("1D");
+  const [scale, setScale] = useState<"price" | "mcap">("price");
   const [book, setBook] = useState<(typeof BOOKS)[number]>("Trades");
   const scanning = false;
+  const [hover, setHover] = useState<ChartHover | null>(null);
+
+  useEffect(() => setHover(null), [frame, scale]);
 
   useEffect(() => {
     if (!canPerp(symbol) && mode === "perp") onMode("spot");
   }, [symbol, mode, onMode]);
 
+  const last = scale === "price" ? (mark ?? token.price) : token.mcapN;
+  const series = scale === "price" ? liveCandles(symbol, frame) : undefined;
+  const bars = series && series.length > 1 ? series : [];
+  const open = bars[0] ?? { o: last, h: last, l: last, c: last };
+  const close = bars[bars.length - 1] ?? open;
+  const high = bars.length ? Math.max(...bars.map((bar) => bar.h)) : last;
+  const low = bars.length ? Math.min(...bars.map((bar) => bar.l)) : last;
+  const delta = close.c - open.o;
   const prints = livePrints(symbol) ?? [];
   useEffect(() => {
+    if (scale !== "price") return;
+    return watchCandles(symbol, frame);
+  }, [symbol, frame, scale]);
+  useEffect(() => {
+    if (scale !== "price") return;
     void loadPrints(symbol).catch(() => undefined);
-  }, [symbol]);
+  }, [symbol, scale]);
 
   return (
     <div className="flex flex-col lg:block">
@@ -81,8 +101,59 @@ export function TokenTrade({
       </header>
 
       <div className="flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[auto_minmax(0,1fr)] lg:items-start">
-        <section className="relative order-1 min-w-0 lg:col-start-1 lg:row-start-1 lg:self-start lg:border-r lg:border-line">
-          <TradingViewChart token={token} />
+        <section className="relative order-1 lg:col-start-1 lg:row-start-1 lg:self-start lg:border-r lg:border-line">
+          <div className="flex items-center gap-2 px-3 pt-3 sm:px-4 sm:py-2">
+            <div className="grid min-w-0 flex-1 grid-cols-6 gap-1">
+              {FRAMES.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setFrame(item)}
+                  className={`h-8 rounded-md px-1 text-[11px] sm:h-8 sm:bg-transparent sm:px-0 sm:text-xs ${frame === item ? "bg-surface-2 text-fg" : "text-muted"}`}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+            <div className="flex shrink-0 rounded-lg bg-surface p-0.5 text-[11px] sm:text-xs">
+              {(["price", "mcap"] as const).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setScale(item)}
+                  className={`h-8 rounded-md px-2 uppercase sm:px-2 ${scale === item ? "bg-surface-2 text-fg" : "text-muted"}`}
+                >
+                  {item === "price" ? "Price" : "Mcap"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="hidden px-4 font-mono text-xs text-muted sm:block">
+            {bars.length < 2 ? (
+              "Waiting on DefiLlama candles"
+            ) : hover ? (
+              <>
+                {hover.label} O {fmt(hover.o)} H {fmt(hover.h)} L {fmt(hover.l)} C {fmt(hover.c)}{" "}
+                <span className={hover.c >= hover.o ? "text-primary" : "text-danger"}>
+                  {hover.c >= hover.o ? "+" : ""}
+                  {fmt(hover.c - hover.o)} ({hover.c >= hover.o ? "+" : ""}
+                  {(((hover.c - hover.o) / hover.o) * 100).toFixed(2)}%)
+                </span>
+              </>
+            ) : (
+              <>
+                O {fmt(open.o)} H {fmt(high)} L {fmt(low)} C {fmt(close.c)}{" "}
+                <span className={delta >= 0 ? "text-primary" : "text-danger"}>
+                  {delta >= 0 ? "+" : ""}
+                  {fmt(delta)} ({delta >= 0 ? "+" : ""}
+                  {((delta / open.o) * 100).toFixed(2)}%)
+                </span>
+              </>
+            )}
+          </p>
+          <div className="px-3 py-3 sm:px-0 sm:py-0">
+            <CandleChart seed={`${symbol}-${frame}-${scale}`} last={last} frame={frame} compact={scale === "mcap"} live={scale === "price" ? mark : undefined} series={series} onHover={setHover} />
+          </div>
         </section>
         <div className="order-2 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-stretch">
           <Ticket token={token} mode={mode} quickUsd={quickUsd} scanning={scanning} onMode={onMode} onFlash={onFlash} />
