@@ -8,6 +8,7 @@ import {
   canPerp,
   fmt,
   isHoneypot,
+  scoreLabel,
   signedPct,
   tokenBySymbol,
   usd,
@@ -17,7 +18,7 @@ import {
   type Token,
 } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
-import { liveCandles, livePrints, loadPrints, watchCandles } from "@/lib/live";
+import { liveCandles, livePrints, loadHolders, loadPrints, watchCandles, type HolderRow } from "@/lib/live";
 import { executeIntent, quoteIntent, type IntentQuote } from "@/lib/intents";
 
 const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"] as const;
@@ -92,7 +93,7 @@ export function TokenTrade({
           <div className="hidden lg:block">
             <dt className="text-xs text-muted">Safety</dt>
             <dd className="mt-0.5 flex items-center gap-2">
-              <span className="font-mono text-sm text-muted">{token.score > 0 ? `${token.score}/100` : "Live"}</span>
+              <span className="font-mono text-sm text-muted">{scoreLabel(token)}</span>
             </dd>
           </div>
         </dl>
@@ -181,7 +182,7 @@ export function TokenTrade({
             {book === "Trades" && <Trades prints={prints} symbol={token.symbol} />}
             {book === "Positions" && <Positions symbol={token.symbol} mark={token.price} />}
             {book === "Orders" && <Orders symbol={token.symbol} />}
-            {book === "Holders" && <Holders />}
+            {book === "Holders" && <Holders token={token} />}
             {book === "History" && <SessionHistory />}
           </div>
         </section>
@@ -204,7 +205,7 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
   const [query, setQuery] = useState("");
   const box = useRef<HTMLDivElement>(null);
   const list = useMemo(
-    () => TOKENS.filter((item) => `${item.symbol} ${item.name} ${item.chain}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 12),
+    () => TOKENS.filter((item) => `${item.symbol} ${item.name} ${item.chain} ${item.address ?? ""}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 12),
     [query],
   );
 
@@ -417,8 +418,54 @@ function Orders({ symbol }: { symbol: string }) {
   );
 }
 
-function Holders() {
-  return <p className="py-6 text-sm text-muted">Holder concentration is not published on the live feed. Balances you see in Portfolio are read from NEAR mainnet.</p>;
+function Holders({ token }: { token: Token }) {
+  const [rows, setRows] = useState<HolderRow[] | null>(null);
+  const [top10, setTop10] = useState<number | null>(null);
+  const [miss, setMiss] = useState(false);
+  useEffect(() => {
+    let cancel = false;
+    setRows(null);
+    setTop10(null);
+    setMiss(false);
+    if (!token.address && token.symbol !== "NEAR" && token.symbol !== "USDC" && token.symbol !== "ETH" && token.symbol !== "wBTC" && token.symbol !== "USDT" && token.symbol !== "STNEAR" && token.symbol !== "AURORA") {
+      setRows([]);
+      setMiss(true);
+      return;
+    }
+    void loadHolders(token.symbol, token.address)
+      .then((result) => {
+        if (cancel) return;
+        setRows(result.rows);
+        setTop10(result.top10);
+      })
+      .catch(() => {
+        if (!cancel) {
+          setRows([]);
+          setMiss(true);
+        }
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [token.address, token.symbol]);
+  if (!rows) return <p className="py-6 text-sm text-muted">Reading holders from NEAR mainnet…</p>;
+  if (rows.length === 0) {
+    return <p className="py-6 text-sm text-muted">{miss ? "This token has no NEAR contract on the live feed, so holders cannot be read." : "NEAR did not return a holder list for this contract."}</p>;
+  }
+  return (
+    <div className="py-2">
+      <p className="mb-2 text-xs text-muted">{top10 == null ? "Top accounts on this contract. Share is unpublished until total supply answers." : `Top 10 hold ${top10.toFixed(1)}% of supply.`}</p>
+      <ul>
+        {rows.map((row) => (
+          <li key={row.account} className="flex items-center justify-between gap-2 border-t border-line py-2 font-mono text-xs">
+            <span className="truncate">{row.account.length > 22 ? `${row.account.slice(0, 10)}…${row.account.slice(-6)}` : row.account}</span>
+            <span>{fmt(row.amount)}</span>
+            <span className="text-muted">{row.share == null ? "—" : `${row.share.toFixed(2)}%`}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function Ticket({
@@ -885,7 +932,7 @@ function Ticket({
           <p className="flex items-start gap-2">
             <ShieldAlert className="mt-0.5 size-4 text-danger" />
             <span>
-              {blocked ? "Honeypot · swap blocked" : `Not verified · ${token.score}/100`}
+              {blocked ? "Honeypot · swap blocked" : `Not verified · ${scoreLabel(token)}`}
               <span className="mt-1 hidden text-xs text-muted sm:block">{token.notes.join(" · ")}</span>
             </span>
           </p>

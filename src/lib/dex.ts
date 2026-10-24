@@ -1,4 +1,5 @@
-import { ensureToken, money, preferIcon, TOKENS, type WindowId } from "@/lib/market";
+import { ensureToken, isCanonical, money, preferIcon, qualityScore, TOKENS, type WindowId } from "@/lib/market";
+import { useDesk } from "@/lib/store";
 
 const REF = "https://indexer.ref.finance/list-token";
 const BLOCKS = "https://api.nearblocks.io/v1/fts";
@@ -193,6 +194,29 @@ export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (mar
   return marks;
 }
 
+export async function lookupNearToken(address: string) {
+  const clean = address.trim();
+  if (clean.length < 6) return null;
+  const direct = await getJson<DexPair[]>(`${TOKENS_API}/${encodeURIComponent(clean)}`).catch(() => null);
+  const pairs = Array.isArray(direct) ? direct : [];
+  if (!pairs.length) {
+    const extra = await getJson<DexPair[]>(`${PAIRS}/${encodeURIComponent(clean)}`).catch(() => null);
+    if (Array.isArray(extra)) pairs.push(...extra);
+  }
+  const best = new Map<string, DexPair>();
+  for (const pair of pairs) {
+    const id = pair.baseToken?.address;
+    if (!id) continue;
+    const vol = num(pair.volume?.h24);
+    const prev = best.get(id);
+    if (!prev || vol >= num(prev.volume?.h24)) best.set(id, pair);
+  }
+  if (!best.size) return null;
+  paintDex(best, {});
+  useDesk.setState((state) => ({ clock: state.clock + 1 }));
+  return TOKENS.find((token) => token.address?.toLowerCase() === clean.toLowerCase()) ?? TOKENS.find((token) => [...best.keys()].some((id) => token.address === id)) ?? null;
+}
+
 function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
   const ranked = [...best.entries()].sort((a, b) => num(b[1].volume?.h24) - num(a[1].volume?.h24));
   const owned = new Map<string, string>();
@@ -247,8 +271,9 @@ function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
     token.txns = token.txnsN > 0 ? token.txnsN.toLocaleString("en-US") : "—";
     token.ageH = pair.pairCreatedAt ? Math.max(0.05, (Date.now() - pair.pairCreatedAt) / 3_600_000) : token.ageH;
     token.listed = true;
-    if (dexImage) token.verified = true;
-    token.notes = [pair.dexId ? pair.dexId : "NEAR"];
+    token.verified = isCanonical({ symbol, address });
+    token.score = qualityScore(token) ?? 0;
+    token.notes = token.verified ? ["Widely used NEAR asset"] : [pair.dexId || "NEAR market"];
     owned.set(symbol, address);
     marks[symbol] = price;
   }

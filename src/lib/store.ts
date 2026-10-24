@@ -80,6 +80,7 @@ type Desk = {
   borrow: (symbol: string, amount: number) => boolean;
   repay: (symbol: string, amount: number) => boolean;
   dropVault: (symbol: string, amount: number) => boolean;
+  creditVault: (symbol: string, amount: number) => boolean;
   noteSupply: (symbol: string, amount: number) => void;
   noteUnsupply: (symbol: string, amount: number) => boolean;
   addReceipt: (key: string, asset: string, amount: number) => void;
@@ -133,7 +134,7 @@ const BLANK = {
 
 type Ledger = typeof BLANK;
 
-const LEDGER_KEY = "asgard-ledgers";
+const LEDGER_KEY = "asgard-ledgers-v2";
 
 function readLedgers(): Record<string, Ledger> {
   if (typeof window === "undefined") return {};
@@ -184,8 +185,29 @@ function snap(state: {
   };
 }
 
+function cloneBook(book?: Book): Book {
+  return { ...(book ?? {}) };
+}
+
+function cloneLedger(raw?: Partial<Ledger> | null): Ledger {
+  return {
+    balances: {},
+    vault: cloneBook(raw?.vault),
+    supplied: cloneBook(raw?.supplied),
+    loans: cloneBook(raw?.loans),
+    positions: [...(raw?.positions ?? [])],
+    orders: [...(raw?.orders ?? [])],
+    activity: [...(raw?.activity ?? [])],
+    realized: raw?.realized ?? 0,
+    wins: raw?.wins ?? 0,
+    closes: raw?.closes ?? 0,
+    chain: {},
+    receipts: { ...(raw?.receipts ?? {}) },
+  };
+}
+
 function freshLedger(): Ledger {
-  return { ...BLANK, balances: {}, chain: {}, receipts: {} };
+  return cloneLedger(null);
 }
 
 function bookUsd(book: Book, marks: Book) {
@@ -212,28 +234,23 @@ export const useDesk = create<Desk>((set, get) => ({
   },
   setAccount: (accountId) => {
     const prev = get();
-    if (prev.accountId === accountId) {
-      if (accountId) set({ connected: true });
+    const nextId = accountId?.trim().toLowerCase() || null;
+    if (prev.accountId === nextId) {
+      if (nextId) set({ connected: true });
       return;
     }
     if (prev.accountId) saveLedger(prev.accountId, snap(prev));
-    if (!accountId) {
-      set({ ...BLANK, accountId: null, connected: false, nearYocto: null });
+    if (!nextId) {
+      set({ ...cloneLedger(null), accountId: null, connected: false, nearYocto: null });
       return;
     }
-    const loaded = readLedgers()[accountId] ?? freshLedger();
-    set({ ...BLANK, ...loaded, receipts: loaded.receipts ?? {}, chain: loaded.chain ?? {}, accountId, connected: true, nearYocto: null });
+    const loaded = cloneLedger(readLedgers()[nextId]);
+    set({ ...loaded, accountId: nextId, connected: true, nearYocto: null });
   },
   setNearYocto: (nearYocto) => set({ nearYocto }),
   applyChain: (chain) => {
-    const { vault, receipts, positions, loans } = get();
-    const next = { ...chain };
-    for (const [symbol, amount] of Object.entries(vault)) next[symbol] = Math.max(0, (next[symbol] ?? 0) - amount);
-    for (const receipt of Object.values(receipts ?? {})) next[receipt.asset] = Math.max(0, (next[receipt.asset] ?? 0) - receipt.amount);
-    const margin = positions.reduce((sum, position) => sum + position.margin, 0);
-    if (margin) next.USDC = Math.max(0, (next.USDC ?? 0) - margin);
-    for (const [symbol, amount] of Object.entries(loans)) next[symbol] = (next[symbol] ?? 0) + amount;
-    set({ chain, balances: next });
+    const copy = cloneBook(chain);
+    set({ chain: copy, balances: { ...copy } });
   },
   log: (title, detail, value) => set({ activity: push(get().activity, title, detail, value) }),
 
@@ -398,6 +415,13 @@ export const useDesk = create<Desk>((set, get) => ({
     return true;
   },
 
+  creditVault: (symbol, amount) => {
+    if (amount <= 0) return false;
+    const { vault, marks, activity } = get();
+    set({ vault: add(vault, symbol, amount), activity: push(activity, "Vault deposit", symbol, worth(symbol, amount, marks)) });
+    return true;
+  },
+
   dropVault: (symbol, amount) => {
     const next = take(get().vault, symbol, amount);
     if (!next) return false;
@@ -433,27 +457,25 @@ export const useDesk = create<Desk>((set, get) => ({
   },
 
   borrow: (symbol, amount) => {
-    const { balances, supplied, loans, marks, activity } = get();
+    const { supplied, loans, marks, activity } = get();
     const cost = worth(symbol, amount, marks);
     const room = Math.max(0, bookUsd(supplied, marks) * 0.7 - bookUsd(loans, marks));
     if (amount <= 0 || cost > room + 1e-6) return false;
     set({
       loans: add(loans, symbol, amount),
-      balances: add(balances, symbol, amount),
       activity: push(activity, "Borrowed", symbol, cost),
     });
     return true;
   },
 
   repay: (symbol, amount) => {
-    const { balances, loans, marks, activity } = get();
+    const { loans, marks, activity } = get();
     const owed = loans[symbol] ?? 0;
     const pay = Math.min(amount, owed);
-    const next = take(balances, symbol, pay);
-    if (!next || pay <= 0) return false;
+    if (pay <= 0) return false;
+    const left = Math.max(0, owed - pay);
     set({
-      balances: next,
-      loans: { ...loans, [symbol]: owed - pay },
+      loans: left > 1e-12 ? { ...loans, [symbol]: left } : Object.fromEntries(Object.entries(loans).filter(([key]) => key !== symbol)),
       activity: push(activity, "Repaid", symbol, worth(symbol, pay, marks)),
     });
     return true;

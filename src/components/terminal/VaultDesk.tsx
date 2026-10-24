@@ -11,10 +11,9 @@ export function VaultDesk() {
   const connected = useDesk((s) => s.connected);
   const accountId = useDesk((s) => s.accountId);
   const connect = useDesk((s) => s.connect);
-  const balances = useDesk((s) => s.balances);
   const chain = useDesk((s) => s.chain);
   const vault = useDesk((s) => s.vault);
-  const depositVault = useDesk((s) => s.depositVault);
+  const creditVault = useDesk((s) => s.creditVault);
   const dropVault = useDesk((s) => s.dropVault);
   const [symbol, setSymbol] = useState("NEAR");
   const [amount, setAmount] = useState("");
@@ -30,14 +29,28 @@ export function VaultDesk() {
     }
     const n = Number(amount) || 0;
     if (n <= 0 || busy) return;
+    const wallet = useDesk.getState().accountId;
+    if (kind === "in" && (chain[symbol] ?? 0) + 1e-8 < n) {
+      setNote(`This wallet holds ${fmt(chain[symbol] ?? 0)} ${symbol}.`);
+      return;
+    }
+    if (kind === "out" && (vault.STNEAR ?? 0) + 1e-8 < n) {
+      setNote("That is more stNEAR than this account has in the vault.");
+      return;
+    }
     setBusy(true);
     setNote(kind === "in" ? "Confirm the deposit. It swaps into stNEAR on NEAR Intents." : "Confirm the withdraw. stNEAR swaps back on NEAR Intents.");
     try {
       if (kind === "in") {
         const result = await executeIntent({ from: symbol, to: "STNEAR", amount: String(n), accountId, purpose: "Vault deposit" });
-        const parked = Math.min(result.amountOutHuman, useDesk.getState().balances.STNEAR ?? result.amountOutHuman);
-        depositVault("STNEAR", parked);
-        setNote(`Deposited ${fmt(result.amountOutHuman)} stNEAR.`);
+        if (useDesk.getState().accountId !== wallet) return;
+        if (!(result.amountOutHuman > 0)) {
+          setNote(`Deposit is ${result.status}. The vault was not credited.`);
+          return;
+        }
+        creditVault("STNEAR", result.amountOutHuman);
+        setAmount("");
+        setNote(result.status === "SUCCESS" ? `Deposited ${fmt(result.amountOutHuman)} stNEAR on this account.` : `Deposit ${result.status}. Credited ${fmt(result.amountOutHuman)} stNEAR on this account.`);
       } else {
         const result = await executeIntent({
           from: "STNEAR",
@@ -48,8 +61,10 @@ export function VaultDesk() {
           swapType: "EXACT_OUTPUT",
           maxPay: vault.STNEAR ?? 0,
         });
-        dropVault("STNEAR", result.amountInHuman);
-        setNote(`Withdrew ${fmt(result.amountOutHuman)} ${symbol}.`);
+        if (useDesk.getState().accountId !== wallet) return;
+        const released = dropVault("STNEAR", result.amountInHuman || n);
+        setAmount("");
+        setNote(released ? `Withdrew ${fmt(result.amountOutHuman)} ${symbol}.` : "That is more than this vault holds.");
       }
     } catch (error) {
       setNote(error instanceof Error ? error.message : "Vault move failed.");
@@ -85,7 +100,7 @@ export function VaultDesk() {
                     <TokenIcon token={token} className="size-5 sm:size-6" />
                     <div>
                       <p className="text-sm font-semibold">{token.symbol}</p>
-                      <p className="font-mono text-[10px] text-muted sm:text-xs">{fmt(held)} · wallet {fmt((chain[item] ?? balances[item]) || 0)}</p>
+                      <p className="font-mono text-[10px] text-muted sm:text-xs">{fmt(held)} in vault · wallet {fmt(chain[item] ?? 0)}</p>
                     </div>
                   </div>
                   <p className="font-mono text-xs sm:text-sm">{usd(held * token.price)}</p>

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Bell, Eye, EyeOff, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { Bell, Eye, EyeOff, Pencil, Plus, Search, Trash2, Wallet, X } from "lucide-react";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
-import { signedPct, TOKENS, usd, type Token } from "@/lib/market";
+import { signedPct, scoreLabel, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 import {
   EMPTY_TRACKER,
@@ -349,66 +349,76 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
 
       {walletOpen && (
         <Modal title={form.id ? "Edit wallet" : "Add wallet"} onClose={() => setWalletOpen(false)}>
-          <p className="-mt-2 mb-4 text-sm text-muted">Follow a NEAR account on this connected wallet.</p>
-          <div className="grid grid-cols-2 rounded-full bg-surface p-1 ring-1 ring-line ring-inset">
+          <div className="mb-4 border-b border-line pb-4">
+            <div className="flex items-center gap-3">
+              <span className="grid size-11 place-items-center rounded-2xl bg-primary/15 text-primary">
+                <Wallet className="size-5" />
+              </span>
+              <div>
+                <p className="text-base font-semibold">{form.id ? "Edit wallet" : "Follow a wallet"}</p>
+                <p className="text-xs text-muted">Alerts stay on this connected account. Another wallet’s balances are never copied here.</p>
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-1 rounded-2xl bg-surface p-1 ring-1 ring-line ring-inset">
             {(["named", "implicit"] as const).map((kind) => (
-              <button key={kind} type="button" onClick={() => setForm({ ...form, kind })} className={`h-9 rounded-full text-sm ${form.kind === kind ? "bg-bg font-semibold text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}>{kind === "named" ? "Named .near" : "Implicit"}</button>
+              <button key={kind} type="button" onClick={() => setForm({ ...form, kind })} className={`h-10 rounded-xl text-sm ${form.kind === kind ? "bg-bg font-semibold text-fg shadow-[inset_0_0_0_1px_var(--color-primary)]" : "text-muted"}`}>{kind === "named" ? "Named .near" : "Implicit"}</button>
             ))}
           </div>
           <Field label="NEAR account">
-            <input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} placeholder={form.kind === "named" ? "name.near" : "64-character implicit account"} className={`mt-1.5 h-11 w-full rounded-xl border bg-surface px-3 font-mono text-sm outline-none ${problem ? "border-danger" : "border-line focus:border-primary"}`} />
-            <span className={`mt-1 block text-xs normal-case tracking-normal ${problem ? "text-danger" : "text-muted"}`}>{problem || (form.kind === "named" ? "A named account such as whale.near" : "A 64-character hex account, no 0x")}</span>
+            <input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} placeholder={form.kind === "named" ? "whale.near" : "64-character implicit account"} className={`mt-1.5 h-12 w-full rounded-2xl border bg-surface px-3 font-mono text-sm outline-none ${problem ? "border-danger" : "border-line focus:border-primary"}`} />
+            <span className={`mt-1.5 block text-xs normal-case tracking-normal ${problem ? "text-danger" : "text-muted"}`}>{problem || (form.kind === "named" ? "A named account such as whale.near" : "A 64-character hex account, no 0x")}</span>
           </Field>
           <Field label="Name">
-            <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Whale #1" className="mt-1.5 h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm outline-none focus:border-primary" />
+            <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Whale #1" className="mt-1.5 h-12 w-full rounded-2xl border border-line bg-surface px-3 text-sm outline-none focus:border-primary" />
           </Field>
           <Field label="Alert on">
             <div className="mt-1.5 grid grid-cols-3 gap-2">
               {(["all", "buys", "sells"] as const).map((alert) => (
-                <button key={alert} type="button" onClick={() => setForm({ ...form, alert })} className={`h-10 rounded-xl text-sm capitalize ${form.alert === alert ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>{alert === "all" ? "All" : alert}</button>
+                <button key={alert} type="button" onClick={() => setForm({ ...form, alert })} className={`h-11 rounded-2xl text-sm capitalize ${form.alert === alert ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>{alert === "all" ? "All" : alert}</button>
               ))}
             </div>
           </Field>
           <Field label="Notify">
-            <div className="mt-1.5 flex flex-wrap gap-2">
-              {([["toast", "In-app"], ["telegram", "Telegram"], ["off", "Off"]] as const).map(([id, label]) => (
-                <button key={id} type="button" onClick={() => setForm({ ...form, notify: id })} className={`h-9 rounded-full px-3 text-xs ${form.notify === id ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>{label}</button>
+            <div className="mt-1.5 grid grid-cols-2 gap-2">
+              {([["toast", "In-app"], ["off", "Off"]] as const).map(([id, label]) => (
+                <button key={id} type="button" onClick={() => setForm({ ...form, notify: id })} className={`h-11 rounded-2xl text-sm ${form.notify === id ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>{label}</button>
               ))}
             </div>
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Sound">
-              <select value={form.sound} onChange={(event) => setForm({ ...form, sound: event.target.value })} className="mt-1.5 h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm">
+              <select value={form.sound} onChange={(event) => setForm({ ...form, sound: event.target.value })} className="mt-1.5 h-12 w-full rounded-2xl border border-line bg-surface px-3 text-sm outline-none focus:border-primary">
                 {["Chime", "Soft", "Off"].map((sound) => <option key={sound}>{sound}</option>)}
               </select>
             </Field>
             <Field label="Min USD">
-              <input value={form.minUsd} onChange={(event) => setForm({ ...form, minUsd: event.target.value.replace(/[^0-9.]/g, "") })} className="mt-1.5 h-11 w-full rounded-xl border border-line bg-surface px-3 font-mono text-sm outline-none focus:border-primary" />
+              <input value={form.minUsd} onChange={(event) => setForm({ ...form, minUsd: event.target.value.replace(/[^0-9.]/g, "") })} className="mt-1.5 h-12 w-full rounded-2xl border border-line bg-surface px-3 font-mono text-sm outline-none focus:border-primary" />
             </Field>
           </div>
           <Field label="Folder">
             <div className="mt-1.5 flex flex-wrap gap-2">
-              <button type="button" onClick={() => setForm({ ...form, folder: "" })} className={`h-8 rounded-full px-3 text-xs ${form.folder === "" ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>None</button>
+              <button type="button" onClick={() => setForm({ ...form, folder: "" })} className={`h-9 rounded-full px-3 text-xs ${form.folder === "" ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>None</button>
               {data.folders.map((folder) => (
-                <button key={folder} type="button" onClick={() => setForm({ ...form, folder })} className={`h-8 rounded-full px-3 text-xs ${form.folder === folder ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>{folder}</button>
+                <button key={folder} type="button" onClick={() => setForm({ ...form, folder })} className={`h-9 rounded-full px-3 text-xs ${form.folder === folder ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>{folder}</button>
               ))}
-              <input value={folderDraft} onChange={(event) => setFolderDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && folderDraft.trim()) { setForm({ ...form, folder: folderDraft.trim() }); setFolderDraft(""); } }} placeholder="New folder" className="h-8 w-28 rounded-full border border-line bg-surface px-3 text-xs outline-none" />
+              <input value={folderDraft} onChange={(event) => setFolderDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && folderDraft.trim()) { setForm({ ...form, folder: folderDraft.trim() }); setFolderDraft(""); } }} placeholder="New folder" className="h-9 w-28 rounded-full border border-line bg-surface px-3 text-xs outline-none focus:border-primary" />
             </div>
           </Field>
           <Field label="Labels">
             <div className="mt-1.5 flex flex-wrap gap-1.5">
               {LABELS.map((label) => {
                 const on = form.labels.includes(label);
-                return <button key={label} type="button" onClick={() => setForm({ ...form, labels: on ? form.labels.filter((item) => item !== label) : [...form.labels, label] })} className={`h-8 rounded-full px-3 text-xs ${on ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>{label}</button>;
+                return <button key={label} type="button" onClick={() => setForm({ ...form, labels: on ? form.labels.filter((item) => item !== label) : [...form.labels, label] })} className={`h-9 rounded-full px-3 text-xs ${on ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>{label}</button>;
               })}
             </div>
           </Field>
           <Field label="Note">
-            <textarea value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} placeholder="Why you follow this account" className="mt-1.5 h-20 w-full resize-none rounded-xl border border-line bg-surface px-3 py-2 text-sm normal-case tracking-normal outline-none focus:border-primary" />
+            <textarea value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} placeholder="Why you follow this account" className="mt-1.5 h-20 w-full resize-none rounded-2xl border border-line bg-surface px-3 py-2 text-sm normal-case tracking-normal outline-none focus:border-primary" />
           </Field>
-          <div className="mt-5 grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => setWalletOpen(false)} className="h-11 rounded-xl border border-line text-sm">Cancel</button>
-            <button type="button" disabled={Boolean(problem) || !form.name.trim() || !form.address.trim()} onClick={saveWallet} className="h-11 rounded-xl bg-primary text-sm font-semibold text-primary-fg disabled:opacity-40">{form.id ? "Save" : "Add wallet"}</button>
+          <div className="sticky bottom-0 -mx-4 mt-5 grid grid-cols-[7rem_minmax(0,1fr)] gap-2 border-t border-line bg-bg px-4 py-3">
+            <button type="button" onClick={() => setWalletOpen(false)} className="h-12 rounded-2xl border border-line text-sm">Cancel</button>
+            <button type="button" disabled={Boolean(problem) || !form.name.trim() || !form.address.trim()} onClick={saveWallet} className="h-12 rounded-2xl bg-primary text-sm font-semibold text-primary-fg disabled:opacity-40">{form.id ? "Save wallet" : "Add wallet"}</button>
           </div>
         </Modal>
       )}
@@ -539,7 +549,7 @@ function TokenPreview({ token, tracked, onTrade, onWatch }: { token: Token; trac
         <div><dt className="text-xs text-muted">Market cap</dt><dd>{token.mcap}</dd></div>
         <div><dt className="text-xs text-muted">Liquidity</dt><dd>{token.liquidity}</dd></div>
         <div><dt className="text-xs text-muted">Volume</dt><dd>{token.volume}</dd></div>
-        <div><dt className="text-xs text-muted">Score</dt><dd>{token.score}/100</dd></div>
+        <div><dt className="text-xs text-muted">Score</dt><dd>{scoreLabel(token)}</dd></div>
       </dl>
       <button type="button" onClick={onTrade} className="mt-3 h-10 w-full rounded-xl bg-primary text-sm font-semibold text-black">Trade</button>
       <button type="button" onClick={onWatch} disabled={tracked} className="mt-2 h-9 w-full rounded-xl border border-line text-sm disabled:opacity-50">{tracked ? "On the watchlist" : "Add to watchlist"}</button>
@@ -578,9 +588,9 @@ function Empty({ title, body, action, onClick }: { title: string; body: string; 
 
 function Modal({ title, wide, onClose, children }: { title: string; wide?: boolean; onClose: () => void; children: ReactNode }) {
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-black/70 p-3" onClick={onClose}>
-      <div className={`max-h-[88vh] w-full overflow-auto rounded-2xl border border-line bg-bg p-4 ${wide ? "max-w-3xl" : "max-w-md"}`} onClick={(event) => event.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between"><h2 className="text-base font-semibold">{title}</h2><button type="button" aria-label="Close" onClick={onClose}><X className="size-4" /></button></div>
+    <div className="fixed inset-0 z-40 grid place-items-end bg-black/70 p-3 sm:place-items-center" onClick={onClose}>
+      <div className={`max-h-[90vh] w-full overflow-auto rounded-3xl border border-line bg-bg shadow-2xl ${wide ? "max-w-3xl p-4" : "max-w-lg p-4"}`} onClick={(event) => event.stopPropagation()}>
+        <div className="mb-3 flex items-center justify-between"><h2 className="sr-only">{title}</h2><span className="text-base font-semibold">{wide ? title : ""}</span><button type="button" aria-label="Close" onClick={onClose} className="grid size-9 place-items-center rounded-full bg-surface text-muted"><X className="size-4" /></button></div>
         {children}
       </div>
     </div>

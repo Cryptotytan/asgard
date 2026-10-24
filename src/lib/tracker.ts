@@ -3,7 +3,7 @@ import { TOKENS, type Token } from "@/lib/market";
 export const LABELS = ["Smart", "Whale", "Friend", "Insider", "Dev", "KOL", "Sniper"] as const;
 export type Label = (typeof LABELS)[number];
 export type AlertOn = "all" | "buys" | "sells";
-export type NotifyVia = "toast" | "telegram" | "off";
+export type NotifyVia = "toast" | "off";
 
 export type TrackedWallet = {
   id: string;
@@ -34,7 +34,12 @@ export function readTracker(accountId: string): TrackerState {
     if (!raw) return EMPTY_TRACKER;
     const parsed = JSON.parse(raw) as Partial<TrackerState>;
     return {
-      wallets: Array.isArray(parsed.wallets) ? parsed.wallets.slice(0, 100) : [],
+      wallets: Array.isArray(parsed.wallets)
+        ? parsed.wallets.slice(0, 100).map((wallet) => {
+            const notify = String(wallet.notify) === "off" ? "off" : "toast";
+            return { ...wallet, notify } satisfies TrackedWallet;
+          })
+        : [],
       tokens: Array.isArray(parsed.tokens) ? parsed.tokens.filter((item) => typeof item === "string").slice(0, 100) : [],
       folders: Array.isArray(parsed.folders) ? parsed.folders.filter((item) => typeof item === "string") : [],
     };

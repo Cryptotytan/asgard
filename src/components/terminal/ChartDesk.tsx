@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Check, ShieldAlert } from "lucide-react";
 import { CandleChart } from "@/components/terminal/CandleChart";
 import { TokenIcon, TokenPicker } from "@/components/terminal/TokenIcon";
-import { fmt, tokenBySymbol, usd, type Print } from "@/lib/market";
+import { fmt, scoreLabel, tokenBySymbol, usd, type Print } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
 import { liveCandles, livePrints, loadPrints, watchCandles } from "@/lib/live";
 import { executeIntent } from "@/lib/intents";
@@ -58,7 +58,7 @@ export function ChartDesk({ mode, symbol, onSymbol }: { mode: "spot" | "perp"; s
           <Stat k="Liquidity" v={token.liquidity} />
           <Stat k="Volume" v={token.volume} />
           <Stat k="Txns 1H" v={token.txns} />
-          <Stat k="Safety" v={token.score > 0 ? `${token.score}/100` : "Live"} tone={token.verified ? "good" : "bad"} />
+          <Stat k="Safety" v={scoreLabel(token)} tone={token.verified ? "good" : "bad"} />
         </dl>
         <div className="mt-3 flex gap-1 overflow-auto">
           {FRAMES.map((item) => (

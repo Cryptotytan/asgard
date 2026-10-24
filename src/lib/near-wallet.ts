@@ -1,4 +1,5 @@
 import { installBrowserGlobals } from "@/lib/node-globals";
+import { TOKENS } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 
 const CONTRACT_ID = "social.near";
@@ -287,24 +288,51 @@ async function readNearBalance(accountId: string) {
 }
 
 export async function syncWallet(accountId: string) {
-  const { loadNearAssets, formatUnits, resolveAsset } = await import("@/lib/intents");
-  await loadNearAssets();
+  const key = accountId.trim().toLowerCase();
+  if (useDesk.getState().accountId !== key) return;
+  const [near, inventoryRes] = await Promise.all([
+    accountAmount(key),
+    fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(key)}/inventory`).catch(() => null),
+  ]);
+  if (useDesk.getState().accountId !== key) return;
+  const inventory = inventoryRes && inventoryRes.ok ? ((await inventoryRes.json()) as { inventory?: { fts?: { contract?: string; amount?: string; ft_meta?: { symbol?: string; decimals?: number } }[] } }) : {};
   const book: Record<string, number> = {};
-  const near = await accountAmount(accountId);
-  const wrapped = await ftBalance(accountId, "wrap.near");
-  const native = near == null ? 0 : Math.max(0, formatUnits(near, 24) - 0.06);
-  book.NEAR = native + formatUnits(wrapped, 24);
-  if (near && useDesk.getState().accountId === accountId) useDesk.getState().setNearYocto(near);
-  const symbols = ["USDC", "ETH", "wBTC", "AURORA", "RHEA", "SWEAT", "STNEAR", "USDT"];
-  await Promise.all(
-    symbols.map(async (symbol) => {
-      const asset = await resolveAsset(symbol);
-      if (!asset?.contractAddress) return;
-      const units = await ftBalance(accountId, asset.contractAddress);
-      book[symbol] = formatUnits(units, asset.decimals);
-    }),
-  );
-  if (useDesk.getState().accountId === accountId) useDesk.getState().applyChain(book);
+  if (near) {
+    const native = Math.max(0, Number(near) / 1e24 - 0.05);
+    if (native > 0) book.NEAR = native;
+    useDesk.getState().setNearYocto(near);
+  }
+  for (const row of inventory.inventory?.fts ?? []) {
+    const contract = (row.contract ?? "").toLowerCase();
+    const decimals = row.ft_meta?.decimals ?? 0;
+    const amount = Number(row.amount ?? "0") / 10 ** Math.max(0, decimals);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const symbol = terminalSymbol(contract, row.ft_meta?.symbol ?? "");
+    if (!symbol) continue;
+    book[symbol] = (book[symbol] ?? 0) + amount;
+  }
+  if (useDesk.getState().accountId !== key) return;
+  useDesk.getState().applyChain(book);
+}
+
+function terminalSymbol(contract: string, raw: string) {
+  const known: Record<string, string> = {
+    "wrap.near": "NEAR",
+    "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": "USDC",
+    "usdt.tether-token.near": "USDT",
+    "eth.bridge.near": "ETH",
+    "2260fac5e5542a773aa44fbcfedf7c193bc2c599.factory.bridge.near": "wBTC",
+    "aaaaaa20d9e0e2461697782ef11675f668207961.factory.bridge.near": "AURORA",
+    "meta-pool.near": "STNEAR",
+    "token.rhealab.near": "RHEA",
+    "token.sweat": "SWEAT",
+  };
+  if (known[contract]) return known[contract];
+  const mapped = TOKENS.find((token) => token.address?.toLowerCase() === contract);
+  if (mapped) return mapped.symbol;
+  const cleaned = raw.replace(/\s/g, "");
+  const byName = TOKENS.find((token) => !token.address && token.symbol.toLowerCase() === cleaned.toLowerCase());
+  return byName?.symbol ?? cleaned;
 }
 
 export async function sendIntentDeposit(input: {

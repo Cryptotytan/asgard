@@ -44,7 +44,7 @@ export function Markets({
     if (tab !== "Recents") list = list.filter((token) => token.listed && Number.isFinite(token.price) && token.price > 0);
     if (chain !== "All") list = list.filter((token) => token.chain === chain);
     if (verifiedOnly) list = list.filter((token) => token.verified);
-    if (q) list = list.filter((token) => `${token.symbol} ${token.name} ${token.tag} ${token.chain}`.toLowerCase().includes(q));
+    if (q) list = list.filter((token) => `${token.symbol} ${token.name} ${token.tag} ${token.chain} ${token.address ?? ""}`.toLowerCase().includes(q));
     if (tab === "Recents") {
       return watch.recents.map((symbol) => list.find((token) => token.symbol === symbol)).filter((token): token is Token => Boolean(token));
     }

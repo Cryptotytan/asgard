@@ -1,6 +1,6 @@
 import { Check, ShieldAlert } from "lucide-react";
 import type { Token } from "@/lib/market";
-import { isHoneypot } from "@/lib/market";
+import { isHoneypot, scoreLabel } from "@/lib/market";
 
 export function SecurityGate({
   token,
@@ -22,7 +22,7 @@ export function SecurityGate({
               Security agent
             </h2>
             <p className="mt-1 text-sm text-muted">
-              {token.symbol} scored {token.score}/100
+              {token.symbol} {scoreLabel(token) === "—" ? "has no market score yet" : `scored ${scoreLabel(token)}`}
               {blocked ? " · swap blocked" : token.verified ? " · verified" : " · not verified"}
             </p>
           </div>

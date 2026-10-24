@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownUp, ShieldAlert } from "lucide-react";
 import { TokenIcon, TokenPicker, VerifiedMark } from "@/components/terminal/TokenIcon";
-import { fmt, rankQuotes, tokenBySymbol, usd, type Quote } from "@/lib/market";
+import { fmt, rankQuotes, scoreLabel, tokenBySymbol, usd, type Quote } from "@/lib/market";
 import { executeIntent, quoteIntent, type IntentQuote } from "@/lib/intents";
 import { useDesk } from "@/lib/store";
 
@@ -12,6 +12,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
   const accountId = useDesk((s) => s.accountId);
   const chain = useDesk((s) => s.chain);
   const vault = useDesk((s) => s.vault);
+  useDesk((s) => s.clock);
   const receipts = useDesk((s) => s.receipts);
   const positions = useDesk((s) => s.positions);
   const [sellS, setSellS] = useState(focus && focus !== "USDC" ? "USDC" : "NEAR");
@@ -173,7 +174,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
             <p className="flex items-start gap-2 text-sm">
               <VerifiedMark className="mt-0.5" />
               <span>
-                <span className="font-semibold">Verified · {buy.score}/100</span>
+                <span className="font-semibold">Verified · {scoreLabel(buy)}</span>
                 <span className="mt-1 block text-xs text-muted">{buy.notes.join(" · ")}</span>
               </span>
             </p>
@@ -181,7 +182,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
             <p className="flex items-start gap-2 text-sm">
               <ShieldAlert className="mt-0.5 size-4 text-danger" />
               <span>
-                <span className="font-semibold text-danger">Not verified · {buy.score}/100</span>
+                <span className="font-semibold text-danger">Not verified · {scoreLabel(buy)}</span>
                 <span className="mt-1 block text-xs text-muted">{buy.notes.join(" · ")}</span>
               </span>
             </p>

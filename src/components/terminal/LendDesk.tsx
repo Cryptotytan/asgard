@@ -10,6 +10,7 @@ export function LendDesk() {
   const connect = useDesk((s) => s.connect);
   const supplied = useDesk((s) => s.supplied);
   const loans = useDesk((s) => s.loans);
+  const chain = useDesk((s) => s.chain);
   const receipts = useDesk((s) => s.receipts);
   const borrow = useDesk((s) => s.borrow);
   const repay = useDesk((s) => s.repay);
@@ -34,19 +35,19 @@ export function LendDesk() {
       return;
     }
     if (n <= 0 || busy) return;
+    const wallet = useDesk.getState().accountId;
     if (kind === "borrow") {
-      const cost = n * tokenBySymbol(symbol).price;
-      if (cost > room + 1e-6) {
-        setNote("That borrow breaks the 70% collateral limit.");
-        return;
-      }
       const ok = borrow(symbol, n);
-      setNote(ok ? `Borrowed ${symbol} against supplied collateral.` : "Not enough collateral.");
+      setNote(ok ? `Borrowed ${fmt(n)} ${symbol} against this account’s collateral.` : "Not enough collateral on this account.");
       return;
     }
     if (kind === "repay") {
       const ok = repay(symbol, n);
-      setNote(ok ? `Repaid ${symbol}.` : "Not enough balance to repay.");
+      setNote(ok ? `Repaid ${fmt(n)} ${symbol} on this account.` : "This account does not owe that much.");
+      return;
+    }
+    if (kind === "supply" && (chain[symbol] ?? 0) + 1e-8 < n) {
+      setNote(`This wallet holds ${fmt(chain[symbol] ?? 0)} ${symbol}.`);
       return;
     }
     setBusy(true);
@@ -54,13 +55,13 @@ export function LendDesk() {
       if (kind === "supply") {
         setNote("Confirm the supply. NEAR Intents swaps it into stNEAR.");
         const result = await executeIntent({ from: symbol, to: "STNEAR", amount: String(n), accountId, purpose: "Supply" });
+        if (useDesk.getState().accountId !== wallet) return;
         noteSupply(symbol, n);
         addReceipt(`lend:${symbol}`, "STNEAR", result.amountOutHuman);
-        useDesk.getState().applyChain(useDesk.getState().chain);
-        setNote(`Supplied ${symbol}. Receipt ${fmt(result.amountOutHuman)} stNEAR.`);
+        setNote(result.status === "SUCCESS" ? `Supplied ${fmt(n)} ${symbol}. Receipt ${fmt(result.amountOutHuman)} stNEAR.` : `Supply ${result.status}. This account is marked supplied.`);
       } else {
         if ((supplied[symbol] ?? 0) + 1e-8 < n) {
-          setNote("That is more than you supplied.");
+          setNote("That is more than this account supplied.");
           return;
         }
         const parked = receipts[`lend:${symbol}`]?.amount ?? 0;
@@ -74,10 +75,10 @@ export function LendDesk() {
           swapType: "EXACT_OUTPUT",
           maxPay: parked,
         });
+        if (useDesk.getState().accountId !== wallet) return;
         const removed = noteUnsupply(symbol, n);
         if (removed) subReceipt(`lend:${symbol}`, result.amountInHuman);
-        useDesk.getState().applyChain(useDesk.getState().chain);
-        setNote(removed ? `Withdrew ${fmt(result.amountOutHuman)} ${symbol}.` : "That is more than you supplied.");
+        setNote(removed ? `Withdrew ${fmt(result.amountOutHuman)} ${symbol}.` : "That is more than this account supplied.");
       }
     } catch (error) {
       setNote(error instanceof Error ? error.message : "Lending move failed.");
@@ -128,7 +129,7 @@ export function LendDesk() {
                   <div className="min-w-0">
                     <p className="font-semibold">{market.symbol}</p>
                     <p className="truncate font-mono text-[10px] text-muted">
-                      {fmt(supplied[market.symbol] ?? 0)} supplied · {fmt(loans[market.symbol] ?? 0)} debt
+                      wallet {fmt(chain[market.symbol] ?? 0)} · {fmt(supplied[market.symbol] ?? 0)} supplied · {fmt(loans[market.symbol] ?? 0)} debt
                     </p>
                   </div>
                 </div>
@@ -147,7 +148,7 @@ export function LendDesk() {
             </li>
           ))}
         </ul>
-        <p className="mt-2 shrink-0 text-[11px] text-muted">Rates are live from Rhea. Supply and withdraw still settle through NEAR Intents into stNEAR. Borrow stays inside the 70% line.{note ? ` ${note}` : ""}</p>
+        <p className="mt-2 shrink-0 text-[11px] text-muted">Rates are live from Rhea. Supply and withdraw settle through NEAR Intents and stay on this account. Borrow is a 70% line against what this account supplied. It does not mint tokens.{note ? ` ${note}` : ""}</p>
       </section>
     </div>
   );

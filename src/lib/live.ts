@@ -1,4 +1,4 @@
-import { ensureToken, LEND_MARKETS, money, TOKENS, type Candle, type Print } from "@/lib/market";
+import { ensureToken, isCanonical, LEND_MARKETS, money, qualityScore, TOKENS, type Candle, type Print } from "@/lib/market";
 import { iconFor, loadIconBook, syncNearMarkets, applyIconBook } from "@/lib/dex";
 import { useDesk } from "@/lib/store";
 
@@ -197,7 +197,85 @@ function publish(marks: Record<string, number>) {
   useDesk.setState((state) => ({ marks: { ...state.marks, ...marks }, clock: state.clock + 1 }));
 }
 
+export type HolderRow = { account: string; amount: number; share: number | null };
+
+export async function loadHolders(symbol: string, address?: string): Promise<{ rows: HolderRow[]; top10: number | null }> {
+  const contract = address || CONTRACTS[symbol] || "";
+  if (!contract) return { rows: [], top10: null };
+  const [holdersRes, supply, decimals] = await Promise.all([
+    fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(contract)}/holders?page=1&per_page=10`).catch(() => null),
+    ftSupplyRaw(contract),
+    ftDecimals(contract),
+  ]);
+  const body = holdersRes && holdersRes.ok ? ((await holdersRes.json()) as { holders?: { account?: string; amount?: string }[] }) : {};
+  const rows = (body.holders ?? [])
+    .map((row) => {
+      const raw = (row.amount ?? "0").replace(/\D/g, "") || "0";
+      return { account: row.account || "—", amount: humanRaw(raw, decimals), share: sharePct(raw, supply) };
+    })
+    .filter((row) => row.amount > 0);
+  const top10 = rows.some((row) => row.share != null) ? rows.reduce((sum, row) => sum + (row.share ?? 0), 0) : null;
+  return { rows, top10 };
+}
+
+async function ftView(contract: string, method: string) {
+  const response = await fetch("https://rpc.mainnet.near.org", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: method,
+      method: "query",
+      params: { request_type: "call_function", finality: "final", account_id: contract, method_name: method, args_base64: "e30=" },
+    }),
+  });
+  if (!response.ok) throw new Error("rpc");
+  const body = (await response.json()) as { result?: { result?: number[] } };
+  const bytes = body.result?.result ?? [];
+  if (!bytes.length) throw new Error("empty");
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
+async function ftSupplyRaw(contract: string) {
+  try {
+    const text = (await ftView(contract, "ft_total_supply")).replace(/"/g, "").trim();
+    return /^\d+$/.test(text) ? text : "0";
+  } catch {
+    return "0";
+  }
+}
+
+async function ftDecimals(contract: string) {
+  try {
+    const meta = JSON.parse(await ftView(contract, "ft_metadata")) as { decimals?: number };
+    return Number.isFinite(meta.decimals) ? Number(meta.decimals) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function sharePct(amount: string, supply: string) {
+  try {
+    const a = BigInt(amount);
+    const s = BigInt(supply);
+    if (a <= 0n || s <= 0n) return null;
+    return Number((a * 10000n) / s) / 100;
+  } catch {
+    return null;
+  }
+}
+
+function humanRaw(raw: string, decimals: number) {
+  if (!/^\d+$/.test(raw)) return 0;
+  if (decimals <= 0) return Number(raw);
+  const whole = raw.length > decimals ? raw.slice(0, raw.length - decimals) : "0";
+  const frac = raw.padStart(decimals + 1, "0").slice(-decimals).slice(0, 6).replace(/0+$/, "");
+  const value = Number(frac ? `${whole}.${frac}` : whole);
+  return Number.isFinite(value) ? value : 0;
+}
+
 let marketFlight: Promise<void> | null = null;
+let flightAt = 0;
 
 async function refreshMarkets() {
   const marks: Record<string, number> = {};
@@ -244,28 +322,32 @@ async function refreshMarkets() {
     .filter((market) => market.supplyApy > 0 || market.borrowApy > 0)
     .sort((a, b) => b.supplyApy - a.supplyApy);
   if (lend.length) LEND_MARKETS.splice(0, LEND_MARKETS.length, ...lend);
-  publish(marks);
   const [dexMarks, icons, cap] = await Promise.all([dexPromise, iconsPromise, capPromise]);
   Object.assign(marks, dexMarks);
-  if (applyIconBook(icons) || cap > 0) {
-    if (cap > 0) {
-      const near = TOKENS.find((token) => token.symbol === "NEAR");
-      if (near) {
-        near.mcapN = cap;
-        near.mcap = money(cap);
-        near.fdv = money(cap);
-      }
+  if (cap > 0) {
+    const near = TOKENS.find((token) => token.symbol === "NEAR");
+    if (near) {
+      near.mcapN = cap;
+      near.mcap = money(cap);
+      near.fdv = money(cap);
     }
-    publish(marks);
   }
+  applyIconBook(icons);
+  for (const token of TOKENS) {
+    token.verified = isCanonical(token);
+    token.score = qualityScore(token) ?? 0;
+  }
+  publish(marks);
 }
 
 export async function refreshLive() {
-  if (marketFlight) return marketFlight;
-  marketFlight = refreshMarkets().finally(() => {
-    marketFlight = null;
+  if (marketFlight && Date.now() - flightAt < 12_000) return marketFlight;
+  flightAt = Date.now();
+  const job = refreshMarkets().finally(() => {
+    if (marketFlight === job) marketFlight = null;
   });
-  return marketFlight;
+  marketFlight = job;
+  return job;
 }
 
 function agoFrom(ns: string) {
@@ -324,7 +406,10 @@ export function startLiveFeed() {
     void refreshLive().catch(() => undefined);
   };
   run();
-  window.setInterval(run, 12_000);
+  window.setInterval(run, 10_000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") run();
+  });
   window.setTimeout(() => {
     void loadCandles("NEAR", "1D").catch(() => undefined);
     void loadCandles("NEAR", "5m").catch(() => undefined);

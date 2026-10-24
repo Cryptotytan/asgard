@@ -948,13 +948,54 @@ for (const token of TOKENS) {
   token.windows = { m5: 0, h1: 0, h6: 0, h24: 0 };
   token.volBy = { m5: 0, h1: 0, h6: 0, h24: 0 };
   token.listed = false;
-  token.score = 0;
+  token.score = qualityScore(token) ?? 0;
+  token.verified = isCanonical(token);
   token.safety = { top10: 0, insiders: 0, snipers: 0, bundlers: 0, dev: 0, lp: 0, buyTax: 0, sellTax: 0, holders: "—" };
-  token.notes = ["DefiLlama price", "Rhea liquidity when the asset is listed"];
+  token.notes = isCanonical(token) ? ["Widely used NEAR asset"] : ["NEAR market"];
 }
 
 export function isGeneratedIcon(icon: string | undefined) {
   return !icon || icon.startsWith("data:image/svg+xml;utf8,");
+}
+
+const CANONICAL_SYMBOLS = new Set(["NEAR", "WNEAR", "USDC", "USDC.E", "USDT", "USDT.E", "ETH", "WETH", "WBTC", "BTC", "DAI", "FRAX", "AURORA", "STNEAR"]);
+const CANONICAL_ADDR = new Set([
+  "wrap.near",
+  "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+  "usdt.tether-token.near",
+  "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.factory.bridge.near",
+  "dac17f958d2ee523a2206206994597c13d831ec7.factory.bridge.near",
+  "eth.bridge.near",
+  "2260fac5e5542a773aa44fbcfedf7c193bc2c599.factory.bridge.near",
+  "aaaaaa20d9e0e2461697782ef11675f668207961.factory.bridge.near",
+  "meta-pool.near",
+  "853d955acef822db058eb8505911ed77f175b99e.factory.bridge.near",
+  "6b175474e89094c44da98b954eedeac495271d0f.factory.bridge.near",
+]);
+
+export function isCanonical(token: { symbol: string; address?: string }) {
+  if (CANONICAL_SYMBOLS.has(token.symbol.toUpperCase())) return true;
+  const address = token.address?.toLowerCase();
+  return Boolean(address && CANONICAL_ADDR.has(address));
+}
+
+export function qualityScore(token: { liqN: number; volN: number; txnsN: number; ageH: number; mcapN?: number }): number | null {
+  const liqN = token.liqN || 0;
+  const volN = token.volN || 0;
+  const txnsN = token.txnsN || 0;
+  const mcapN = token.mcapN || 0;
+  if (!(liqN > 0) && !(volN > 0) && !(txnsN > 0) && !(mcapN > 0)) return null;
+  const liq = liqN > 0 ? Math.min(35, Math.log10(liqN) * 7) : 0;
+  const vol = volN > 0 ? Math.min(25, Math.log10(volN) * 5.5) : 0;
+  const tx = txnsN > 0 ? Math.min(15, Math.log10(txnsN) * 6) : 0;
+  const cap = mcapN > 0 ? Math.min(15, Math.log10(mcapN) * 1.6) : 0;
+  const age = token.ageH > 0 ? Math.min(10, Math.log10(token.ageH + 1) * 3.2) : 0;
+  return Math.max(1, Math.min(100, Math.round(liq + vol + tx + cap + age)));
+}
+
+export function scoreLabel(token: { liqN: number; volN: number; txnsN: number; ageH: number; mcapN?: number }) {
+  const score = qualityScore(token);
+  return score == null ? "—" : `${score}/100`;
 }
 
 function iconRank(icon: string | undefined) {
