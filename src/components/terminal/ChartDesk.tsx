@@ -78,7 +78,7 @@ export function ChartDesk({ mode, symbol, onSymbol }: { mode: "spot" | "perp"; s
             {((delta / open.o) * 100).toFixed(2)}%)
           </span>
         </p>
-        <CandleChart seed={`${symbol}-${frame}`} last={mark} series={liveCandles(symbol)} />
+        <CandleChart seed={`${symbol}-${frame}`} last={mark} frame={frame} series={liveCandles(symbol)} />
         <div className="mt-2 flex gap-1 overflow-auto">
           {(["Trades", "Positions", "Orders"] as const).map((item) => (
             <button
