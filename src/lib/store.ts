@@ -75,7 +75,6 @@ type Desk = {
   closePerp: (id: string, reason?: string) => boolean;
   depositVault: (symbol: string, amount: number) => boolean;
   withdrawVault: (symbol: string, amount: number) => boolean;
-  rebalance: () => void;
   supply: (symbol: string, amount: number) => boolean;
   withdrawSupply: (symbol: string, amount: number) => boolean;
   borrow: (symbol: string, amount: number) => boolean;
@@ -359,24 +358,6 @@ export const useDesk = create<Desk>((set, get) => ({
       activity: push(activity, "Vault withdraw", symbol, worth(symbol, amount, marks)),
     });
     return true;
-  },
-
-  rebalance: () => {
-    const { vault, marks, activity } = get();
-    let credit = 0;
-    const next = { ...vault };
-    for (const [symbol, amount] of Object.entries(next)) {
-      if (symbol === "USDC" || amount <= 0) continue;
-      const slice = amount * 0.08;
-      next[symbol] = amount - slice;
-      credit += worth(symbol, slice, marks);
-    }
-    if (credit <= 0) return;
-    next.USDC = (next.USDC ?? 0) + credit;
-    set({
-      vault: next,
-      activity: push(activity, "Vault rebalance", "Intents moved idle capital to the deeper pool", credit),
-    });
   },
 
   supply: (symbol, amount) => {

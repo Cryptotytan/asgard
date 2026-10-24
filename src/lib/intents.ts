@@ -24,7 +24,7 @@ export type IntentQuote = {
   timeEstimate: number;
 };
 
-type Purpose = "Swap" | "Spot" | "Vault deposit" | "Vault withdraw" | "Vault rebalance" | "Supply" | "Withdraw supply";
+type Purpose = "Swap" | "Spot" | "Vault deposit" | "Vault withdraw" | "Supply" | "Withdraw supply";
 
 const ALIAS: Record<string, string> = {
   NEAR: "wNEAR",

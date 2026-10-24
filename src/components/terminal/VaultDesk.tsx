@@ -58,32 +58,6 @@ export function VaultDesk() {
     }
   }
 
-  async function rebalance() {
-    if (!connected || !accountId) {
-      connect();
-      setNote("Connect a NEAR wallet first.");
-      return;
-    }
-    const slice = (vault.STNEAR ?? 0) * 0.08;
-    if (slice <= 0) {
-      setNote("Deposit first. Rebalance swaps stNEAR to USDC.");
-      return;
-    }
-    setBusy(true);
-    setNote("Confirm the rebalance. NEAR Intents swaps a slice of stNEAR to USDC.");
-    try {
-      const result = await executeIntent({ from: "STNEAR", to: "USDC", amount: String(slice), accountId, purpose: "Vault rebalance", maxPay: vault.STNEAR ?? 0 });
-      dropVault("STNEAR", result.amountInHuman);
-      const parked = Math.min(result.amountOutHuman, useDesk.getState().balances.USDC ?? result.amountOutHuman);
-      if (parked > 0) depositVault("USDC", parked);
-      setNote(`Rebalanced ${fmt(result.amountOutHuman)} USDC.`);
-    } catch (error) {
-      setNote(error instanceof Error ? error.message : "Rebalance failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <div className="grid h-full min-h-0 content-center items-start gap-1.5 overflow-hidden sm:h-auto sm:content-start sm:gap-3 sm:overflow-visible lg:grid-cols-3">
       <section className="deck panel p-2 sm:p-4 lg:col-span-2">
@@ -150,14 +124,6 @@ export function VaultDesk() {
             Withdraw
           </button>
         </div>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void rebalance()}
-          className="mt-1.5 h-8 w-full rounded-full border border-primary text-sm text-primary disabled:opacity-50 sm:mt-2 sm:h-10"
-        >
-          Rebalance
-        </button>
         {note && <p className="mt-1.5 truncate font-mono text-[11px] text-primary">{note}</p>}
       </section>
     </div>
