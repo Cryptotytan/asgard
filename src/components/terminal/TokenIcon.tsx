@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { lookupNearToken, searchNearTokens } from "@/lib/dex";
@@ -120,33 +121,47 @@ export function TokenPicker({
       window.clearTimeout(timer);
     };
   }, [open, query]);
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-40 grid place-items-end bg-bg/70 p-3 sm:place-items-center" onClick={onClose}>
-      <div className="panel flex max-h-[86vh] w-full max-w-2xl flex-col p-4" onClick={(event) => event.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Choose token</h2>
-          <button type="button" aria-label="Close" onClick={onClose} className="grid size-11 place-items-center">
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+  if (!open || typeof document === "undefined") return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex bg-bg/80 sm:items-center sm:justify-center sm:bg-bg/70 sm:p-4" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="choose-token-title"
+        className="panel flex h-[100dvh] max-h-[100dvh] w-full max-w-2xl flex-col overflow-hidden rounded-none sm:h-auto sm:max-h-[min(40rem,86vh)] sm:rounded-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2 sm:pt-4">
+          <h2 id="choose-token-title" className="text-lg font-semibold">Choose token</h2>
+          <button type="button" aria-label="Close" onClick={onClose} className="grid size-11 shrink-0 place-items-center rounded-full bg-surface-2">
             <X className="size-4" />
           </button>
         </div>
-        <div className="grid min-h-0 gap-3 sm:grid-cols-[12rem_minmax(0,1fr)]">
-          <div className="flex flex-wrap gap-2 sm:flex-col">
+        <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-3 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:grid-cols-[12rem_minmax(0,1fr)] sm:grid-rows-1 sm:pb-4">
+          <div className="flex min-w-0 flex-wrap content-start gap-2 sm:flex-col sm:flex-nowrap">
             {CHAINS.map((item) => (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => setChain(item.id)}
-                className={`flex h-11 items-center gap-2 rounded-xl px-3 text-left text-sm ${chain === item.id ? "bg-surface-2 text-fg" : "text-muted"}`}
+                className={`flex h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-left text-sm sm:h-11 sm:w-full ${chain === item.id ? "bg-surface-2 text-fg" : "text-muted"}`}
               >
                 {"icon" in item ? <img src={item.icon} alt="" className="size-5 rounded-full object-cover" /> : <span className="size-5 rounded-full bg-surface-2" />}
                 {item.label}
               </button>
             ))}
           </div>
-          <div className="min-h-0">
-            <label className="mb-2 flex h-11 items-center gap-2 rounded-xl border border-line px-3">
-              <Search className="size-4 text-muted" />
+          <div className="flex min-h-0 min-w-0 flex-col">
+            <label className="mb-2 flex h-11 shrink-0 items-center gap-2 rounded-xl border border-line px-3">
+              <Search className="size-4 shrink-0 text-muted" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -154,7 +169,7 @@ export function TokenPicker({
                 className="min-w-0 flex-1 bg-transparent text-sm outline-none"
               />
             </label>
-            <ul className="max-h-80 overflow-x-hidden overflow-y-auto">
+            <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain sm:max-h-80 sm:flex-none">
               {list.map((token) => (
                 <li key={`${token.symbol}-${token.address ?? ""}`}>
                   <button
@@ -172,12 +187,12 @@ export function TokenPicker({
                         {token.verified && <VerifiedMark />}
                       </span>
                       <span className="flex items-center gap-1 truncate text-xs text-muted">
-                        <img src={CHAIN_ICON[token.chain]} alt="" className="size-3.5 rounded-full object-cover" />
+                        <img src={CHAIN_ICON[token.chain]} alt="" className="size-3.5 shrink-0 rounded-full object-cover" />
                         {token.name} · {token.chain}
                       </span>
                       {token.address && <span className="block truncate font-mono text-[10px] text-muted">{token.address}</span>}
                     </span>
-                    <span className="text-right font-mono text-xs">
+                    <span className="shrink-0 text-right font-mono text-xs">
                       <span className="block">{usd(token.price)}</span>
                       <span className="text-muted">{balances ? fmt(balances[token.symbol] ?? 0) : token.chain}</span>
                     </span>
@@ -193,6 +208,7 @@ export function TokenPicker({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
