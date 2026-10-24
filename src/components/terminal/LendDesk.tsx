@@ -148,7 +148,7 @@ export function LendDesk() {
             </li>
           ))}
         </ul>
-        <p className="mt-2 shrink-0 text-[11px] text-muted">Rates are live from Rhea. Supply and withdraw settle through NEAR Intents and stay on this account. Borrow is a 70% line against what this account supplied. It does not mint tokens.{note ? ` ${note}` : ""}</p>
+        {note && <p className="mt-2 shrink-0 text-[11px] text-muted">{note}</p>}
       </section>
     </div>
   );

@@ -131,21 +131,21 @@ export function TokenPicker({
   }, [open]);
   if (!open || typeof document === "undefined") return null;
   return createPortal(
-    <div className="fixed inset-0 z-[80] flex bg-bg/80 sm:items-center sm:justify-center sm:bg-bg/70 sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-bg/70 p-3 sm:p-4" onClick={onClose}>
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="choose-token-title"
-        className="panel flex h-[100dvh] max-h-[100dvh] w-full max-w-2xl flex-col overflow-hidden rounded-none sm:h-auto sm:max-h-[min(40rem,86vh)] sm:rounded-2xl"
+        className="panel flex h-[min(32rem,calc(100dvh-2.5rem))] w-full max-w-2xl flex-col overflow-hidden rounded-2xl sm:h-[min(40rem,calc(100dvh-3rem))]"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex shrink-0 items-center justify-between gap-3 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2 sm:pt-4">
+        <div className="flex shrink-0 items-center justify-between gap-3 px-4 pt-4 pb-2">
           <h2 id="choose-token-title" className="text-lg font-semibold">Choose token</h2>
           <button type="button" aria-label="Close" onClick={onClose} className="grid size-11 shrink-0 place-items-center rounded-full bg-surface-2">
             <X className="size-4" />
           </button>
         </div>
-        <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-3 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:grid-cols-[12rem_minmax(0,1fr)] sm:grid-rows-1 sm:pb-4">
+        <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-3 px-4 pb-4 sm:grid-cols-[12rem_minmax(0,1fr)] sm:grid-rows-1">
           <div className="flex min-w-0 flex-wrap content-start gap-2 sm:flex-col sm:flex-nowrap">
             {CHAINS.map((item) => (
               <button
@@ -169,7 +169,7 @@ export function TokenPicker({
                 className="min-w-0 flex-1 bg-transparent text-sm outline-none"
               />
             </label>
-            <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain sm:max-h-80 sm:flex-none">
+            <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               {list.map((token) => (
                 <li key={`${token.symbol}-${token.address ?? ""}`}>
                   <button
