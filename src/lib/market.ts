@@ -925,38 +925,6 @@ export const TOKENS: Token[] = [
 ];
 
 const KEEP = new Set(["NEAR", "USDC", "ETH", "wBTC", "AURORA", "RHEA", "SWEAT", "STNEAR", "BRRR", "LINEAR", "HOT"]);
-for (let i = TOKENS.length - 1; i >= 0; i -= 1) {
-  if (!KEEP.has(TOKENS[i].symbol)) TOKENS.splice(i, 1);
-}
-for (const token of TOKENS) {
-  token.mcapN = 0;
-  token.liqN = 0;
-  token.volN = 0;
-  token.txnsN = 0;
-  token.buys = 0;
-  token.sells = 0;
-  token.holdersN = 0;
-  token.ageH = 0;
-  token.mcap = "—";
-  token.fdv = "—";
-  token.liquidity = "—";
-  token.volume = "—";
-  token.txns = "—";
-  token.supply = "—";
-  token.change = 0;
-  token.price = Number.NaN;
-  token.windows = { m5: 0, h1: 0, h6: 0, h24: 0 };
-  token.volBy = { m5: 0, h1: 0, h6: 0, h24: 0 };
-  token.listed = false;
-  token.score = qualityScore(token) ?? 0;
-  token.verified = isCanonical(token);
-  token.safety = { top10: 0, insiders: 0, snipers: 0, bundlers: 0, dev: 0, lp: 0, buyTax: 0, sellTax: 0, holders: "—" };
-  token.notes = isCanonical(token) ? ["Widely used NEAR asset"] : ["NEAR market"];
-}
-
-export function isGeneratedIcon(icon: string | undefined) {
-  return !icon || icon.startsWith("data:image/svg+xml;utf8,");
-}
 
 const CANONICAL_SYMBOLS = new Set(["NEAR", "WNEAR", "USDC", "USDC.E", "USDT", "USDT.E", "ETH", "WETH", "WBTC", "BTC", "DAI", "FRAX", "AURORA", "STNEAR"]);
 const CANONICAL_ADDR = new Set([
@@ -991,6 +959,39 @@ export function qualityScore(token: { liqN: number; volN: number; txnsN: number;
   const cap = mcapN > 0 ? Math.min(15, Math.log10(mcapN) * 1.6) : 0;
   const age = token.ageH > 0 ? Math.min(10, Math.log10(token.ageH + 1) * 3.2) : 0;
   return Math.max(1, Math.min(100, Math.round(liq + vol + tx + cap + age)));
+}
+
+for (let i = TOKENS.length - 1; i >= 0; i -= 1) {
+  if (!KEEP.has(TOKENS[i].symbol)) TOKENS.splice(i, 1);
+}
+for (const token of TOKENS) {
+  token.mcapN = 0;
+  token.liqN = 0;
+  token.volN = 0;
+  token.txnsN = 0;
+  token.buys = 0;
+  token.sells = 0;
+  token.holdersN = 0;
+  token.ageH = 0;
+  token.mcap = "—";
+  token.fdv = "—";
+  token.liquidity = "—";
+  token.volume = "—";
+  token.txns = "—";
+  token.supply = "—";
+  token.change = 0;
+  token.price = Number.NaN;
+  token.windows = { m5: 0, h1: 0, h6: 0, h24: 0 };
+  token.volBy = { m5: 0, h1: 0, h6: 0, h24: 0 };
+  token.listed = false;
+  token.score = qualityScore(token) ?? 0;
+  token.verified = isCanonical(token);
+  token.safety = { top10: 0, insiders: 0, snipers: 0, bundlers: 0, dev: 0, lp: 0, buyTax: 0, sellTax: 0, holders: "—" };
+  token.notes = isCanonical(token) ? ["Widely used NEAR asset"] : ["NEAR market"];
+}
+
+export function isGeneratedIcon(icon: string | undefined) {
+  return !icon || icon.startsWith("data:image/svg+xml;utf8,");
 }
 
 export function scoreLabel(token: { liqN: number; volN: number; txnsN: number; ageH: number; mcapN?: number }) {
