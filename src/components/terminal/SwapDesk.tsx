@@ -46,7 +46,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
     window.setTimeout(() => {
       setSellS(nextSell);
       setBuyS(nextBuy);
-    }, 210);
+    }, 250);
     window.setTimeout(() => {
       turnLock.current = false;
     }, 440);
@@ -169,7 +169,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
         </div>
       </aside>
 
-      <section className="deck panel max-h-full overflow-hidden p-2.5 sm:p-4">
+      <section className="deck panel max-h-full overflow-visible p-2.5 sm:p-4">
         <h2 className="text-sm font-semibold tracking-tight sm:text-xl">Swap your assets</h2>
         <p className="mt-1 hidden text-sm text-muted sm:block">A live NEAR Intents 1-Click quote. Confirming sends the deposit from your wallet.</p>
         <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-muted sm:mt-3 sm:text-xs">

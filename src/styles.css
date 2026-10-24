@@ -147,17 +147,14 @@
   }
 
   .flipper {
+    position: relative;
+    z-index: 20;
     transform-style: preserve-3d;
-    transition: transform 0.38s cubic-bezier(0.2, 0, 0, 1);
+    transition: transform 0.45s cubic-bezier(0.2, 0.7, 0.2, 1);
   }
 
-  .flipper.is-on,
-  .flipper.is-on svg {
-    transform: rotateX(180deg);
-  }
-
-  .flipper svg {
-    transition: transform 0.38s cubic-bezier(0.2, 0, 0, 1);
+  .flipper.is-on {
+    transform: rotate(180deg);
   }
 
   .stage {
@@ -192,14 +189,28 @@
     animation: book-page 0.45s cubic-bezier(0.2, 0.7, 0.2, 1);
   }
 
-  .swap-tile.is-a,
-  .swap-tile.is-b {
-    animation: tile-turn 0.45s ease;
-    transform-origin: center;
+  .swap-stage {
+    perspective: 1100px;
   }
 
-  .swap-tile.is-b {
-    animation-direction: reverse;
+  .swap-tile {
+    transform-style: preserve-3d;
+  }
+
+  .swap-tile.is-sell.is-a {
+    animation: swap-down-a 0.5s cubic-bezier(0.22, 0.7, 0.2, 1);
+  }
+
+  .swap-tile.is-buy.is-a {
+    animation: swap-up-a 0.5s cubic-bezier(0.22, 0.7, 0.2, 1);
+  }
+
+  .swap-tile.is-sell.is-b {
+    animation: swap-down-b 0.5s cubic-bezier(0.22, 0.7, 0.2, 1);
+  }
+
+  .swap-tile.is-buy.is-b {
+    animation: swap-up-b 0.5s cubic-bezier(0.22, 0.7, 0.2, 1);
   }
 
   .route-deck {
@@ -291,6 +302,54 @@
   }
   to {
     opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes swap-down-a {
+  0% {
+    transform: translate3d(0, 0, 0) rotateX(0);
+  }
+  50% {
+    transform: translate3d(0, 2.6rem, 28px) rotateX(180deg);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes swap-up-a {
+  0% {
+    transform: translate3d(0, 0, 0) rotateX(0);
+  }
+  50% {
+    transform: translate3d(0, -2.6rem, 28px) rotateX(-180deg);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes swap-down-b {
+  0% {
+    transform: translate3d(0, 0, 0) rotateX(0);
+  }
+  50% {
+    transform: translate3d(0, 2.6rem, 28px) rotateX(180deg);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes swap-up-b {
+  0% {
+    transform: translate3d(0, 0, 0) rotateX(0);
+  }
+  50% {
+    transform: translate3d(0, -2.6rem, 28px) rotateX(-180deg);
+  }
+  100% {
     transform: none;
   }
 }
