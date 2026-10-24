@@ -1,20 +1,74 @@
 import "@/lib/node-globals";
-import { setupWalletSelector } from "@near-wallet-selector/core";
-import { setupModal } from "@near-wallet-selector/modal-ui";
-import { setupMeteorWallet } from "@near-wallet-selector/meteor-wallet";
-import { setupHotWallet } from "@near-wallet-selector/hot-wallet";
-import { setupHereWallet } from "@near-wallet-selector/here-wallet";
-import { setupMyNearWallet } from "@near-wallet-selector/my-near-wallet";
-import { setupNightly } from "@near-wallet-selector/nightly";
-import { setupSender } from "@near-wallet-selector/sender";
-import { setupIntearWallet } from "@near-wallet-selector/intear-wallet";
-import "@near-wallet-selector/modal-ui/styles.css";
 import { useDesk } from "@/lib/store";
 
 const CONTRACT_ID = "social.near";
 
 let booted: Promise<void> | null = null;
 let modalShow: (() => void) | null = null;
+
+type Selector = {
+  store: { getState: () => { accounts: { accountId: string }[] } };
+  on: (event: "signedIn" | "signedOut", cb: () => void) => void;
+  wallet: () => Promise<{
+    signOut: () => Promise<void>;
+    signAndSendTransaction: (tx: unknown) => Promise<unknown>;
+  }>;
+};
+let selectorPromise: Promise<Selector> | null = null;
+
+function boot() {
+  if (typeof window === "undefined") return Promise.resolve();
+  hideHereWalletOnCancel();
+  if (!booted) {
+    booted = (async () => {
+      const [{ setupWalletSelector }, { setupModal }, meteor, hot, here, mine, nightly, sender, intear] = await Promise.all([
+        import("@near-wallet-selector/core"),
+        import("@near-wallet-selector/modal-ui"),
+        import("@near-wallet-selector/meteor-wallet"),
+        import("@near-wallet-selector/hot-wallet"),
+        import("@near-wallet-selector/here-wallet"),
+        import("@near-wallet-selector/my-near-wallet"),
+        import("@near-wallet-selector/nightly"),
+        import("@near-wallet-selector/sender"),
+        import("@near-wallet-selector/intear-wallet"),
+        import("@near-wallet-selector/modal-ui/styles.css"),
+      ]);
+      const selector = await setupWalletSelector({
+        network: "mainnet",
+        modules: [
+          meteor.setupMeteorWallet(),
+          hot.setupHotWallet(),
+          here.setupHereWallet(),
+          mine.setupMyNearWallet(),
+          nightly.setupNightly(),
+          sender.setupSender(),
+          intear.setupIntearWallet(),
+        ],
+      });
+      selectorPromise = Promise.resolve(selector as Selector);
+      const apply = () => {
+        const id = selector.store.getState().accounts[0]?.accountId ?? null;
+        useDesk.getState().setAccount(id);
+        if (id) {
+          void readNearBalance(id);
+          void syncWallet(id);
+          void import("@/lib/intents").then((mod) => mod.resumeIntent());
+        }
+      };
+      selector.on("signedIn", apply);
+      selector.on("signedOut", apply);
+      const modal = setupModal(selector, {
+        contractId: CONTRACT_ID,
+        methodNames: ["asgard:connect"],
+        theme: "dark",
+        description: "Meteor, HOT, MyNearWallet, Nightly, Sender, Intear, and HERE on NEAR mainnet.",
+      });
+      modalShow = () => modal.show();
+      apply();
+    })();
+  }
+  return booted;
+}
 
 export function openNearWallets() {
   return boot().then(() => modalShow?.());
@@ -36,50 +90,6 @@ export async function signOutNear() {
 
 export function restoreNearSession() {
   return boot();
-}
-
-type Selector = Awaited<ReturnType<typeof setupWalletSelector>>;
-let selectorPromise: Promise<Selector> | null = null;
-
-function boot() {
-  if (typeof window === "undefined") return Promise.resolve();
-  hideHereWalletOnCancel();
-  if (!booted) {
-    selectorPromise = setupWalletSelector({
-      network: "mainnet",
-      modules: [
-        setupMeteorWallet(),
-        setupHotWallet(),
-        setupHereWallet(),
-        setupMyNearWallet(),
-        setupNightly(),
-        setupSender(),
-        setupIntearWallet(),
-      ],
-    });
-    booted = selectorPromise.then((selector) => {
-      const apply = () => {
-        const id = selector.store.getState().accounts[0]?.accountId ?? null;
-        useDesk.getState().setAccount(id);
-        if (id) {
-          void readNearBalance(id);
-          void syncWallet(id);
-          void import("@/lib/intents").then((mod) => mod.resumeIntent());
-        }
-      };
-      selector.on("signedIn", apply);
-      selector.on("signedOut", apply);
-      const modal = setupModal(selector, {
-        contractId: CONTRACT_ID,
-        methodNames: ["asgard:connect"],
-        theme: "dark",
-        description: "Meteor, HOT, MyNearWallet, Nightly, Sender, Intear, and HERE on NEAR mainnet.",
-      });
-      modalShow = () => modal.show();
-      apply();
-    });
-  }
-  return booted;
 }
 
 let hereCancelWired = false;

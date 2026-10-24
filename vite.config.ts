@@ -142,6 +142,33 @@ function authPopupPlugin(): Plugin {
   };
 }
 
+function walletBrowserOnlyPlugin(): Plugin {
+  const stub = "\0wallet-browser-only";
+  return {
+    name: "app-builder:wallet-browser-only",
+    enforce: "pre",
+    resolveId(id, _importer, options) {
+      if (!options?.ssr) return;
+      if (id === "@near-wallet-selector/modal-ui/styles.css" || id.startsWith("@near-wallet-selector/")) return stub;
+    },
+    load(id) {
+      if (id !== stub) return;
+      return `
+        export default {};
+        export const setupWalletSelector = () => Promise.reject(new Error("Wallet selector is browser-only"));
+        export const setupModal = () => { throw new Error("Wallet selector is browser-only"); };
+        export const setupMeteorWallet = () => ({});
+        export const setupHotWallet = () => ({});
+        export const setupHereWallet = () => ({});
+        export const setupMyNearWallet = () => ({});
+        export const setupNightly = () => ({});
+        export const setupSender = () => ({});
+        export const setupIntearWallet = () => ({});
+      `;
+    },
+  };
+}
+
 // `0.0.0.0:8080` is the live-preview contract — don't change host/port.
 // The dev server starts once `src/router.tsx` and `src/routes/` exist — see
 // AGENTS.md § "First scaffold".
@@ -165,6 +192,7 @@ export default defineConfig(({ command, isPreview }) => ({
     appEnvPlugin(),
     // PWA head + ?install=1 tutorial page; runs before Start/Nitro.
     grokPwaPlugin(),
+    walletBrowserOnlyPlugin(),
     tailwindcss(),
     tanstackStart(),
     ...(command === "build" || isPreview
