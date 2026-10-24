@@ -226,7 +226,7 @@ export function TokenPicker({
                     : needle
                       ? "No token matches that name or contract."
                       : chain === "Aurora" || chain === "Ethereum"
-                        ? `No live ${chain} markets right now.`
+                        ? `No tradable ${chain} markets. Swaps settle on this NEAR account.`
                         : "Loading live NEAR markets…"}
                 </li>
               )}

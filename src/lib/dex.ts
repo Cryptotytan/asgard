@@ -1,4 +1,5 @@
 import { ensureToken, isCanonical, money, preferIcon, qualityScore, TOKENS, type WindowId } from "@/lib/market";
+import { tradableNearAssets, type IntentAsset } from "@/lib/intents";
 import { useDesk } from "@/lib/store";
 
 const REF = "https://indexer.ref.finance/list-token";
@@ -60,6 +61,56 @@ type DexPair = {
 export let marketsSynced = false;
 
 let iconBook: Map<string, string> | null = null;
+let tradableGate: Map<string, IntentAsset> | null = null;
+
+async function tradableMap() {
+  if (tradableGate) return tradableGate;
+  const assets = await tradableNearAssets();
+  const map = new Map<string, IntentAsset>();
+  for (const asset of assets) {
+    if (!asset.contractAddress) continue;
+    map.set(asset.contractAddress.toLowerCase(), asset);
+  }
+  tradableGate = map;
+  return map;
+}
+
+function canTrade(address: string) {
+  return !tradableGate || tradableGate.has(address.toLowerCase());
+}
+
+function publishTradable(map: Map<string, IntentAsset>) {
+  const allowed = new Set(map.keys());
+  for (const token of TOKENS) {
+    const address = token.address?.toLowerCase();
+    if (!address || !allowed.has(address) || token.chain !== "NEAR") token.listed = false;
+  }
+  for (const asset of map.values()) {
+    const address = asset.contractAddress ?? "";
+    const key = address.toLowerCase();
+    let token = TOKENS.find((item) => item.address?.toLowerCase() === key);
+    const preferred = ADDRESS_SYMBOL[address] ?? ADDRESS_SYMBOL[key] ?? asset.symbol;
+    if (!token) {
+      const clash = TOKENS.some((item) => item.symbol.toUpperCase() === preferred.toUpperCase());
+      const symbol = clash ? `${preferred}.${address.slice(0, 4)}` : preferred;
+      token = ensureToken({
+        symbol,
+        name: preferred,
+        price: Number(asset.price),
+        chain: "NEAR",
+        icon: iconFor(address, symbol) || undefined,
+        address,
+      });
+      if (token.address && token.address.toLowerCase() !== key) continue;
+    }
+    token.address = address;
+    token.chain = "NEAR";
+    token.price = Number(asset.price);
+    token.listed = true;
+    token.verified = isCanonical({ symbol: token.symbol, address });
+    token.notes = token.verified ? ["Widely used NEAR asset"] : ["Tradable on NEAR Intents"];
+  }
+}
 let iconAt = 0;
 let discover: string[] = [];
 
@@ -163,6 +214,7 @@ function windows(source: Partial<Record<WindowId, number>> | undefined): Record<
 
 export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (marks: Record<string, number>) => void) {
   if (book) iconBook = book;
+  const gate = await tradableMap().catch(() => null);
   const marks: Record<string, number> = {};
   const batches = await Promise.all(ANCHORS.map((address) => getJson<DexPair[]>(`${PAIRS}/${address}`).catch(() => null)));
   const pairs = batches.flatMap((rows) => (Array.isArray(rows) ? rows : []));
@@ -178,6 +230,7 @@ export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (mar
   };
   for (const pair of pairs) take(pair);
   paintDex(best, marks);
+  if (gate) publishTradable(gate);
   marketsSynced = pairs.length > 0 || marketsSynced;
   onPaint?.({ ...marks });
 
@@ -193,6 +246,7 @@ export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (mar
   for (const rows of extras) for (const pair of Array.isArray(rows) ? rows : []) take(pair);
   if (extras.length) {
     paintDex(best, marks);
+    if (gate) publishTradable(gate);
     onPaint?.({ ...marks });
   }
   marketsSynced = true;
@@ -202,6 +256,7 @@ export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (mar
 export async function lookupNearToken(address: string) {
   const clean = address.trim();
   if (clean.length < 6) return null;
+  await tradableMap().catch(() => null);
   const direct = await getJson<DexPair[]>(`${TOKENS_API}/${encodeURIComponent(clean)}`).catch(() => null);
   const pairs = Array.isArray(direct) ? direct : [];
   if (!pairs.length) {
@@ -225,6 +280,7 @@ export async function lookupNearToken(address: string) {
 export async function searchNearTokens(query: string) {
   const clean = query.trim();
   if (clean.length < 2) return [];
+  await tradableMap().catch(() => null);
   const contract = clean.length >= 8 && (clean.includes(".") || /^[0-9a-f]{20,}$/i.test(clean));
   if (contract) {
     const token = await lookupNearToken(clean);
@@ -302,7 +358,7 @@ function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
     token.sells = sells;
     token.txns = token.txnsN > 0 ? token.txnsN.toLocaleString("en-US") : "—";
     token.ageH = pair.pairCreatedAt ? Math.max(0.05, (Date.now() - pair.pairCreatedAt) / 3_600_000) : token.ageH;
-    token.listed = true;
+    token.listed = canTrade(address);
     token.verified = isCanonical({ symbol, address });
     token.score = qualityScore(token) ?? 0;
     token.notes = token.verified ? ["Widely used NEAR asset"] : [pair.dexId || "NEAR market"];
@@ -369,7 +425,7 @@ function placeChainToken(input: { symbol: string; name: string; price: number; c
   token.chain = input.chain;
   token.name = input.name || token.name;
   token.price = input.price;
-  token.listed = true;
+  token.listed = false;
   token.icon = preferIcon(token.icon, input.icon);
   token.liqN = input.liq;
   token.liquidity = input.liq > 0 ? money(input.liq) : "—";
@@ -387,13 +443,10 @@ function placeChainToken(input: { symbol: string; name: string; price: number; c
 }
 
 export function loadChainBook(chain: "Aurora" | "Ethereum") {
-  const fresh = TOKENS.some((token) => token.chain === chain && token.listed && token.price > 0);
-  if (fresh && Date.now() - (chainAt.get(chain) ?? 0) < 120_000) return Promise.resolve();
-  const pending = chainFlight.get(chain);
-  if (pending) return pending;
-  const job = fetchChainBook(chain).finally(() => chainFlight.delete(chain));
-  chainFlight.set(chain, job);
-  return job;
+  for (const token of TOKENS) {
+    if (token.chain === chain) token.listed = false;
+  }
+  return Promise.resolve();
 }
 
 async function fetchChainBook(chain: "Aurora" | "Ethereum") {

@@ -10,6 +10,7 @@ export type IntentAsset = {
   decimals: number;
   blockchain: string;
   contractAddress: string | null;
+  price?: number;
 };
 
 export type IntentQuote = {
@@ -50,13 +51,22 @@ export function formatUnits(units: string, decimals: number): number {
   return Number(`${whole}.${frac}`);
 }
 
-export async function loadNearAssets(): Promise<IntentAsset[]> {
+export async function loadIntentAssets(): Promise<IntentAsset[]> {
   if (assets) return assets;
   const response = await fetch(`${BASE}/v0/tokens`);
   if (!response.ok) throw new Error("NEAR Intents token list is unavailable.");
   const body = (await response.json()) as IntentAsset[];
-  assets = body.filter((asset) => asset.blockchain === "near" && asset.contractAddress);
+  assets = body.filter((asset) => asset.assetId && asset.symbol);
   return assets;
+}
+
+export async function loadNearAssets(): Promise<IntentAsset[]> {
+  const list = await loadIntentAssets();
+  return list.filter((asset) => asset.blockchain === "near" && asset.contractAddress && Number(asset.price) > 0);
+}
+
+export async function tradableNearAssets(): Promise<IntentAsset[]> {
+  return loadNearAssets();
 }
 
 export async function resolveAsset(symbol: string): Promise<IntentAsset | null> {
