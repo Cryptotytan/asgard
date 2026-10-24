@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { knownLogo, lookupNearToken, loadChainBook, searchNearTokens } from "@/lib/dex";
+import { knownLogo, lookupNearToken, searchNearTokens } from "@/lib/dex";
 import { CHAIN_ICON, fmt, glyph, px, TOKENS, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 
@@ -86,14 +86,13 @@ export function TokenPicker({
   const [query, setQuery] = useState("");
   const [chain, setChain] = useState("All");
   const [looking, setLooking] = useState(false);
-  const [chainBusy, setChainBusy] = useState(false);
   const clock = useDesk((state) => state.clock);
   const needle = query.trim().toLowerCase();
   const list = useMemo(
     () =>
       TOKENS.filter((token) => {
         if (!token.listed || !Number.isFinite(token.price) || token.price <= 0) return false;
-        if (chain !== "All" && token.chain !== chain) return false;
+        if (chain !== "All" && !(token.rails ?? ["NEAR"]).includes(chain)) return false;
         if (!needle) return true;
         return `${token.symbol} ${token.name} ${token.address ?? ""}`.toLowerCase().includes(needle);
       }).sort((a, b) => b.volN - a.volN || b.liqN - a.liqN),
@@ -125,22 +124,6 @@ export function TokenPicker({
       window.clearTimeout(timer);
     };
   }, [open, query]);
-  useEffect(() => {
-    if (!open || (chain !== "Aurora" && chain !== "Ethereum")) {
-      setChainBusy(false);
-      return;
-    }
-    let cancel = false;
-    setChainBusy(true);
-    void loadChainBook(chain)
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancel) setChainBusy(false);
-      });
-    return () => {
-      cancel = true;
-    };
-  }, [open, chain]);
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -208,7 +191,7 @@ export function TokenPicker({
                       </span>
                       <span className="flex items-center gap-1 truncate text-xs text-muted">
                         <img src={CHAIN_ICON[token.chain]} alt="" className="size-3.5 shrink-0 rounded-full object-cover" />
-                        {token.name} · {token.chain}
+                        {token.name} · {chain !== "All" && chain !== "NEAR" ? `${chain} on NEAR` : token.chain}
                       </span>
                       {token.address && <span className="block truncate font-mono text-[10px] text-muted">{token.address}</span>}
                     </span>
@@ -221,12 +204,12 @@ export function TokenPicker({
               ))}
               {list.length === 0 && (
                 <li className="px-2 py-6 text-center text-sm text-muted">
-                  {chainBusy || looking
+                  {looking
                     ? `Loading ${chain === "All" ? "live" : chain} markets…`
                     : needle
                       ? "No token matches that name or contract."
                       : chain === "Aurora" || chain === "Ethereum"
-                        ? `No tradable ${chain} markets. Swaps settle on this NEAR account.`
+                        ? `No ${chain} asset on NEAR right now.`
                         : "Loading live NEAR markets…"}
                 </li>
               )}

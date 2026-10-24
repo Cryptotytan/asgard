@@ -1,5 +1,5 @@
 import { ensureToken, isCanonical, money, preferIcon, qualityScore, TOKENS, type WindowId } from "@/lib/market";
-import { tradableNearAssets, type IntentAsset } from "@/lib/intents";
+import { loadIntentAssets, type IntentAsset } from "@/lib/intents";
 import { useDesk } from "@/lib/store";
 
 const REF = "https://indexer.ref.finance/list-token";
@@ -62,21 +62,39 @@ export let marketsSynced = false;
 
 let iconBook: Map<string, string> | null = null;
 let tradableGate: Map<string, IntentAsset> | null = null;
+let ethSymbols = new Set<string>();
+let auroraSymbols = new Set<string>();
 
 async function tradableMap() {
-  if (tradableGate) return tradableGate;
-  const assets = await tradableNearAssets();
+  if (tradableGate && tradableGate.size) return tradableGate;
+  const all = await loadIntentAssets();
   const map = new Map<string, IntentAsset>();
-  for (const asset of assets) {
-    if (!asset.contractAddress) continue;
-    map.set(asset.contractAddress.toLowerCase(), asset);
+  const eth = new Set<string>();
+  const aurora = new Set<string>();
+  for (const asset of all) {
+    const symbol = asset.symbol.toUpperCase();
+    if (asset.blockchain === "eth") eth.add(symbol);
+    if (asset.blockchain === "aurora") aurora.add(symbol);
+    if (asset.blockchain === "near" && asset.contractAddress && Number(asset.price) > 0) map.set(asset.contractAddress.toLowerCase(), asset);
   }
+  ethSymbols = eth;
+  auroraSymbols = aurora;
   tradableGate = map;
   return map;
 }
 
 function canTrade(address: string) {
   return !tradableGate || tradableGate.has(address.toLowerCase());
+}
+
+function railsFor(symbol: string, address: string) {
+  const rails = ["NEAR"];
+  const sym = symbol.toUpperCase();
+  const addr = address.toLowerCase();
+  const bridged = addr.endsWith(".factory.bridge.near") || addr === "eth.bridge.near" || addr === "usdt.tether-token.near";
+  if (ethSymbols.has(sym) || bridged) rails.push("Ethereum");
+  if (sym === "AURORA" || auroraSymbols.has(sym)) rails.push("Aurora");
+  return rails;
 }
 
 function publishTradable(map: Map<string, IntentAsset>) {
@@ -107,6 +125,7 @@ function publishTradable(map: Map<string, IntentAsset>) {
     token.chain = "NEAR";
     token.price = Number(asset.price);
     token.listed = true;
+    token.rails = railsFor(token.symbol, address);
     token.verified = isCanonical({ symbol: token.symbol, address });
     token.notes = token.verified ? ["Widely used NEAR asset"] : ["Tradable on NEAR Intents"];
   }
@@ -365,118 +384,4 @@ function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
     owned.set(symbol, address);
     marks[symbol] = price;
   }
-}
-
-const CHAIN_NET = { Ethereum: "eth", Aurora: "aurora" } as const;
-const chainAt = new Map<string, number>();
-const chainFlight = new Map<string, Promise<void>>();
-
-type GeckoPool = {
-  attributes?: {
-    name?: string;
-    base_token_price_usd?: string;
-    market_cap_usd?: string | null;
-    fdv_usd?: string | null;
-    reserve_in_usd?: string;
-    volume_usd?: { h24?: string };
-    price_change_percentage?: { h24?: string };
-  };
-  relationships?: { base_token?: { data?: { id?: string } } };
-};
-
-type GeckoToken = {
-  id?: string;
-  type?: string;
-  attributes?: { image_url?: string | null };
-};
-
-function chainSymbol(name: string) {
-  const head = (name.split("/")[0] ?? "").trim().replace(/\s+\d+(?:\.\d+)?%$/, "");
-  return head.replace(/\s/g, "").replace(/^\$/, "");
-}
-
-function chainAddress(id: string) {
-  const cut = id.indexOf("_");
-  return (cut >= 0 ? id.slice(cut + 1) : id).trim();
-}
-
-function chainImages(included: GeckoToken[] | undefined) {
-  const map = new Map<string, string>();
-  for (const item of included ?? []) {
-    const image = item.attributes?.image_url;
-    if (!item.id || !image || !image.startsWith("https://")) continue;
-    map.set(item.id.toLowerCase(), image);
-    const address = chainAddress(item.id).toLowerCase();
-    if (address) map.set(address, image);
-  }
-  return map;
-}
-
-function placeChainToken(input: { symbol: string; name: string; price: number; chain: "Aurora" | "Ethereum"; address: string; icon: string; liq: number; vol: number; mcap: number; change: number }) {
-  const address = input.address;
-  let symbol = input.symbol;
-  const same = TOKENS.find((token) => token.address?.toLowerCase() === address.toLowerCase());
-  const clash = TOKENS.some((token) => token !== same && token.symbol.toUpperCase() === symbol.toUpperCase());
-  if (clash) symbol = `${input.symbol}.${input.chain}`;
-  const token = same ?? ensureToken({ symbol, name: input.name, price: input.price, chain: input.chain, icon: input.icon, address });
-  if (token.address && token.address.toLowerCase() !== address.toLowerCase()) return;
-  token.symbol = symbol;
-  token.address = address;
-  token.chain = input.chain;
-  token.name = input.name || token.name;
-  token.price = input.price;
-  token.listed = false;
-  token.icon = preferIcon(token.icon, input.icon);
-  token.liqN = input.liq;
-  token.liquidity = input.liq > 0 ? money(input.liq) : "—";
-  token.volN = input.vol;
-  token.volBy = { ...token.volBy, h24: input.vol };
-  token.volume = input.vol > 0 ? money(input.vol) : "—";
-  token.mcapN = input.mcap;
-  token.mcap = input.mcap > 0 ? money(input.mcap) : "—";
-  token.fdv = token.mcap;
-  token.change = input.change;
-  token.windows = { ...token.windows, h24: input.change };
-  token.verified = false;
-  token.score = qualityScore(token) ?? 0;
-  token.notes = [`${input.chain} market`];
-}
-
-export function loadChainBook(chain: "Aurora" | "Ethereum") {
-  for (const token of TOKENS) {
-    if (token.chain === chain) token.listed = false;
-  }
-  return Promise.resolve();
-}
-
-async function fetchChainBook(chain: "Aurora" | "Ethereum") {
-  const net = CHAIN_NET[chain];
-  const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/trending_pools?include=base_token`, { headers: { accept: "application/json" } });
-  if (!response.ok) return;
-  const body = (await response.json()) as { data?: GeckoPool[]; included?: GeckoToken[] };
-  const images = chainImages(body.included);
-  let wrote = 0;
-  for (const pool of body.data ?? []) {
-    const id = pool.relationships?.base_token?.data?.id ?? "";
-    const address = chainAddress(id);
-    const symbol = chainSymbol(pool.attributes?.name ?? "");
-    const price = Number(pool.attributes?.base_token_price_usd);
-    if (!address || !symbol || !Number.isFinite(price) || price <= 0) continue;
-    placeChainToken({
-      symbol,
-      name: symbol,
-      price,
-      chain,
-      address,
-      icon: images.get(address.toLowerCase()) || images.get(id.toLowerCase()) || "",
-      liq: Number(pool.attributes?.reserve_in_usd) || 0,
-      vol: Number(pool.attributes?.volume_usd?.h24) || 0,
-      mcap: Number(pool.attributes?.market_cap_usd) || Number(pool.attributes?.fdv_usd) || 0,
-      change: Number(pool.attributes?.price_change_percentage?.h24) || 0,
-    });
-    wrote += 1;
-  }
-  if (!wrote) return;
-  chainAt.set(chain, Date.now());
-  useDesk.setState((state) => ({ clock: state.clock + 1 }));
 }

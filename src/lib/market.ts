@@ -42,6 +42,7 @@ export type Token = {
   volBy: Record<WindowId, number>;
   address?: string;
   listed?: boolean;
+  rails?: string[];
   kind: "major" | "defi" | "meme";
 };
 
