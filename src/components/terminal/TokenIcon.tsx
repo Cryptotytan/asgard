@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { lookupNearToken } from "@/lib/dex";
+import { lookupNearToken, searchNearTokens } from "@/lib/dex";
 import { CHAIN_ICON, fmt, glyph, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 
@@ -84,14 +84,14 @@ export function TokenPicker({
   const [looking, setLooking] = useState(false);
   const clock = useDesk((state) => state.clock);
   const needle = query.trim().toLowerCase();
-  const looksLikeContract = needle.length >= 8 && (needle.includes(".") || /^[0-9a-f]{20,}$/.test(needle));
   const list = useMemo(
     () =>
       TOKENS.filter((token) => {
+        if (!token.listed || !Number.isFinite(token.price) || token.price <= 0) return false;
         if (chain !== "All" && token.chain !== chain) return false;
         if (!needle) return true;
         return `${token.symbol} ${token.name} ${token.address ?? ""}`.toLowerCase().includes(needle);
-      }),
+      }).sort((a, b) => b.volN - a.volN || b.liqN - a.liqN),
     [chain, clock, needle],
   );
   useEffect(() => {
@@ -100,24 +100,26 @@ export function TokenPicker({
       setLooking(false);
       return;
     }
-    if (!looksLikeContract) {
+    const raw = query.trim();
+    if (raw.length < 2) {
       setLooking(false);
       return;
     }
     let cancel = false;
     const timer = window.setTimeout(() => {
       setLooking(true);
-      void lookupNearToken(query.trim())
-        .catch(() => null)
+      void searchNearTokens(raw)
+        .catch(() => lookupNearToken(raw).then(() => undefined))
+        .catch(() => undefined)
         .finally(() => {
           if (!cancel) setLooking(false);
         });
-    }, 350);
+    }, 280);
     return () => {
       cancel = true;
       window.clearTimeout(timer);
     };
-  }, [looksLikeContract, open, query]);
+  }, [open, query]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-40 grid place-items-end bg-bg/70 p-3 sm:place-items-center" onClick={onClose}>
@@ -148,7 +150,7 @@ export function TokenPicker({
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search name or contract address"
+                placeholder="Name, symbol, or NEAR contract"
                 className="min-w-0 flex-1 bg-transparent text-sm outline-none"
               />
             </label>
@@ -173,7 +175,7 @@ export function TokenPicker({
                         <img src={CHAIN_ICON[token.chain]} alt="" className="size-3.5 rounded-full object-cover" />
                         {token.name} · {token.chain}
                       </span>
-                      {looksLikeContract && token.address && <span className="block truncate font-mono text-[10px] text-muted">{token.address}</span>}
+                      {token.address && <span className="block truncate font-mono text-[10px] text-muted">{token.address}</span>}
                     </span>
                     <span className="text-right font-mono text-xs">
                       <span className="block">{usd(token.price)}</span>
@@ -184,7 +186,7 @@ export function TokenPicker({
               ))}
               {list.length === 0 && (
                 <li className="px-2 py-6 text-center text-sm text-muted">
-                  {looking ? "Looking up that NEAR contract…" : looksLikeContract ? "No NEAR token uses that contract." : "No token matches that search."}
+                  {looking ? "Searching the NEAR book…" : needle ? "No NEAR token matches that name or contract." : "Loading live NEAR markets…"}
                 </li>
               )}
             </ul>

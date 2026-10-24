@@ -42,6 +42,7 @@ const LOCAL: Record<string, string> = {
 };
 
 type DexPair = {
+  chainId?: string;
   dexId?: string;
   baseToken?: { address?: string; name?: string; symbol?: string };
   quoteToken?: { address?: string; symbol?: string };
@@ -217,6 +218,31 @@ export async function lookupNearToken(address: string) {
   return TOKENS.find((token) => token.address?.toLowerCase() === clean.toLowerCase()) ?? TOKENS.find((token) => [...best.keys()].some((id) => token.address === id)) ?? null;
 }
 
+export async function searchNearTokens(query: string) {
+  const clean = query.trim();
+  if (clean.length < 2) return [];
+  const contract = clean.length >= 8 && (clean.includes(".") || /^[0-9a-f]{20,}$/i.test(clean));
+  if (contract) {
+    const token = await lookupNearToken(clean);
+    return token ? [token] : [];
+  }
+  const body = await getJson<{ pairs?: DexPair[] }>(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(clean)}`).catch(() => null);
+  const pairs = (body?.pairs ?? []).filter((pair) => pair.chainId === "near");
+  const best = new Map<string, DexPair>();
+  for (const pair of pairs) {
+    const id = pair.baseToken?.address;
+    if (!id) continue;
+    const vol = num(pair.volume?.h24);
+    const prev = best.get(id);
+    if (!prev || vol >= num(prev.volume?.h24)) best.set(id, pair);
+  }
+  if (!best.size) return [];
+  paintDex(best, {});
+  useDesk.setState((state) => ({ clock: state.clock + 1 }));
+  const needle = clean.toLowerCase();
+  return TOKENS.filter((token) => token.listed && `${token.symbol} ${token.name} ${token.address ?? ""}`.toLowerCase().includes(needle));
+}
+
 function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
   const ranked = [...best.entries()].sort((a, b) => num(b[1].volume?.h24) - num(a[1].volume?.h24));
   const owned = new Map<string, string>();
@@ -230,11 +256,13 @@ function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
     if (price <= 0) continue;
     const liq = num(pair.liquidity?.usd);
     const vol = windows(pair.volume);
-    if (liq < 50 && vol.h24 < 1) continue;
-    const symbol = ADDRESS_SYMBOL[address] ?? base.symbol.replace(/\s/g, "").replace(/^\$/, "");
-    if (!symbol) continue;
-    const holder = owned.get(symbol);
-    if (holder && holder !== address) continue;
+    if (liq <= 0 && vol.h24 <= 0) continue;
+    const symbolName = ADDRESS_SYMBOL[address] ?? base.symbol.replace(/\s/g, "").replace(/^\$/, "");
+    if (!symbolName) continue;
+    const holder = owned.get(symbolName);
+    const symbol = holder && holder !== address ? `${symbolName}.${address.slice(0, 6)}` : symbolName;
+    const taken = owned.get(symbol);
+    if (taken && taken !== address) continue;
     const dexImage = safeIcon(pair.info?.imageUrl);
     const icon = iconFor(address, symbol, dexImage);
     const token = ensureToken({

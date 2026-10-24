@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Search, ShieldAlert } from "lucide-react";
-import { CandleChart, type ChartHover } from "@/components/terminal/CandleChart";
+import { TradingViewChart } from "@/components/terminal/TradingViewChart";
 import { SecurityGate } from "@/components/terminal/SecurityGate";
 import { TokenIcon, VerifiedMark } from "@/components/terminal/TokenIcon";
 import { PnlCard } from "@/components/terminal/PnlCard";
@@ -18,10 +18,10 @@ import {
   type Token,
 } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
-import { liveCandles, livePrints, loadHolders, loadPrints, watchCandles, type HolderRow } from "@/lib/live";
+import { livePrints, loadHolders, loadPrints, type HolderRow } from "@/lib/live";
+import { searchNearTokens } from "@/lib/dex";
 import { executeIntent, quoteIntent, type IntentQuote } from "@/lib/intents";
 
-const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"] as const;
 const BOOKS = ["Trades", "Positions", "Orders", "Holders", "History"] as const;
 let stampedId = "";
 const PRESETS = [25, 50, 100, 250];
@@ -44,38 +44,19 @@ export function TokenTrade({
   onSymbol: (symbol: string) => void;
   onFlash: (message: string) => void;
 }) {
-  const mark = useDesk((s) => s.marks[symbol]);
   useDesk((s) => s.clock);
   const token = tokenBySymbol(symbol);
-  const [frame, setFrame] = useState<(typeof FRAMES)[number]>("1D");
-  const [scale, setScale] = useState<"price" | "mcap">("price");
   const [book, setBook] = useState<(typeof BOOKS)[number]>("Trades");
   const scanning = false;
-  const [hover, setHover] = useState<ChartHover | null>(null);
-
-  useEffect(() => setHover(null), [frame, scale]);
 
   useEffect(() => {
     if (!canPerp(symbol) && mode === "perp") onMode("spot");
   }, [symbol, mode, onMode]);
 
-  const last = scale === "price" ? (mark ?? token.price) : token.mcapN;
-  const series = scale === "price" ? liveCandles(symbol, frame) : undefined;
-  const bars = series && series.length > 1 ? series : [];
-  const open = bars[0] ?? { o: last, h: last, l: last, c: last };
-  const close = bars[bars.length - 1] ?? open;
-  const high = bars.length ? Math.max(...bars.map((bar) => bar.h)) : last;
-  const low = bars.length ? Math.min(...bars.map((bar) => bar.l)) : last;
-  const delta = close.c - open.o;
   const prints = livePrints(symbol) ?? [];
   useEffect(() => {
-    if (scale !== "price") return;
-    return watchCandles(symbol, frame);
-  }, [symbol, frame, scale]);
-  useEffect(() => {
-    if (scale !== "price") return;
     void loadPrints(symbol).catch(() => undefined);
-  }, [symbol, scale]);
+  }, [symbol]);
 
   return (
     <div className="flex flex-col lg:block">
@@ -100,59 +81,8 @@ export function TokenTrade({
       </header>
 
       <div className="flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[auto_minmax(0,1fr)] lg:items-start">
-        <section className="relative order-1 lg:col-start-1 lg:row-start-1 lg:self-start lg:border-r lg:border-line">
-          <div className="flex items-center gap-2 px-3 pt-3 sm:px-4 sm:py-2">
-            <div className="grid min-w-0 flex-1 grid-cols-6 gap-1">
-              {FRAMES.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setFrame(item)}
-                  className={`h-8 rounded-md px-1 text-[11px] sm:h-8 sm:bg-transparent sm:px-0 sm:text-xs ${frame === item ? "bg-surface-2 text-fg" : "text-muted"}`}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-            <div className="flex shrink-0 rounded-lg bg-surface p-0.5 text-[11px] sm:text-xs">
-              {(["price", "mcap"] as const).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setScale(item)}
-                  className={`h-8 rounded-md px-2 uppercase sm:px-2 ${scale === item ? "bg-surface-2 text-fg" : "text-muted"}`}
-                >
-                  {item === "price" ? "Price" : "Mcap"}
-                </button>
-              ))}
-            </div>
-          </div>
-          <p className="hidden px-4 font-mono text-xs text-muted sm:block">
-            {bars.length < 2 ? (
-              "Waiting on DefiLlama candles"
-            ) : hover ? (
-              <>
-                {hover.label} O {fmt(hover.o)} H {fmt(hover.h)} L {fmt(hover.l)} C {fmt(hover.c)}{" "}
-                <span className={hover.c >= hover.o ? "text-primary" : "text-danger"}>
-                  {hover.c >= hover.o ? "+" : ""}
-                  {fmt(hover.c - hover.o)} ({hover.c >= hover.o ? "+" : ""}
-                  {((hover.c - hover.o) / hover.o * 100).toFixed(2)}%)
-                </span>
-              </>
-            ) : (
-              <>
-                O {fmt(open.o)} H {fmt(high)} L {fmt(low)} C {fmt(close.c)}{" "}
-                <span className={delta >= 0 ? "text-primary" : "text-danger"}>
-                  {delta >= 0 ? "+" : ""}
-                  {fmt(delta)} ({delta >= 0 ? "+" : ""}
-                  {((delta / open.o) * 100).toFixed(2)}%)
-                </span>
-              </>
-            )}
-          </p>
-          <div className="px-3 py-3 sm:px-0 sm:py-0">
-            <CandleChart seed={`${symbol}-${frame}-${scale}`} last={last} frame={frame} compact={scale === "mcap"} live={scale === "price" ? mark : undefined} series={series} onHover={setHover} />
-          </div>
+        <section className="relative order-1 min-w-0 lg:col-start-1 lg:row-start-1 lg:self-start lg:border-r lg:border-line">
+          <TradingViewChart symbol={token.symbol} />
         </section>
         <div className="order-2 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-stretch">
           <Ticket token={token} mode={mode} quickUsd={quickUsd} scanning={scanning} onMode={onMode} onFlash={onFlash} />
@@ -203,11 +133,34 @@ function Stat({ k, v, className = "" }: { k: string; v: string; className?: stri
 function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolean; onPick: (symbol: string) => void }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [searching, setSearching] = useState(false);
   const box = useRef<HTMLDivElement>(null);
-  const list = useMemo(
-    () => TOKENS.filter((item) => `${item.symbol} ${item.name} ${item.chain} ${item.address ?? ""}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 12),
-    [query],
-  );
+  const clock = useDesk((state) => state.clock);
+  const list = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return TOKENS.filter((item) => item.listed && Number.isFinite(item.price) && item.price > 0 && (!needle || `${item.symbol} ${item.name} ${item.address ?? ""}`.toLowerCase().includes(needle))).slice(0, 16);
+  }, [clock, query]);
+
+  useEffect(() => {
+    const needle = query.trim();
+    if (!open || needle.length < 2) {
+      setSearching(false);
+      return;
+    }
+    let cancel = false;
+    setSearching(true);
+    const timer = window.setTimeout(() => {
+      void searchNearTokens(needle)
+        .catch(() => undefined)
+        .finally(() => {
+          if (!cancel) setSearching(false);
+        });
+    }, 280);
+    return () => {
+      cancel = true;
+      window.clearTimeout(timer);
+    };
+  }, [open, query]);
 
   useEffect(() => {
     if (!open) return;
@@ -241,20 +194,20 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
         </span>
       </button>
       {open && (
-        <div className="panel menu-pop absolute left-0 top-full z-30 mt-1 w-[min(18rem,calc(100vw-1.5rem))] p-2">
+        <div className="panel menu-pop absolute left-0 top-full z-30 mt-1 w-[min(24rem,calc(100vw-1.5rem))] p-2">
           <label className="mb-2 flex h-10 items-center gap-2 rounded-xl border border-line px-3">
             <Search className="size-4 text-muted" />
             <input
               autoFocus
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search token"
+              placeholder="Name, symbol, or NEAR contract"
               className="min-w-0 flex-1 bg-transparent text-sm outline-none"
             />
           </label>
-          <ul className="max-h-64 overflow-y-auto">
+          <ul className="max-h-72 overflow-y-auto">
             {list.map((item) => (
-              <li key={item.symbol}>
+              <li key={`${item.symbol}-${item.address ?? ""}`}>
                 <button
                   type="button"
                   onClick={() => {
@@ -271,11 +224,17 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
                       {item.verified && <VerifiedMark />}
                     </span>
                     <span className="block truncate text-xs text-muted">{item.name}</span>
+                    {item.address && <span className="block truncate font-mono text-[10px] text-muted">{item.address}</span>}
                   </span>
                   <span className="font-mono text-xs text-muted">{item.mcap}</span>
                 </button>
               </li>
             ))}
+            {list.length === 0 && (
+              <li className="px-2 py-6 text-center text-sm text-muted">
+                {searching ? "Searching the NEAR book…" : query.trim() ? "No NEAR token matches that name or contract." : "Loading live NEAR markets…"}
+              </li>
+            )}
           </ul>
         </div>
       )}
@@ -454,16 +413,36 @@ function Holders({ token }: { token: Token }) {
   }
   return (
     <div className="py-2">
-      <p className="mb-2 text-xs text-muted">{top10 == null ? "Top accounts on this contract. Share is unpublished until total supply answers." : `Top 10 hold ${top10.toFixed(1)}% of supply.`}</p>
-      <ul>
-        {rows.map((row) => (
-          <li key={row.account} className="flex items-center justify-between gap-2 border-t border-line py-2 font-mono text-xs">
-            <span className="truncate">{row.account.length > 22 ? `${row.account.slice(0, 10)}…${row.account.slice(-6)}` : row.account}</span>
-            <span>{fmt(row.amount)}</span>
-            <span className="text-muted">{row.share == null ? "—" : `${row.share.toFixed(2)}%`}</span>
-          </li>
-        ))}
-      </ul>
+      <p className="mb-2 text-xs text-muted">
+        {top10 == null || top10 > 100
+          ? "Top accounts. Indexed balances exceed the published supply, so a concentration total is not shown."
+          : `Top 10 hold ${top10.toFixed(1)}% of supply.`}
+      </p>
+      <table className="w-full table-fixed border-collapse text-xs">
+        <colgroup>
+          <col />
+          <col className="w-[9.5rem]" />
+          <col className="w-[4.75rem]" />
+        </colgroup>
+        <thead>
+          <tr className="text-[10px] uppercase tracking-wide text-muted">
+            <th className="border-b border-line py-1.5 pr-3 text-left font-normal">Account</th>
+            <th className="border-b border-line py-1.5 text-right font-normal">Balance</th>
+            <th className="border-b border-line py-1.5 text-right font-normal">Share</th>
+          </tr>
+        </thead>
+        <tbody className="font-mono tabular-nums">
+          {rows.map((row) => (
+            <tr key={row.account} className="border-t border-line">
+              <td className="truncate py-2 pr-3 text-left" title={row.account}>
+                {row.account}
+              </td>
+              <td className="whitespace-nowrap py-2 text-right">{fmt(row.amount)}</td>
+              <td className="whitespace-nowrap py-2 text-right text-muted">{row.share == null ? "—" : `${row.share.toFixed(2)}%`}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
