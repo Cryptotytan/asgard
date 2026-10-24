@@ -138,10 +138,15 @@ export async function executeIntent(input: {
   swapType?: "EXACT_INPUT" | "EXACT_OUTPUT";
   slippageBps?: number;
   maxPay?: number;
+  maxImpactPct?: number;
 }): Promise<IntentQuote & { status: string }> {
   const origin = await resolveAsset(input.from);
   if (!origin) throw new Error(`${input.from} is not listed on NEAR Intents.`);
   const quote = await quoteIntent({ ...input, dry: false });
+  if (input.maxImpactPct != null && quote.amountInUsd > 0 && quote.amountOutUsd > 0) {
+    const gap = Math.max(0, (1 - quote.amountOutUsd / quote.amountInUsd) * 100);
+    if (gap > input.maxImpactPct) throw new Error("This quote fails slippage. Nothing was sent.");
+  }
   if (input.maxPay != null && quote.amountInHuman > input.maxPay + 1e-8) {
     throw new Error(`That needs ${quote.amountInHuman} ${input.from}, more than you have parked.`);
   }

@@ -954,7 +954,7 @@ export function isHoneypot(token: Token) {
   return token.safety.sellTax >= 90 || token.score < 15;
 }
 
-export function rankQuotes(from: Token, to: Token, amount: number): Quote[] {
+export function rankQuotes(from: Token, to: Token, amount: number, slippagePct = 1): Quote[] {
   if (amount <= 0 || from.symbol === to.symbol) return [];
   const usdNotional = amount * from.price;
   const local = Math.max(1_000, Math.min(from.liqN, to.liqN));
@@ -965,16 +965,11 @@ export function rankQuotes(from: Token, to: Token, amount: number): Quote[] {
     const impact = venue.impactBps / 100 + (usdNotional / pool) * (12 + (noise % 8));
     const mid = (amount * from.price) / to.price;
     const receive = mid * (1 - feeBps / 10_000) * (1 - Math.min(impact, 40) / 100);
-    return { venue, feeBps, impact, receive, score: 0 };
+    return { venue, feeBps, impact, receive, score: feeBps / 100 + impact };
   });
-  const maxFee = Math.max(...raw.map((quote) => quote.feeBps));
-  const maxImpact = Math.max(...raw.map((quote) => quote.impact), 0.0001);
   return raw
-    .map((quote) => ({
-      ...quote,
-      score: quote.feeBps / maxFee + quote.impact / maxImpact,
-    }))
-    .sort((a, b) => a.score - b.score || b.receive - a.receive);
+    .filter((quote) => quote.receive > 0 && quote.impact <= slippagePct && quote.impact < 40)
+    .sort((a, b) => a.feeBps - b.feeBps || a.impact - b.impact || b.receive - a.receive);
 }
 
 export function fmt(n: number, digits = 4) {

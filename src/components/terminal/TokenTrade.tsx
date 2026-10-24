@@ -17,7 +17,6 @@ import {
   usd,
   px,
   TOKENS,
-  VENUES,
   type Token,
 } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
@@ -461,7 +460,6 @@ function Ticket({
   const [sl, setSl] = useState("");
   const [reduceOnly, setReduceOnly] = useState(false);
   const [perpType, setPerpType] = useState<"market" | "limit">("market");
-  const [venueId, setVenueId] = useState<string | null>(null);
   const [routesOpen, setRoutesOpen] = useState(false);
   const [deck, setDeck] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -472,7 +470,6 @@ function Ticket({
   useEffect(() => {
     setAmount(String(quickUsd));
     setAcked(false);
-    setVenueId(null);
     setSide("buy");
     setFills({ bought: 0, sold: 0 });
   }, [token.symbol, quickUsd]);
@@ -481,7 +478,8 @@ function Ticket({
   const pay = side === "buy" ? tokenBySymbol("USDC") : token;
   const receiveToken = side === "buy" ? token : tokenBySymbol("USDC");
   const quoteAmount = qty > 0 ? qty : 100;
-  const quotes = useMemo(() => rankQuotes(pay, receiveToken, quoteAmount), [pay, receiveToken, quoteAmount]);
+  const slipPct = slip === "Auto" ? 1 : Number(slip.replace("%", ""));
+  const quotes = useMemo(() => rankQuotes(pay, receiveToken, quoteAmount, slipPct), [pay, receiveToken, quoteAmount, slipPct]);
   const quoteKey = quotes.map((quote) => `${quote.venue.id}:${quote.receive.toFixed(2)}`).join("|");
   useEffect(() => {
     if (!routesOpen) return;
@@ -489,9 +487,8 @@ function Ticket({
   }, [routesOpen, quoteKey]);
   const minFee = Math.min(...quotes.map((quote) => quote.feeBps), Infinity);
   const minImpact = Math.min(...quotes.map((quote) => quote.impact), Infinity);
-  const picked = quotes.find((quote) => quote.venue.id === venueId) ?? quotes[0];
-  const slipBps = slip === "Auto" ? 0 : Number(slip.replace("%", "")) * 100;
-  const receive = picked ? picked.receive * (qty > 0 ? qty / quoteAmount : 0) * (1 - slipBps / 10_000) : 0;
+  const picked = quotes[0];
+  const receive = picked ? picked.receive * (qty > 0 ? qty / quoteAmount : 0) : 0;
   const blocked = isHoneypot(token);
   const balance = balances[pay.symbol] ?? 0;
   const windows = [
@@ -551,20 +548,25 @@ function Ticket({
       onFlash("Connect a NEAR wallet to trade.");
       return;
     }
-    onFlash("Confirm the NEAR Intents deposit in your wallet.");
+    if (!picked) {
+      onFlash("No route inside your slippage.");
+      return;
+    }
+    onFlash(`Confirm the deposit. ${picked.venue.name} has the lowest fee and impact inside your slippage.`);
     void executeIntent({
       from: pay.symbol,
       to: receiveToken.symbol,
       amount: String(qty),
       accountId,
       purpose: "Spot",
-      slippageBps: slip === "Auto" ? 100 : Number(slip.replace("%", "")) * 100,
+      slippageBps: slipPct * 100,
+      maxImpactPct: slipPct,
     })
       .then((result) => {
         setFills((prev) => (side === "buy" ? { ...prev, bought: prev.bought + qty } : { ...prev, sold: prev.sold + qty * token.price }));
-        onFlash(`${side === "buy" ? "Bought" : "Sold"} ${token.symbol} via NEAR Intents · ${fmt(result.amountOutHuman)} ${receiveToken.symbol} · ${result.status}`);
+        onFlash(`${side === "buy" ? "Bought" : "Sold"} ${token.symbol} via ${picked.venue.name} · ${fmt(result.amountOutHuman)} ${receiveToken.symbol} · ${result.status}`);
       })
-      .catch((error: unknown) => onFlash(error instanceof Error ? error.message : "NEAR Intents rejected the trade."));
+      .catch((error: unknown) => onFlash(error instanceof Error ? error.message : "The route rejected the trade."));
   }
 
   function submit() {
@@ -798,9 +800,9 @@ function Ticket({
               Slippage {slip}
             </button>
           </div>
-          {picked && (
+          {picked ? (
             <div className="mt-2 rounded-xl border border-line p-3 text-xs">
-              <p className="text-muted">Best of {VENUES.length} NEAR venues</p>
+              <p className="text-muted">Cheapest fee, then lowest impact, inside slippage</p>
               <p className="mt-1 font-semibold">{picked.venue.name}</p>
               <p className="mt-1 font-mono text-muted">
                 Fee {(picked.feeBps / 100).toFixed(2)}% · impact {picked.impact.toFixed(2)}% · {picked.venue.eta}
@@ -813,35 +815,30 @@ function Ticket({
               </button>
               {routesOpen && (
                 <ul className="route-deck mt-2 space-y-1">
-                  {quotes.map((quote, index) => {
-                    const selected = quote.venue.id === picked.venue.id;
-                    return (
-                      <li
-                        key={`${deck}-${quote.venue.id}`}
-                        className={`route-card ${index === 0 ? "is-best" : ""}`}
-                        style={{ animationDelay: `${index * 45}ms` }}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setVenueId(quote.venue.id)}
-                          className={`flex w-full items-center justify-between rounded-lg px-2 py-2 text-left ${selected ? "bg-surface-2" : ""}`}
-                        >
-                          <span>
-                            {quote.venue.name}
-                            <span className="mt-0.5 block text-muted">
-                              {quote.feeBps === minFee ? "Lowest fee" : `${(quote.feeBps / 100).toFixed(2)}% fee`}
-                              {" · "}
-                              {quote.impact === minImpact ? "Lowest impact" : `${quote.impact.toFixed(2)}% impact`}
-                            </span>
+                  {quotes.map((quote, index) => (
+                    <li
+                      key={`${deck}-${quote.venue.id}`}
+                      className={`route-card ${index === 0 ? "is-best" : ""}`}
+                      style={{ animationDelay: `${index * 45}ms` }}
+                    >
+                      <div className={`flex w-full items-center justify-between rounded-lg px-2 py-2 text-left ${index === 0 ? "bg-surface-2" : ""}`}>
+                        <span>
+                          {quote.venue.name}
+                          <span className="mt-0.5 block text-muted">
+                            {quote.feeBps === minFee ? "Lowest fee" : `${(quote.feeBps / 100).toFixed(2)}% fee`}
+                            {" · "}
+                            {quote.impact === minImpact ? "Lowest impact" : `${quote.impact.toFixed(2)}% impact`}
                           </span>
-                          {selected && <span className="text-primary">Best</span>}
-                        </button>
-                      </li>
-                    );
-                  })}
+                        </span>
+                        {index === 0 && <span className="text-primary">Best</span>}
+                      </div>
+                    </li>
+                  ))}
                 </ul>
               )}
             </div>
+          ) : (
+            <p className="mt-2 text-xs text-danger">No route inside your slippage.</p>
           )}
         </div>
       )}
