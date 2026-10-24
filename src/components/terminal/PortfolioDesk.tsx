@@ -50,7 +50,7 @@ export function PortfolioDesk() {
   return (
     <div className="px-2 py-3 sm:px-4 sm:py-5">
       <section className="panel overflow-hidden">
-        <div className="flex items-center justify-between gap-3 border-b border-line px-3 py-3 sm:px-4">
+        <div className="flex flex-col gap-3 border-b border-line px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
           <div className="flex min-w-0 items-center gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-sm font-bold text-primary-fg">A</span>
             <div className="min-w-0">
@@ -61,13 +61,13 @@ export function PortfolioDesk() {
               <p className="truncate text-xs text-muted">{connected ? "NEAR mainnet · this desk stays simulated" : "Connect a NEAR wallet"}</p>
             </div>
           </div>
-          <div className="flex shrink-0 rounded-full bg-bg p-0.5 text-[11px] sm:text-xs">
+          <div className="flex w-full rounded-full bg-bg p-0.5 text-xs sm:w-auto sm:text-xs">
             {RANGES.map((item) => (
               <button
                 key={item}
                 type="button"
                 onClick={() => setRange(item)}
-                className={`h-7 rounded-full px-2 sm:h-8 sm:px-2.5 ${range === item ? "bg-surface-2 text-fg" : "text-muted"}`}
+                className={`h-8 flex-1 rounded-full px-2 sm:h-8 sm:flex-none sm:px-2.5 ${range === item ? "bg-surface-2 text-fg" : "text-muted"}`}
               >
                 {item}
               </button>
@@ -75,7 +75,7 @@ export function PortfolioDesk() {
           </div>
         </div>
 
-        <dl className="grid grid-cols-6 border-b border-line">
+        <dl className="grid grid-cols-2 gap-px border-b border-line bg-line sm:grid-cols-3 lg:grid-cols-6">
           <Stat k="Total value" v={money(total)} />
           <Stat k="Holdings" v={holdings.length ? String(holdings.length) : "—"} />
           <Stat k="Vault" v={vaultRows.length ? money(vaultValue) : "—"} />
@@ -91,7 +91,7 @@ export function PortfolioDesk() {
                 key={item}
                 type="button"
                 onClick={() => setTab(item)}
-                className={`h-9 min-w-0 rounded-lg px-1 text-[11px] font-medium sm:text-sm ${tab === item ? "bg-bg text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}
+                className={`h-10 min-w-0 rounded-lg px-1 text-xs font-medium sm:text-sm ${tab === item ? "bg-bg text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}
               >
                 {item}
               </button>
@@ -159,9 +159,9 @@ export function PortfolioDesk() {
 
 function Stat({ k, v, tone }: { k: string; v: string; tone?: "up" | "down" }) {
   return (
-    <div className="flex min-w-0 flex-col justify-between border-r border-line px-1.5 py-3 last:border-r-0 sm:px-3">
-      <dt className="min-h-6 text-[9px] uppercase leading-3 tracking-wide text-muted sm:text-[10px]">{k}</dt>
-      <dd className={`mt-2 truncate font-mono text-xs sm:text-sm ${tone === "up" ? "text-primary" : tone === "down" ? "text-danger" : ""}`}>{v}</dd>
+    <div className="bg-surface px-3 py-3.5 sm:px-3">
+      <dt className="text-[11px] uppercase leading-4 tracking-wide text-muted">{k}</dt>
+      <dd className={`mt-1.5 truncate font-mono text-sm ${tone === "up" ? "text-primary" : tone === "down" ? "text-danger" : ""}`}>{v}</dd>
     </div>
   );
 }

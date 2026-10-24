@@ -139,7 +139,7 @@ export function Terminal() {
                 key={id}
                 type="button"
                 onClick={() => go(id)}
-                className={`h-9 min-w-0 truncate rounded-full px-1 text-xs font-medium ${view === id ? "bg-bg text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}
+                className={`inline-flex h-9 min-w-0 items-center justify-center truncate rounded-full px-1 text-center text-xs font-medium leading-none ${view === id ? "bg-bg text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}
               >
                 {label}
               </button>

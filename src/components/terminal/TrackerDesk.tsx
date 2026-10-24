@@ -141,7 +141,7 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
       <div className="grid min-h-[60vh] place-items-center px-6 text-center">
         <div className="max-w-sm">
           <p className="text-lg font-semibold">Connect to open the tracker</p>
-          <p className="mt-2 text-sm text-muted">Watched accounts, live fills, and tokens stay with the connected NEAR wallet. Disconnecting hides them until that wallet connects again.</p>
+          <p className="mt-2 text-sm text-muted">Watched accounts, live fills, and tokens stay with the connected NEAR wallet.</p>
           <button type="button" onClick={() => connect()} className="mt-4 h-10 rounded-full bg-primary px-4 text-sm font-semibold text-primary-fg">Connect wallet</button>
         </div>
       </div>
