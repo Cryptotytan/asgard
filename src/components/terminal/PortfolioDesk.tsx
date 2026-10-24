@@ -52,12 +52,9 @@ export function PortfolioDesk() {
       <section className="panel overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-line px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-sm font-bold text-primary-fg">A</span>
-            <div className="min-w-0">
-              <p className="flex items-center gap-2 font-semibold">
-                {accountId ?? "Not connected"}
-                <span className="rounded-full bg-bg px-2 py-0.5 text-[10px] font-medium text-muted">NEAR</span>
-              </p>
+            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-sm font-bold text-primary-fg">{(accountId ?? "A").slice(0, 1).toUpperCase()}</span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-semibold">{accountId ? (accountId.length > 18 ? `${accountId.slice(0, 8)}…${accountId.slice(-6)}` : accountId) : "Not connected"}</p>
               <p className="truncate text-xs text-muted">{connected ? "NEAR mainnet · balances read from the chain" : "Connect a NEAR wallet"}</p>
             </div>
           </div>

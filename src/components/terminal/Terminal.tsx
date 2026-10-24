@@ -8,7 +8,8 @@ import { SwapDesk } from "@/components/terminal/SwapDesk";
 import { TokenTrade } from "@/components/terminal/TokenTrade";
 import { TrackerDesk } from "@/components/terminal/TrackerDesk";
 import { VaultDesk } from "@/components/terminal/VaultDesk";
-import { canPerp, fmt, money, TOKENS } from "@/lib/market";
+import { TokenIcon } from "@/components/terminal/TokenIcon";
+import { canPerp, fmt, money, tokenBySymbol, TOKENS } from "@/lib/market";
 import { setWalletOpener, useDesk } from "@/lib/store";
 import { startLiveFeed } from "@/lib/live";
 import { visitToken } from "@/lib/watch";
@@ -294,9 +295,9 @@ export function Terminal() {
             <span className="text-[10px] uppercase tracking-wide text-muted">Positions</span>
             <span className="font-mono text-sm text-primary">{positions.length}</span>
           </button>
-          <div className="flex min-w-0 flex-1 items-center justify-evenly gap-3 sm:justify-center sm:gap-10">
-            <FooterStat label="USDC" value={connected ? money(balances.USDC ?? 0) : "—"} />
-            <FooterStat label="NEAR" value={connected ? fmt(balances.NEAR ?? 0, 2) : "—"} />
+          <div className="flex min-w-0 flex-1 items-center justify-evenly gap-2 sm:justify-center sm:gap-10">
+            <FooterStat token={tokenBySymbol("USDC")} value={connected ? money(balances.USDC ?? 0) : "—"} />
+            <FooterStat token={tokenBySymbol("NEAR")} value={connected ? fmt(balances.NEAR ?? 0, 2) : "—"} />
             <FooterStat label="Wallet" value={connected ? money(walletUsd) : "—"} className="hidden sm:flex" />
           </div>
           <button type="button" onClick={() => setView("swap")} className="h-10 shrink-0 rounded-xl bg-primary px-3 text-xs font-semibold text-primary-fg sm:px-4">
@@ -312,11 +313,14 @@ export function Terminal() {
   );
 }
 
-function FooterStat({ label, value, className = "" }: { label: string; value: string; className?: string }) {
+function FooterStat({ token, label, value, className = "" }: { token?: { icon: string; symbol: string; address?: string; chain?: string }; label?: string; value: string; className?: string }) {
   return (
-    <span className={`flex min-w-0 flex-col items-center gap-0.5 ${className}`}>
-      <span className="text-[9px] uppercase tracking-wide text-muted">{label}</span>
-      <span className="max-w-full truncate font-mono text-xs text-fg">{value}</span>
+    <span className={`flex min-w-0 items-center gap-1.5 ${className}`}>
+      {token ? <TokenIcon token={token} className="size-5" /> : null}
+      <span className="min-w-0">
+        <span className="block text-[9px] uppercase tracking-wide text-muted">{label ?? token?.symbol}</span>
+        <span className="block max-w-[4.5rem] truncate font-mono text-xs text-fg sm:max-w-none">{value}</span>
+      </span>
     </span>
   );
 }
@@ -432,13 +436,13 @@ function WalletButton({
     );
   }
   const name = account ?? "near";
-  const short = name.length > 18 ? `${name.slice(0, 8)}…${name.slice(-6)}` : name;
+  const short = name.length > 14 ? `${name.slice(0, 4)}…${name.slice(-4)}` : name;
   return (
-    <button type="button" onClick={onClick} className="flex h-10 items-center gap-2 rounded-full border border-line bg-surface py-1 pl-1 pr-3 text-left">
-      <span className="grid size-8 place-items-center rounded-full bg-primary font-mono text-xs font-bold text-primary-fg">{name.slice(0, 1).toUpperCase()}</span>
-      <span className="leading-none">
-        <span className="block max-w-32 truncate text-sm font-semibold">{compact ? short.split(".")[0] : short}</span>
-        <span className="mt-0.5 block text-[10px] font-normal text-primary">{near ? `${near} NEAR` : "Connected"}</span>
+    <button type="button" onClick={onClick} className={`flex h-10 min-w-0 items-center gap-2 overflow-hidden rounded-full border border-line bg-surface py-1 pl-1 pr-2.5 text-left ${compact ? "max-w-[46vw] shrink" : "max-w-56"}`}>
+      <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary font-mono text-xs font-bold text-primary-fg">{name.slice(0, 1).toUpperCase()}</span>
+      <span className="min-w-0 leading-none">
+        <span className="block truncate text-sm font-semibold">{short}</span>
+        <span className="mt-0.5 block truncate text-[10px] font-normal text-primary">{near ? `${near} NEAR` : "Connected"}</span>
       </span>
     </button>
   );

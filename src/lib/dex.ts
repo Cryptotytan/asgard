@@ -69,11 +69,15 @@ function safeIcon(icon: unknown) {
   return "";
 }
 
+export function knownLogo(symbol: string) {
+  return LOCAL[symbol.toUpperCase()] ?? LOCAL[symbol] ?? "";
+}
+
 export function iconFor(address: string | undefined, symbol: string, dexImage?: string) {
+  const local = knownLogo(symbol);
+  if (local) return local;
   const listed = address ? safeIcon(iconBook?.get(address)) : "";
   if (listed) return listed;
-  const local = LOCAL[symbol.toUpperCase()] ?? LOCAL[symbol] ?? "";
-  if (local) return local;
   const dex = safeIcon(dexImage);
   if (dex) return dex;
   return address ? `https://cdn.dexscreener.com/tokens/near/${address}.png` : "";

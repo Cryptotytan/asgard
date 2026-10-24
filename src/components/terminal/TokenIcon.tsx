@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { lookupNearToken, loadChainBook, searchNearTokens } from "@/lib/dex";
+import { knownLogo, lookupNearToken, loadChainBook, searchNearTokens } from "@/lib/dex";
 import { CHAIN_ICON, fmt, glyph, px, TOKENS, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 
@@ -19,18 +19,22 @@ if (typeof window !== "undefined") {
   }
 }
 
-export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "symbol" | "address">; className?: string }) {
-  const seen = useRef(token.symbol + token.icon);
+export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "symbol" | "address"> & { chain?: string }; className?: string }) {
+  const seen = useRef(token.symbol + token.icon + (token.chain ?? ""));
   const [turn, setTurn] = useState<"a" | "b" | null>(null);
   const [step, setStep] = useState(0);
   const sources = useMemo(() => {
-    const list = [token.icon];
+    const chain = token.chain === "Ethereum" ? "ethereum" : token.chain === "Aurora" ? "aurora" : "near";
+    const list = [knownLogo(token.symbol), token.icon];
     if (token.address) {
-      list.push(`https://cdn.dexscreener.com/tokens/near/${token.address}.png`);
-      list.push(`https://dd.dexscreener.com/ds-data/tokens/near/${token.address}.png`);
+      list.push(`https://cdn.dexscreener.com/tokens/${chain}/${token.address}.png`);
+      list.push(`https://dd.dexscreener.com/ds-data/tokens/${chain}/${token.address}.png`);
+      if (chain !== "near") {
+        list.push(`https://cdn.dexscreener.com/tokens/near/${token.address}.png`);
+      }
     }
     return [...new Set(list.filter((src) => src && !src.startsWith("data:image/svg+xml;utf8,")))];
-  }, [token.address, token.icon]);
+  }, [token.address, token.chain, token.icon, token.symbol]);
   useEffect(() => {
     setStep(0);
     if (seen.current === token.symbol + token.icon) return;
