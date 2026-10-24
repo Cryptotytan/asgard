@@ -1454,3 +1454,46 @@ a.landing-enter-lg {
 #near-wallet-selector-modal .single-wallet.sidebar .content .description {
   display: none;
 }
+
+#near-wallet-selector-modal .nws-modal:has(.wallet-not-installed-wrapper) .modal-left,
+#near-wallet-selector-modal .nws-modal:has(.connecting-wrapper) .modal-left,
+#near-wallet-selector-modal .nws-modal:has(.scan-qr-code) .modal-left,
+#near-wallet-selector-modal .nws-modal:has(.derivation-path-wrapper) .modal-left,
+#near-wallet-selector-modal .nws-modal:has(.alert-message) .modal-left {
+  display: none;
+}
+
+#near-wallet-selector-modal .nws-modal:has(.wallet-not-installed-wrapper) .modal-right,
+#near-wallet-selector-modal .nws-modal:has(.connecting-wrapper) .modal-right,
+#near-wallet-selector-modal .nws-modal:has(.scan-qr-code) .modal-right,
+#near-wallet-selector-modal .nws-modal:has(.derivation-path-wrapper) .modal-right,
+#near-wallet-selector-modal .nws-modal:has(.alert-message) .modal-right {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  overflow: visible;
+  padding-top: 44px;
+}
+
+#near-wallet-selector-modal .modal-right .close-button,
+#near-wallet-selector-modal .modal-right .back-button {
+  position: absolute;
+  top: 8px;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: #1a1a1a;
+  pointer-events: auto;
+}
+
+#near-wallet-selector-modal .modal-right .close-button {
+  right: 10px;
+}
+
+#near-wallet-selector-modal .modal-right .back-button {
+  left: 10px;
+}

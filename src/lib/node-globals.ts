@@ -8,4 +8,4 @@ const scope = globalThis as typeof globalThis & {
 
 scope.global = globalThis;
 scope.Buffer = Buffer;
-if (!scope.process) scope.process = { env: {}, browser: true };
+if (!scope.process) (scope as { process: { env: Record<string, string | undefined>; browser: boolean } }).process = { env: {}, browser: true };

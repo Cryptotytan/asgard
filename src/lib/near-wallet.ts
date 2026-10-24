@@ -43,6 +43,7 @@ let selectorPromise: Promise<Selector> | null = null;
 
 function boot() {
   if (typeof window === "undefined") return Promise.resolve();
+  hideHereWalletOnCancel();
   if (!booted) {
     selectorPromise = setupWalletSelector({
       network: "mainnet",
@@ -79,6 +80,83 @@ function boot() {
     });
   }
   return booted;
+}
+
+let hereCancelWired = false;
+
+function hereFrame() {
+  return document.querySelector('iframe[src*="herewallet.app"]');
+}
+
+function hideHereFrame() {
+  const frame = hereFrame();
+  if (frame instanceof HTMLIFrameElement) frame.style.display = "none";
+  document.getElementById("asgard-here-close")?.remove();
+}
+
+function placeHereClose() {
+  const frame = hereFrame();
+  const open = frame instanceof HTMLIFrameElement && getComputedStyle(frame).display !== "none";
+  let button = document.getElementById("asgard-here-close");
+  if (!open) {
+    button?.remove();
+    return;
+  }
+  if (!button) {
+    button = document.createElement("button");
+    button.id = "asgard-here-close";
+    button.type = "button";
+    button.setAttribute("aria-label", "Close HERE wallet");
+    button.innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="#2c3034" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
+    button.style.cssText = [
+      "position:fixed",
+      "z-index:10001",
+      "display:grid",
+      "place-items:center",
+      "width:40px",
+      "height:40px",
+      "padding:0",
+      "border:0",
+      "border-radius:999px",
+      "background:#ebdedc",
+      "cursor:pointer",
+    ].join(";");
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      hideHereFrame();
+    });
+    document.body.appendChild(button);
+  }
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const narrow = viewportWidth <= 640;
+  const cardWidth = Math.min(viewportWidth, 720);
+  const cardHeight = Math.min(viewportHeight, 520);
+  const inset = narrow ? 16 : 32;
+  const right = (viewportWidth - cardWidth) / 2 + inset - 4;
+  const top = (narrow ? viewportHeight - cardHeight : (viewportHeight - cardHeight) / 2) + inset - 4;
+  button.style.right = `${Math.max(8, right)}px`;
+  button.style.top = `${Math.max(8, top)}px`;
+}
+
+function hideHereWalletOnCancel() {
+  if (hereCancelWired || typeof window === "undefined") return;
+  hereCancelWired = true;
+  window.addEventListener("message", (event) => {
+    if (!event.origin.endsWith("herewallet.app")) return;
+    let type = "";
+    try {
+      const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+      type = data?.type ?? "";
+    } catch {
+      return;
+    }
+    if (type === "reject" || type === "close") hideHereFrame();
+  });
+  window.setInterval(placeHereClose, 300);
+  window.addEventListener("resize", placeHereClose);
 }
 
 async function readNearBalance(accountId: string) {
