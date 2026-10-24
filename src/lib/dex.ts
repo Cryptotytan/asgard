@@ -44,6 +44,7 @@ const LOCAL: Record<string, string> = {
 type DexPair = {
   chainId?: string;
   dexId?: string;
+  pairAddress?: string;
   baseToken?: { address?: string; name?: string; symbol?: string };
   quoteToken?: { address?: string; symbol?: string };
   priceUsd?: string;
@@ -218,6 +219,28 @@ export async function lookupNearToken(address: string) {
   return TOKENS.find((token) => token.address?.toLowerCase() === clean.toLowerCase()) ?? TOKENS.find((token) => [...best.keys()].some((id) => token.address === id)) ?? null;
 }
 
+export function pairId(value: unknown) {
+  if (typeof value !== "string") return "";
+  const id = value.trim();
+  if (id.length < 2 || id.length > 160 || /[\s/?#\\]/.test(id)) return "";
+  return id;
+}
+
+export async function loadDexPair(address?: string) {
+  const clean = address?.trim();
+  if (!clean) return "";
+  const known = TOKENS.find((token) => token.address?.toLowerCase() === clean.toLowerCase());
+  if (known?.pair) return known.pair;
+  const rows = await getJson<DexPair[]>(`${PAIRS}/${encodeURIComponent(clean)}`).catch(() => null);
+  const list = Array.isArray(rows) ? rows : [];
+  const base = list.filter((pair) => pair.baseToken?.address?.toLowerCase() === clean.toLowerCase());
+  const pool = base.length ? base : list;
+  const best = [...pool].sort((a, b) => num(b.liquidity?.usd) - num(a.liquidity?.usd) || num(b.volume?.h24) - num(a.volume?.h24))[0];
+  const id = pairId(best?.pairAddress);
+  if (known && id) known.pair = id;
+  return id;
+}
+
 export async function searchNearTokens(query: string) {
   const clean = query.trim();
   if (clean.length < 2) return [];
@@ -302,6 +325,8 @@ function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
     token.verified = isCanonical({ symbol, address });
     token.score = qualityScore(token) ?? 0;
     token.notes = token.verified ? ["Widely used NEAR asset"] : [pair.dexId || "NEAR market"];
+    const id = pairId(pair.pairAddress);
+    if (id) token.pair = id;
     owned.set(symbol, address);
     marks[symbol] = price;
   }

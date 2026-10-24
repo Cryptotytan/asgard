@@ -82,7 +82,7 @@ export function TokenTrade({
 
       <div className="flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[auto_minmax(0,1fr)] lg:items-start">
         <section className="relative order-1 min-w-0 lg:col-start-1 lg:row-start-1 lg:self-start lg:border-r lg:border-line">
-          <TradingViewChart symbol={token.symbol} />
+          <TradingViewChart token={token} />
         </section>
         <div className="order-2 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-stretch">
           <Ticket token={token} mode={mode} quickUsd={quickUsd} scanning={scanning} onMode={onMode} onFlash={onFlash} />

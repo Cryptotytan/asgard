@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { loadDexPair } from "@/lib/dex";
 
 const SCRIPT = "https://widgets.tradingview-widget.com/w/en/tv-advanced-chart.js";
 
@@ -15,6 +16,8 @@ const LISTED: Record<string, string> = {
   SWEAT: "BYBIT:SWEATUSDT",
 };
 
+type ChartToken = { symbol: string; address?: string; pair?: string };
+
 export function tradingViewSymbol(symbol: string) {
   return LISTED[symbol.toUpperCase()] ?? "";
 }
@@ -28,17 +31,15 @@ function ensureScript() {
   document.head.append(script);
 }
 
-export function TradingViewChart({ symbol }: { symbol: string }) {
+function TvChart({ symbol }: { symbol: string }) {
   const host = useRef<HTMLDivElement>(null);
-  const listed = tradingViewSymbol(symbol);
-  const plotted = listed || "BINANCE:NEARUSDT";
 
   useEffect(() => {
     ensureScript();
     const node = host.current;
     if (!node) return;
     const chart = document.createElement("tv-advanced-chart");
-    chart.setAttribute("symbol", plotted);
+    chart.setAttribute("symbol", symbol);
     chart.setAttribute("interval", "1D");
     chart.setAttribute("theme", "dark");
     chart.setAttribute("chart-type", "candles");
@@ -53,20 +54,89 @@ export function TradingViewChart({ symbol }: { symbol: string }) {
     chart.style.height = "100%";
     node.replaceChildren(chart);
     return () => node.replaceChildren();
-  }, [plotted]);
+  }, [symbol]);
 
   return (
     <div className="w-full">
-      {!listed && (
-        <p className="px-3 pb-1 text-[11px] text-muted sm:px-4">{symbol} is not listed on TradingView. The terminal is open on NEAR so you can search a listed market.</p>
-      )}
       <div ref={host} className="h-[480px] w-full sm:h-[560px]" />
       <p className="px-3 py-1 text-[10px] text-muted sm:px-4">
-        <a className="underline" href={`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(plotted)}`} target="_blank" rel="noreferrer">
+        <a className="underline" href={`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}`} target="_blank" rel="noreferrer">
           Chart
         </a>{" "}
         by TradingView
       </p>
     </div>
   );
+}
+
+function dexSrc(pair: string) {
+  const query = new URLSearchParams({
+    embed: "1",
+    loadChartSettings: "0",
+    trades: "0",
+    tabs: "0",
+    info: "0",
+    chartLeftToolbar: "0",
+    chartDefaultOnMobile: "1",
+    chartTheme: "dark",
+    theme: "dark",
+    chartStyle: "1",
+    chartType: "usd",
+    interval: "15",
+  });
+  return `https://dexscreener.com/near/${pair}?${query.toString()}`;
+}
+
+function DexChart({ token }: { token: ChartToken }) {
+  const [pair, setPair] = useState(token.pair ?? "");
+  const [miss, setMiss] = useState(false);
+
+  useEffect(() => {
+    let cancel = false;
+    if (token.pair) {
+      setPair(token.pair);
+      setMiss(false);
+      return;
+    }
+    setPair("");
+    setMiss(false);
+    if (!token.address) {
+      setMiss(true);
+      return;
+    }
+    void loadDexPair(token.address)
+      .then((id) => {
+        if (cancel) return;
+        if (!id) setMiss(true);
+        else setPair(id);
+      })
+      .catch(() => {
+        if (!cancel) setMiss(true);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [token.address, token.pair, token.symbol]);
+
+  if (miss) {
+    return <p className="px-3 py-8 text-sm text-muted sm:px-4">DexScreener has no NEAR chart for {token.symbol}.</p>;
+  }
+  if (!pair) {
+    return <p className="px-3 py-8 text-sm text-muted sm:px-4">Loading the DexScreener chart…</p>;
+  }
+  return (
+    <iframe
+      title={`${token.symbol} chart`}
+      src={dexSrc(pair)}
+      className="h-[480px] w-full border-0 bg-black sm:h-[560px]"
+      loading="eager"
+      referrerPolicy="no-referrer-when-downgrade"
+    />
+  );
+}
+
+export function TradingViewChart({ token }: { token: ChartToken }) {
+  const listed = tradingViewSymbol(token.symbol);
+  if (listed) return <TvChart symbol={listed} />;
+  return <DexChart token={token} />;
 }

@@ -41,6 +41,7 @@ export type Token = {
   windows: Record<WindowId, number>;
   volBy: Record<WindowId, number>;
   address?: string;
+  pair?: string;
   listed?: boolean;
   kind: "major" | "defi" | "meme";
 };
