@@ -957,14 +957,17 @@ export function isGeneratedIcon(icon: string | undefined) {
   return !icon || icon.startsWith("data:image/svg+xml;utf8,");
 }
 
+function iconRank(icon: string | undefined) {
+  if (!icon || icon.startsWith("data:image/svg+xml;utf8,")) return 0;
+  if (icon.includes("cdn.dexscreener.com/tokens/") || icon.includes("dd.dexscreener.com/ds-data/tokens/")) return 1;
+  if (icon.startsWith("/tokens/")) return 2;
+  if (icon.startsWith("https://") || icon.startsWith("data:image/")) return 3;
+  return 0;
+}
+
 export function preferIcon(current: string, incoming?: string) {
-  if (!incoming) return current;
-  if (incoming.startsWith("javascript:")) return current;
-  const real = incoming.startsWith("https://") || incoming.startsWith("/tokens/") || incoming.startsWith("data:image/");
-  if (!real) return current;
-  if (current.startsWith("/tokens/") && !incoming.startsWith("https://cdn.dexscreener.com/")) return current;
-  if (isGeneratedIcon(current)) return incoming;
-  if (incoming.startsWith("https://") && !current.startsWith("https://") && !current.startsWith("/tokens/")) return incoming;
+  if (!incoming || incoming.startsWith("javascript:") || incoming.startsWith("data:text")) return current;
+  if (iconRank(incoming) >= iconRank(current) && iconRank(incoming) > 0) return incoming;
   return current;
 }
 

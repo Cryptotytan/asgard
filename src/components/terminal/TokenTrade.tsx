@@ -17,7 +17,7 @@ import {
   type Token,
 } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
-import { liveCandles, livePrints, loadPrints } from "@/lib/live";
+import { liveCandles, livePrints, loadPrints, watchCandles } from "@/lib/live";
 import { executeIntent, quoteIntent, type IntentQuote } from "@/lib/intents";
 
 const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"] as const;
@@ -46,18 +46,11 @@ export function TokenTrade({
   const mark = useDesk((s) => s.marks[symbol]);
   useDesk((s) => s.clock);
   const token = tokenBySymbol(symbol);
-  const [frame, setFrame] = useState<(typeof FRAMES)[number]>("5m");
+  const [frame, setFrame] = useState<(typeof FRAMES)[number]>("1D");
   const [scale, setScale] = useState<"price" | "mcap">("price");
   const [book, setBook] = useState<(typeof BOOKS)[number]>("Trades");
-  const [scanning, setScanning] = useState(true);
+  const scanning = false;
   const [hover, setHover] = useState<ChartHover | null>(null);
-
-  useEffect(() => {
-    setScanning(true);
-    setHover(null);
-    const timer = window.setTimeout(() => setScanning(false), 480);
-    return () => window.clearTimeout(timer);
-  }, [symbol]);
 
   useEffect(() => setHover(null), [frame, scale]);
 
@@ -66,7 +59,7 @@ export function TokenTrade({
   }, [symbol, mode, onMode]);
 
   const last = scale === "price" ? (mark ?? token.price) : token.mcapN;
-  const series = scale === "price" ? liveCandles(symbol) : undefined;
+  const series = scale === "price" ? liveCandles(symbol, frame) : undefined;
   const bars = series && series.length > 1 ? series : [];
   const open = bars[0] ?? { o: last, h: last, l: last, c: last };
   const close = bars[bars.length - 1] ?? open;
@@ -74,6 +67,10 @@ export function TokenTrade({
   const low = bars.length ? Math.min(...bars.map((bar) => bar.l)) : last;
   const delta = close.c - open.o;
   const prints = livePrints(symbol) ?? [];
+  useEffect(() => {
+    if (scale !== "price") return;
+    return watchCandles(symbol, frame);
+  }, [symbol, frame, scale]);
   useEffect(() => {
     if (scale !== "price") return;
     void loadPrints(symbol).catch(() => undefined);

@@ -4,7 +4,7 @@ import { CandleChart } from "@/components/terminal/CandleChart";
 import { TokenIcon, TokenPicker } from "@/components/terminal/TokenIcon";
 import { fmt, tokenBySymbol, usd, type Print } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
-import { liveCandles, livePrints, loadPrints } from "@/lib/live";
+import { liveCandles, livePrints, loadPrints, watchCandles } from "@/lib/live";
 import { executeIntent } from "@/lib/intents";
 
 const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"];
@@ -12,13 +12,15 @@ const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"];
 export function ChartDesk({ mode, symbol, onSymbol }: { mode: "spot" | "perp"; symbol: string; onSymbol: (symbol: string) => void }) {
   const token = tokenBySymbol(symbol);
   const marks = useDesk((s) => s.marks);
+  useDesk((s) => s.clock);
   const mark = mode === "perp" ? (marks[token.symbol] ?? token.price) : token.price;
-  const [frame, setFrame] = useState("5m");
+  const [frame, setFrame] = useState("1D");
   const [picker, setPicker] = useState(false);
   const [book, setBook] = useState<"Trades" | "Positions" | "Orders">("Trades");
-  const series = liveCandles(symbol);
+  const series = liveCandles(symbol, frame);
   const bars = series && series.length > 1 ? series : [];
   const prints = livePrints(symbol) ?? [];
+  useEffect(() => watchCandles(symbol, frame), [symbol, frame]);
   useEffect(() => {
     void loadPrints(symbol).catch(() => undefined);
   }, [symbol]);
@@ -78,7 +80,7 @@ export function ChartDesk({ mode, symbol, onSymbol }: { mode: "spot" | "perp"; s
             {((delta / open.o) * 100).toFixed(2)}%)
           </span>
         </p>
-        <CandleChart seed={`${symbol}-${frame}`} last={mark} frame={frame} series={liveCandles(symbol)} />
+        <CandleChart seed={`${symbol}-${frame}`} last={mark} frame={frame} series={series} />
         <div className="mt-2 flex gap-1 overflow-auto">
           {(["Trades", "Positions", "Orders"] as const).map((item) => (
             <button

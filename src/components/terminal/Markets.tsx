@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Star, X } from "lucide-react";
 import { TokenIcon, VerifiedMark } from "@/components/terminal/TokenIcon";
 import {
@@ -36,22 +36,6 @@ export function Markets({
   const [win, setWin] = useState<WindowId>("h24");
   const [chain, setChain] = useState("All");
   const [verifiedOnly, setVerifiedOnly] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const tabTimer = useRef(0);
-
-  useEffect(
-    () => () => {
-      window.clearTimeout(tabTimer.current);
-    },
-    [],
-  );
-
-  function switchTab(next: Tab) {
-    setTab(next);
-    setLoading(true);
-    window.clearTimeout(tabTimer.current);
-    tabTimer.current = window.setTimeout(() => setLoading(false), 280);
-  }
 
   const windowLabel = WINDOWS.find((item) => item.id === win)?.label ?? "24H";
   const rows = useMemo(() => {
@@ -77,7 +61,7 @@ export function Markets({
             <button
               key={item}
               type="button"
-              onClick={() => switchTab(item)}
+              onClick={() => setTab(item)}
               className={`h-10 rounded-lg px-1 text-[11px] font-semibold tracking-wide min-[390px]:text-xs sm:text-sm ${tab === item ? "bg-surface-2 text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}
             >
               {item}
@@ -122,13 +106,11 @@ export function Markets({
           </button>
         </div>
       </div>
-      <p className="px-3 pb-1 text-[10px] text-muted sm:px-4">Trending, newest, and all are NEAR pairs from DexScreener. Trending follows the window’s volume. Logos are the token’s own image.</p>
-
-      {loading || (!marketsSynced && rows.length === 0) ? (
+      {(!marketsSynced && rows.length === 0) ? (
         <Skeleton />
       ) : rows.length === 0 ? (
         <p className="px-4 py-16 text-center text-sm text-muted">
-          {tab === "Recents" ? "Tokens you open show up here." : marketsSynced ? "No NEAR tokens match that filter." : "DexScreener did not return NEAR markets."}
+          {tab === "Recents" ? "Tokens you open show up here." : "No tokens match that filter."}
         </p>
       ) : (
         <>

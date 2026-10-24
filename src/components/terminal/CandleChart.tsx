@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerE
 import { fmt, money, type Candle } from "@/lib/market";
 
 const FRAME_MIN: Record<string, number> = { "1m": 1, "5m": 5, "15m": 15, "1H": 60, "4H": 240, "1D": 1440 };
-const DEFAULT_SPAN = 168;
 const MIN_SPAN = 8;
 const UP = "#00e8a0";
 const DOWN = "#ff4d8d";
@@ -12,26 +11,6 @@ const PAD = { l: 8, r: 72, t: 16, b: 26 };
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
-}
-
-function bucket(points: Candle[], minutes: number): Candle[] {
-  const size = Math.max(1, Math.round(minutes / 5));
-  if (size === 1) return points;
-  const out: Candle[] = [];
-  for (let index = 0; index < points.length; index += size) {
-    const slice = points.slice(index, index + size);
-    const first = slice[0];
-    const last = slice[slice.length - 1];
-    if (!first || !last) continue;
-    out.push({
-      t: last.t,
-      o: first.o,
-      h: Math.max(...slice.map((candle) => candle.h)),
-      l: Math.min(...slice.map((candle) => candle.l)),
-      c: last.c,
-    });
-  }
-  return out;
 }
 
 export type ChartHover = { o: number; h: number; l: number; c: number; label: string };
@@ -53,8 +32,8 @@ export function CandleChart({
   series?: Candle[];
   onHover?: (hover: ChartHover | null) => void;
 }) {
-  const all = useMemo(() => (series && series.length > 1 ? bucket(series, FRAME_MIN[frame] ?? 5) : []), [series, frame]);
-  const [span, setSpan] = useState(DEFAULT_SPAN);
+  const all = useMemo(() => (series && series.length > 1 ? series : []), [series]);
+  const [span, setSpan] = useState<number | null>(null);
   const [end, setEnd] = useState<number | null>(null);
   const [yScale, setYScale] = useState(1);
   const [yShift, setYShift] = useState(0);
@@ -62,7 +41,7 @@ export function CandleChart({
   const [crossY, setCrossY] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
   const frameRef = useRef<HTMLDivElement>(null);
-  const spanRef = useRef(span);
+  const spanRef = useRef(0);
   const endRef = useRef(end);
   const lenRef = useRef(all.length);
   const yScaleRef = useRef(yScale);
@@ -70,9 +49,8 @@ export function CandleChart({
   const drag = useRef<{ x: number; y: number; end: number; yScale: number; yShift: number; axis: boolean } | null>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{ dist: number; span: number } | null>(null);
-  spanRef.current = span;
-  endRef.current = end;
   lenRef.current = all.length;
+  spanRef.current = span ?? lenRef.current;
   yScaleRef.current = yScale;
   yShiftRef.current = yShift;
 
@@ -88,7 +66,7 @@ export function CandleChart({
 
   function zoomBy(factor: number, focus: number) {
     const len = lenRef.current;
-    const current = Math.min(spanRef.current, Math.max(len, 1));
+    const current = Math.min(spanRef.current || len, Math.max(len, 1));
     const next = clamp(Math.round(current * factor), MIN_SPAN, Math.max(MIN_SPAN, len));
     const right = endRef.current ?? len;
     const left = right - current;
@@ -102,12 +80,12 @@ export function CandleChart({
   zoomRef.current = zoomBy;
 
   useEffect(() => {
-    setSpan(DEFAULT_SPAN);
+    setSpan(null);
     setEnd(null);
     setYScale(1);
     setYShift(0);
     setHover(null);
-    spanRef.current = DEFAULT_SPAN;
+    spanRef.current = 0;
     endRef.current = null;
     yScaleRef.current = 1;
     yShiftRef.current = 0;
@@ -134,8 +112,9 @@ export function CandleChart({
     return () => node.removeEventListener("wheel", onWheel);
   }, [all.length]);
 
-  const viewEnd = end == null ? all.length : clamp(end, Math.min(span, all.length), all.length);
-  const start = Math.max(0, viewEnd - span);
+  const fitted = span ?? Math.max(all.length, 1);
+  const viewEnd = end == null ? all.length : clamp(end, Math.min(fitted, all.length), all.length);
+  const start = Math.max(0, viewEnd - fitted);
   const data = all.slice(start, viewEnd);
   const width = VB_W;
   const height = VB_H;
@@ -153,7 +132,7 @@ export function CandleChart({
   const plotW = width - pad.l - pad.r;
   const priceH = (height - pad.t - pad.b) * 0.74;
   const slot = plotW / Math.max(data.length, 1);
-  const bodyW = Math.max(1.4, slot * 0.72);
+  const bodyW = Math.min(Math.max(slot * 0.62, 0.35), Math.max(slot - 0.08, 0.35));
   const y = (price: number) => pad.t + ((max - price) / priceSpan) * priceH;
   const vols = data.map((candle) => Math.abs(candle.c - candle.o) + (candle.h - candle.l) * 0.35);
   const maxVol = Math.max(...vols, 1);
@@ -164,13 +143,19 @@ export function CandleChart({
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((step) => max - priceSpan * step);
   const label = (n: number) => (compact || Math.abs(n) >= 100_000 ? money(n) : fmt(n, Math.abs(n) >= 1 ? 4 : 6));
   const quote = live ?? lastCandle.c;
-  const changed = span !== DEFAULT_SPAN || end != null || yScale !== 1 || Math.abs(yShift) > 0.001;
+  const changed = span != null || end != null || yScale !== 1 || Math.abs(yShift) > 0.001;
   const plotRight = pad.l + plotW;
 
   function clock(ts?: number) {
     if (!ts) return "";
     const ms = ts > 1e12 ? ts : ts * 1000;
-    return new Date(ms).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+    const date = new Date(ms);
+    const first = data[0]?.t ?? ts;
+    const lastT = data[data.length - 1]?.t ?? ts;
+    const spanSec = Math.abs((lastT > 1e12 ? lastT / 1000 : lastT) - (first > 1e12 ? first / 1000 : first));
+    if (spanSec >= 86400 * 370) return date.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+    if (spanSec >= 86400 * 2) return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
   }
 
   function priceAt(py: number) {
@@ -308,18 +293,18 @@ export function CandleChart({
   }
 
   function reset() {
-    setSpan(DEFAULT_SPAN);
+    setSpan(null);
     setEnd(null);
     setYScale(1);
     setYShift(0);
-    spanRef.current = DEFAULT_SPAN;
+    spanRef.current = 0;
     endRef.current = null;
     yScaleRef.current = 1;
     yShiftRef.current = 0;
   }
 
   if (data.length < 2) {
-    return <div className="grid h-80 place-items-center px-6 text-center text-sm text-muted">Live candles have not arrived yet. History comes from DefiLlama.</div>;
+    return <div className="grid h-80 place-items-center px-6 text-center text-sm text-muted">Loading the full price history…</div>;
   }
 
   const timeMarks = [0, 0.25, 0.5, 0.75, 1]

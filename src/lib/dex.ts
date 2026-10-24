@@ -68,11 +68,27 @@ function safeIcon(icon: unknown) {
 }
 
 export function iconFor(address: string | undefined, symbol: string, dexImage?: string) {
-  const dex = safeIcon(dexImage);
-  if (dex) return dex;
   const listed = address ? safeIcon(iconBook?.get(address)) : "";
   if (listed) return listed;
-  return LOCAL[symbol.toUpperCase()] ?? LOCAL[symbol] ?? "";
+  const local = LOCAL[symbol.toUpperCase()] ?? LOCAL[symbol] ?? "";
+  if (local) return local;
+  const dex = safeIcon(dexImage);
+  if (dex) return dex;
+  return address ? `https://cdn.dexscreener.com/tokens/near/${address}.png` : "";
+}
+
+export function applyIconBook(book?: Map<string, string>) {
+  if (book) iconBook = book;
+  let changed = false;
+  for (const token of TOKENS) {
+    const next = iconFor(token.address, token.symbol);
+    const icon = preferIcon(token.icon, next || undefined);
+    if (icon && icon !== token.icon) {
+      token.icon = icon;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 async function refIcons() {
@@ -139,40 +155,45 @@ function windows(source: Partial<Record<WindowId, number>> | undefined): Record<
   };
 }
 
-export async function syncNearMarkets(book?: Map<string, string>) {
+export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (marks: Record<string, number>) => void) {
   if (book) iconBook = book;
   const marks: Record<string, number> = {};
   const batches = await Promise.all(ANCHORS.map((address) => getJson<DexPair[]>(`${PAIRS}/${address}`).catch(() => null)));
   const pairs = batches.flatMap((rows) => (Array.isArray(rows) ? rows : []));
   const seen = new Set<string>();
   const best = new Map<string, DexPair>();
-  for (const pair of pairs) {
-    const base = pair.baseToken;
-    const address = base?.address;
-    if (!address || !base.symbol) continue;
+  const take = (pair: DexPair) => {
+    const address = pair.baseToken?.address;
+    if (!address || !pair.baseToken?.symbol) return;
     const vol = num(pair.volume?.h24);
     const prev = best.get(address);
     if (!prev || vol >= num(prev.volume?.h24)) best.set(address, pair);
     seen.add(address);
-  }
+  };
+  for (const pair of pairs) take(pair);
+  paintDex(best, marks);
+  marketsSynced = pairs.length > 0 || marketsSynced;
+  onPaint?.({ ...marks });
+
   const extra: string[] = [];
   for (const address of discover) {
-    if (seen.has(address) || extra.length >= 60) continue;
+    if (seen.has(address) || extra.length >= 90) continue;
     if (address.includes(" ") || address.length > 120) continue;
     extra.push(address);
   }
-  for (let i = 0; i < extra.length; i += 30) {
-    const chunk = extra.slice(i, i + 30).join(",");
-    const rows = await getJson<DexPair[]>(`${TOKENS_API}/${chunk}`).catch(() => null);
-    for (const pair of Array.isArray(rows) ? rows : []) {
-      const address = pair.baseToken?.address;
-      if (!address) continue;
-      const vol = num(pair.volume?.h24);
-      const prev = best.get(address);
-      if (!prev || vol >= num(prev.volume?.h24)) best.set(address, pair);
-    }
+  const chunks: string[] = [];
+  for (let i = 0; i < extra.length; i += 30) chunks.push(extra.slice(i, i + 30).join(","));
+  const extras = await Promise.all(chunks.map((chunk) => getJson<DexPair[]>(`${TOKENS_API}/${chunk}`).catch(() => null)));
+  for (const rows of extras) for (const pair of Array.isArray(rows) ? rows : []) take(pair);
+  if (extras.length) {
+    paintDex(best, marks);
+    onPaint?.({ ...marks });
   }
+  marketsSynced = true;
+  return marks;
+}
 
+function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
   const ranked = [...best.entries()].sort((a, b) => num(b[1].volume?.h24) - num(a[1].volume?.h24));
   const owned = new Map<string, string>();
   for (const token of TOKENS) {
@@ -227,10 +248,8 @@ export async function syncNearMarkets(book?: Map<string, string>) {
     token.ageH = pair.pairCreatedAt ? Math.max(0.05, (Date.now() - pair.pairCreatedAt) / 3_600_000) : token.ageH;
     token.listed = true;
     if (dexImage) token.verified = true;
-    token.notes = [`DexScreener${pair.dexId ? ` · ${pair.dexId}` : ""}`];
+    token.notes = [pair.dexId ? pair.dexId : "NEAR"];
     owned.set(symbol, address);
     marks[symbol] = price;
   }
-  marketsSynced = true;
-  return marks;
 }

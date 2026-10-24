@@ -16,17 +16,25 @@ if (typeof window !== "undefined") {
   }
 }
 
-export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "symbol">; className?: string }) {
-  const seen = useRef(token.symbol);
+export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "symbol" | "address">; className?: string }) {
+  const seen = useRef(token.symbol + token.icon);
   const [turn, setTurn] = useState<"a" | "b" | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [step, setStep] = useState(0);
+  const sources = useMemo(() => {
+    const list = [token.icon];
+    if (token.address) {
+      list.push(`https://cdn.dexscreener.com/tokens/near/${token.address}.png`);
+      list.push(`https://dd.dexscreener.com/ds-data/tokens/near/${token.address}.png`);
+    }
+    return [...new Set(list.filter((src) => src && !src.startsWith("data:image/svg+xml;utf8,")))];
+  }, [token.address, token.icon]);
   useEffect(() => {
-    setFailed(false);
-    if (seen.current === token.symbol) return;
-    seen.current = token.symbol;
+    setStep(0);
+    if (seen.current === token.symbol + token.icon) return;
+    seen.current = token.symbol + token.icon;
     setTurn((current) => (current === "a" ? "b" : "a"));
   }, [token.symbol, token.icon]);
-  const src = !failed && token.icon ? token.icon : glyph(token.symbol, 150);
+  const src = sources[step] || glyph(token.symbol, 150);
   return (
     <span className={cn("icon-flip", turn && `is-${turn}`)}>
       <img
@@ -35,8 +43,8 @@ export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "s
         width={24}
         height={24}
         decoding="async"
-        loading="eager"
-        onError={() => setFailed(true)}
+        loading="lazy"
+        onError={() => setStep((current) => current + 1)}
         className={cn("size-6 shrink-0 rounded-full bg-surface-2 object-cover", className)}
       />
     </span>
