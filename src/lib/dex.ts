@@ -306,3 +306,102 @@ function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
     marks[symbol] = price;
   }
 }
+
+const CHAIN_NET = { Ethereum: "eth", Aurora: "aurora" } as const;
+const chainAt = new Map<string, number>();
+const chainFlight = new Map<string, Promise<void>>();
+
+type GeckoPool = {
+  attributes?: {
+    name?: string;
+    base_token_price_usd?: string;
+    market_cap_usd?: string | null;
+    fdv_usd?: string | null;
+    reserve_in_usd?: string;
+    volume_usd?: { h24?: string };
+    price_change_percentage?: { h24?: string };
+  };
+  relationships?: { base_token?: { data?: { id?: string } } };
+};
+
+function chainSymbol(name: string) {
+  const head = (name.split("/")[0] ?? "").trim().replace(/\s+\d+(?:\.\d+)?%$/, "");
+  return head.replace(/\s/g, "").replace(/^\$/, "");
+}
+
+function chainAddress(id: string) {
+  const cut = id.indexOf("_");
+  return (cut >= 0 ? id.slice(cut + 1) : id).trim();
+}
+
+function placeChainToken(input: { symbol: string; name: string; price: number; chain: "Aurora" | "Ethereum"; address: string; icon: string; liq: number; vol: number; mcap: number; change: number }) {
+  const address = input.address;
+  let symbol = input.symbol;
+  const same = TOKENS.find((token) => token.address?.toLowerCase() === address.toLowerCase());
+  const clash = TOKENS.some((token) => token !== same && token.symbol.toUpperCase() === symbol.toUpperCase());
+  if (clash) symbol = `${input.symbol}.${input.chain}`;
+  const token = same ?? ensureToken({ symbol, name: input.name, price: input.price, chain: input.chain, icon: input.icon, address });
+  if (token.address && token.address.toLowerCase() !== address.toLowerCase()) return;
+  token.symbol = symbol;
+  token.address = address;
+  token.chain = input.chain;
+  token.name = input.name || token.name;
+  token.price = input.price;
+  token.listed = true;
+  token.icon = preferIcon(token.icon, input.icon);
+  token.liqN = input.liq;
+  token.liquidity = input.liq > 0 ? money(input.liq) : "—";
+  token.volN = input.vol;
+  token.volBy = { ...token.volBy, h24: input.vol };
+  token.volume = input.vol > 0 ? money(input.vol) : "—";
+  token.mcapN = input.mcap;
+  token.mcap = input.mcap > 0 ? money(input.mcap) : "—";
+  token.fdv = token.mcap;
+  token.change = input.change;
+  token.windows = { ...token.windows, h24: input.change };
+  token.verified = false;
+  token.score = qualityScore(token) ?? 0;
+  token.notes = [`${input.chain} market`];
+}
+
+export function loadChainBook(chain: "Aurora" | "Ethereum") {
+  const fresh = TOKENS.some((token) => token.chain === chain && token.listed && token.price > 0);
+  if (fresh && Date.now() - (chainAt.get(chain) ?? 0) < 120_000) return Promise.resolve();
+  const pending = chainFlight.get(chain);
+  if (pending) return pending;
+  const job = fetchChainBook(chain).finally(() => chainFlight.delete(chain));
+  chainFlight.set(chain, job);
+  return job;
+}
+
+async function fetchChainBook(chain: "Aurora" | "Ethereum") {
+  const net = CHAIN_NET[chain];
+  const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/trending_pools`, { headers: { accept: "application/json" } });
+  if (!response.ok) return;
+  const body = (await response.json()) as { data?: GeckoPool[] };
+  const dex = net === "eth" ? "ethereum" : "aurora";
+  let wrote = 0;
+  for (const pool of body.data ?? []) {
+    const id = pool.relationships?.base_token?.data?.id ?? "";
+    const address = chainAddress(id);
+    const symbol = chainSymbol(pool.attributes?.name ?? "");
+    const price = Number(pool.attributes?.base_token_price_usd);
+    if (!address || !symbol || !Number.isFinite(price) || price <= 0) continue;
+    placeChainToken({
+      symbol,
+      name: symbol,
+      price,
+      chain,
+      address,
+      icon: `https://cdn.dexscreener.com/tokens/${dex}/${address}.png`,
+      liq: Number(pool.attributes?.reserve_in_usd) || 0,
+      vol: Number(pool.attributes?.volume_usd?.h24) || 0,
+      mcap: Number(pool.attributes?.market_cap_usd) || Number(pool.attributes?.fdv_usd) || 0,
+      change: Number(pool.attributes?.price_change_percentage?.h24) || 0,
+    });
+    wrote += 1;
+  }
+  if (!wrote) return;
+  chainAt.set(chain, Date.now());
+  useDesk.setState((state) => ({ clock: state.clock + 1 }));
+}
