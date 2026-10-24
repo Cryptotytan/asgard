@@ -7,6 +7,7 @@ import {
   CHAINS,
   compactCount,
   money,
+  px,
   signedPct,
   TOKENS,
   WINDOWS,
@@ -14,6 +15,7 @@ import {
   type WindowId,
 } from "@/lib/market";
 import { hideToken, toggleStar, useWatch, visitToken } from "@/lib/watch";
+import { useDesk } from "@/lib/store";
 
 const TABS = ["Trending", "Newest", "All", "Recents"] as const;
 type Tab = (typeof TABS)[number];
@@ -28,6 +30,7 @@ export function Markets({
   onSwap: (symbol: string) => void;
 }) {
   const watch = useWatch();
+  useDesk((state) => state.clock);
   const [tab, setTab] = useState<Tab>("Trending");
   const [win, setWin] = useState<WindowId>("h24");
   const [chain, setChain] = useState("All");
@@ -117,6 +120,7 @@ export function Markets({
           </button>
         </div>
       </div>
+      <p className="px-3 pb-1 text-[10px] text-muted sm:px-4">Prices and candles are DefiLlama. Liquidity is Rhea. A dash means that feed does not publish the figure.</p>
 
       {loading ? (
         <Skeleton />
@@ -147,7 +151,7 @@ export function Markets({
               <thead className="text-xs uppercase tracking-wide text-muted">
                 <tr className="border-b border-line">
                   <th className="px-4 py-3 font-medium">Token</th>
-                  <th className="px-3 py-3 font-medium">Market cap</th>
+                  <th className="px-3 py-3 font-medium">Price</th>
                   <th className="px-3 py-3 font-medium">Token stats</th>
                   <th className="px-3 py-3 font-medium">Liquidity</th>
                   <th className="px-3 py-3 font-medium">Volume</th>
@@ -213,30 +217,32 @@ function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowPro
         </div>
       </td>
       <td className="px-3 py-3 font-mono">
-        <p>{money(token.mcapN)}</p>
-        <p className={`text-xs ${change >= 0 ? "text-primary" : "text-danger"}`}>
-          {windowLabel.toLowerCase()} {signedPct(change)}
+        <p>{px(token.price)}</p>
+        <p className={`text-xs ${!Number.isFinite(token.price) ? "text-muted" : change >= 0 ? "text-primary" : "text-danger"}`}>
+          {token.mcapN > 0 ? `${money(token.mcapN)} · ` : ""}
+          {windowLabel.toLowerCase()} {Number.isFinite(token.price) ? signedPct(change) : "—"}
         </p>
       </td>
       <td className="px-3 py-3">
-        <p className="flex items-center gap-1.5 font-mono text-xs">
-          <span className="text-muted">{compactCount(token.holdersN)}</span>
-          <span className="rounded bg-primary/15 px-1.5 py-0.5 text-primary">{compactCount(token.buys)}</span>
-          <span className="rounded bg-danger/15 px-1.5 py-0.5 text-danger">{sellPct}%</span>
-        </p>
-        <div className="mt-1.5 h-1 w-24 overflow-hidden rounded-full bg-danger/30">
-          <div className="h-full bg-primary" style={{ width: `${token.txnsN ? (token.buys / token.txnsN) * 100 : 0}%` }} />
-        </div>
+        {token.txnsN > 0 ? (
+          <>
+            <p className="flex items-center gap-1.5 font-mono text-xs">
+              <span className="text-muted">{token.holdersN > 0 ? compactCount(token.holdersN) : "—"}</span>
+              <span className="rounded bg-primary/15 px-1.5 py-0.5 text-primary">{compactCount(token.buys)}</span>
+              <span className="rounded bg-danger/15 px-1.5 py-0.5 text-danger">{sellPct}%</span>
+            </p>
+            <div className="mt-1.5 h-1 w-24 overflow-hidden rounded-full bg-danger/30">
+              <div className="h-full bg-primary" style={{ width: `${(token.buys / token.txnsN) * 100}%` }} />
+            </div>
+          </>
+        ) : (
+          <p className="font-mono text-xs text-muted">—</p>
+        )}
       </td>
-      <td className="px-3 py-3 font-mono">{money(token.liqN)}</td>
-      <td className="px-3 py-3 font-mono">{money(token.volN)}</td>
+      <td className="px-3 py-3 font-mono">{token.liqN > 0 ? money(token.liqN) : "—"}</td>
+      <td className="px-3 py-3 font-mono">{token.volN > 0 ? money(token.volN) : "—"}</td>
       <td className="px-3 py-3 font-mono">
-        <p>{token.txnsN.toLocaleString("en-US")}</p>
-        <p className="text-xs">
-          <span className="text-primary">{token.buys.toLocaleString("en-US")}</span>
-          <span className="text-muted"> / </span>
-          <span className="text-danger">{token.sells.toLocaleString("en-US")}</span>
-        </p>
+        <p>{token.txnsN > 0 ? token.txnsN.toLocaleString("en-US") : "—"}</p>
       </td>
       <td className="px-4 py-3 text-right">
         <button
@@ -272,14 +278,16 @@ function MobileRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowProp
           </span>
         </span>
         <span className="text-right font-mono">
-          <span className="block text-sm">{money(token.mcapN)}</span>
-          <span className={`text-xs ${change >= 0 ? "text-primary" : "text-danger"}`}>{signedPct(change)}</span>
-          <span className="block text-xs text-muted">{windowLabel}</span>
+          <span className="block text-sm">{px(token.price)}</span>
+          <span className={`text-xs ${!Number.isFinite(token.price) ? "text-muted" : change >= 0 ? "text-primary" : "text-danger"}`}>
+            {Number.isFinite(token.price) ? signedPct(change) : "—"}
+          </span>
+          <span className="block text-xs text-muted">{token.mcapN > 0 ? money(token.mcapN) : windowLabel}</span>
         </span>
       </button>
       <div className="mt-2 flex items-center justify-between gap-2">
         <p className="text-xs text-muted">
-          Liq {money(token.liqN)} · Vol {money(token.volN)}
+          Liq {token.liqN > 0 ? money(token.liqN) : "—"} · Vol {token.volN > 0 ? money(token.volN) : "—"}
         </p>
         <div className="flex items-center gap-1">
           <button type="button" aria-label={starred ? "Unstar" : "Star"} onClick={() => toggleStar(token.symbol)} className="grid size-9 place-items-center text-muted">

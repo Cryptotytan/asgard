@@ -1,33 +1,101 @@
-import "@/lib/node-globals";
+import { installBrowserGlobals } from "@/lib/node-globals";
 import { useDesk } from "@/lib/store";
 
 const CONTRACT_ID = "social.near";
+const KEY_STORE = "functionCallKey";
+const ACCOUNT_STORE = "signedAccountId";
+const READONLY_STORE = "asgardReadonly";
 
 let booted: Promise<void> | null = null;
 let modalShow: (() => void) | null = null;
+let cancelPending: (() => void) | null = null;
 
 type Selector = {
   store: { getState: () => { accounts: { accountId: string }[] } };
   on: (event: "signedIn" | "signedOut", cb: () => void) => void;
-  wallet: () => Promise<{
+  wallet: (id?: string) => Promise<{
     signOut: () => Promise<void>;
+    signIn: (args: { contractId: string; methodNames: string[] }) => Promise<unknown>;
     signAndSendTransaction: (tx: unknown) => Promise<unknown>;
   }>;
 };
 let selectorPromise: Promise<Selector> | null = null;
 
+function stashRedirectAccount() {
+  if (typeof window === "undefined") return;
+  const accountId = new URL(window.location.href).searchParams.get("account_id");
+  if (accountId) localStorage.setItem(ACCOUNT_STORE, accountId);
+}
+
+export function completeNearRedirect() {
+  if (typeof window === "undefined") return false;
+  const url = new URL(window.location.href);
+  const accountId = url.searchParams.get("account_id");
+  if (!accountId) return false;
+  localStorage.setItem(ACCOUNT_STORE, accountId);
+  useDesk.getState().setAccount(accountId);
+  void readNearBalance(accountId);
+  void syncWallet(accountId);
+  url.searchParams.delete("account_id");
+  url.searchParams.delete("public_key");
+  url.searchParams.delete("all_keys");
+  url.searchParams.delete("errorCode");
+  url.searchParams.delete("errorMessage");
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  return true;
+}
+
+export async function connectIntearWallet() {
+  await connectNamed("intear-wallet");
+}
+
+export async function connectHereWallet() {
+  await connectNamed("here-wallet");
+}
+
+export async function connectReadOnly(raw: string) {
+  const accountId = raw.trim().toLowerCase();
+  if (!/^[a-z0-9._-]{2,64}$/.test(accountId)) throw new Error("Enter a NEAR account such as name.near.");
+  const amount = await accountAmount(accountId);
+  if (amount == null) throw new Error("That account is not on NEAR mainnet.");
+  localStorage.setItem(ACCOUNT_STORE, accountId);
+  localStorage.setItem(READONLY_STORE, "1");
+  useDesk.getState().setAccount(accountId);
+  useDesk.getState().setNearYocto(amount);
+  await syncWallet(accountId);
+}
+
+async function connectNamed(id: "intear-wallet" | "here-wallet") {
+  await boot();
+  const selector = await selectorPromise;
+  if (!selector) throw new Error("Wallet selector did not start.");
+  localStorage.removeItem(READONLY_STORE);
+  const wallet = await selector.wallet(id);
+  let rejectCancel: (error: Error) => void = () => undefined;
+  const cancelled = new Promise<never>((_, reject) => {
+    rejectCancel = reject;
+  });
+  const stop = () => rejectCancel(new Error("Wallet closed."));
+  cancelPending = stop;
+  try {
+    await Promise.race([wallet.signIn({ contractId: CONTRACT_ID, methodNames: ["asgard:connect"] }), cancelled]);
+  } finally {
+    if (cancelPending === stop) cancelPending = null;
+  }
+}
+
 function boot() {
   if (typeof window === "undefined") return Promise.resolve();
-  hideHereWalletOnCancel();
+  hideWalletOnCancel();
   if (!booted) {
     booted = (async () => {
-      const [{ setupWalletSelector }, { setupModal }, meteor, hot, here, mine, nightly, sender, intear] = await Promise.all([
+      installBrowserGlobals();
+      const [{ setupWalletSelector }, { setupModal }, meteor, hot, here, nightly, sender, intear] = await Promise.all([
         import("@near-wallet-selector/core"),
         import("@near-wallet-selector/modal-ui"),
         import("@near-wallet-selector/meteor-wallet"),
         import("@near-wallet-selector/hot-wallet"),
         import("@near-wallet-selector/here-wallet"),
-        import("@near-wallet-selector/my-near-wallet"),
         import("@near-wallet-selector/nightly"),
         import("@near-wallet-selector/sender"),
         import("@near-wallet-selector/intear-wallet"),
@@ -36,18 +104,19 @@ function boot() {
       const selector = await setupWalletSelector({
         network: "mainnet",
         modules: [
+          here.setupHereWallet(),
+          intear.setupIntearWallet(),
           meteor.setupMeteorWallet(),
           hot.setupHotWallet(),
-          here.setupHereWallet(),
-          mine.setupMyNearWallet(),
           nightly.setupNightly(),
           sender.setupSender(),
-          intear.setupIntearWallet(),
         ],
       });
       selectorPromise = Promise.resolve(selector as Selector);
       const apply = () => {
-        const id = selector.store.getState().accounts[0]?.accountId ?? null;
+        const signed = selector.store.getState().accounts[0]?.accountId;
+        if (signed) localStorage.removeItem(READONLY_STORE);
+        const id = signed ?? localStorage.getItem(ACCOUNT_STORE);
         useDesk.getState().setAccount(id);
         if (id) {
           void readNearBalance(id);
@@ -61,21 +130,32 @@ function boot() {
         contractId: CONTRACT_ID,
         methodNames: ["asgard:connect"],
         theme: "dark",
-        description: "Meteor, HOT, MyNearWallet, Nightly, Sender, Intear, and HERE on NEAR mainnet.",
+        description: "HERE and Intear sign on this page. Meteor, HOT, Nightly, and Sender need their extension.",
       });
       modalShow = () => modal.show();
       apply();
-    })();
+      completeNearRedirect();
+    })().catch((error) => {
+      booted = null;
+      selectorPromise = null;
+      throw error;
+    });
   }
   return booted;
 }
 
 export function openNearWallets() {
-  return boot().then(() => modalShow?.());
+  return boot().then(() => {
+    if (!modalShow) throw new Error("Wallet list did not open.");
+    modalShow();
+  });
 }
 
 export async function signOutNear() {
   await boot();
+  localStorage.removeItem(ACCOUNT_STORE);
+  localStorage.removeItem(KEY_STORE);
+  localStorage.removeItem(READONLY_STORE);
   const walletId = useDesk.getState().accountId;
   if (!walletId) {
     useDesk.getState().setAccount(null);
@@ -83,32 +163,47 @@ export async function signOutNear() {
   }
   const selector = await selectorPromise;
   if (!selector) return;
-  const wallet = await selector.wallet();
-  await wallet.signOut();
+  try {
+    const wallet = await selector.wallet();
+    await wallet.signOut();
+  } catch {
+    /* Redirect sessions have no injected signer. */
+  }
   useDesk.getState().setAccount(null);
 }
 
 export function restoreNearSession() {
+  stashRedirectAccount();
   return boot();
 }
 
 let hereCancelWired = false;
 
-function hereFrame() {
-  return document.querySelector('iframe[src*="herewallet.app"]');
+function visibleWalletFrame() {
+  const frames = document.querySelectorAll("iframe");
+  for (const frame of frames) {
+    if (!(frame instanceof HTMLIFrameElement)) continue;
+    const src = frame.src;
+    if (!src.includes("herewallet.app") && !src.includes("intear.tech")) continue;
+    if (frame.style.display === "none" || getComputedStyle(frame).display === "none") continue;
+    return frame;
+  }
+  return null;
 }
 
-function hideHereFrame() {
-  const frame = hereFrame();
-  if (frame instanceof HTMLIFrameElement) frame.style.display = "none";
+function hideWalletFrame() {
+  document.querySelectorAll('iframe[src*="herewallet.app"], iframe[src*="intear.tech"]').forEach((frame) => {
+    if (frame instanceof HTMLIFrameElement) frame.style.display = "none";
+  });
+  window.postMessage({ type: "close", message: "Wallet closed." }, window.location.origin);
   document.getElementById("asgard-here-close")?.remove();
+  cancelPending?.();
 }
 
-function placeHereClose() {
-  const frame = hereFrame();
-  const open = frame instanceof HTMLIFrameElement && getComputedStyle(frame).display !== "none";
-  let button = document.getElementById("asgard-here-close");
-  if (!open) {
+function placeWalletClose() {
+  const frame = visibleWalletFrame();
+  let button = document.getElementById("asgard-here-close") as HTMLButtonElement | null;
+  if (!frame) {
     button?.remove();
     return;
   }
@@ -116,28 +211,32 @@ function placeHereClose() {
     button = document.createElement("button");
     button.id = "asgard-here-close";
     button.type = "button";
-    button.setAttribute("aria-label", "Close HERE wallet");
-    button.innerHTML =
-      '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="#2c3034" d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
+    button.setAttribute("aria-label", "Close wallet");
+    button.textContent = "Close";
     button.style.cssText = [
       "position:fixed",
-      "z-index:10001",
-      "display:grid",
-      "place-items:center",
-      "width:40px",
-      "height:40px",
-      "padding:0",
+      "z-index:100002",
+      "height:36px",
+      "padding:0 14px",
       "border:0",
       "border-radius:999px",
       "background:#ebdedc",
+      "color:#2c3034",
+      "font:600 13px/1 system-ui,sans-serif",
       "cursor:pointer",
     ].join(";");
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      hideHereFrame();
+      hideWalletFrame();
     });
     document.body.appendChild(button);
+  }
+  const here = frame.src.includes("herewallet.app");
+  if (!here) {
+    button.style.top = "12px";
+    button.style.right = "12px";
+    return;
   }
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
@@ -151,7 +250,7 @@ function placeHereClose() {
   button.style.top = `${Math.max(8, top)}px`;
 }
 
-function hideHereWalletOnCancel() {
+function hideWalletOnCancel() {
   if (hereCancelWired || typeof window === "undefined") return;
   hereCancelWired = true;
   window.addEventListener("message", (event) => {
@@ -163,10 +262,15 @@ function hideHereWalletOnCancel() {
     } catch {
       return;
     }
-    if (type === "reject" || type === "close") hideHereFrame();
+    if (type === "reject" || type === "close") {
+      document.querySelectorAll('iframe[src*="herewallet.app"]').forEach((frame) => {
+        if (frame instanceof HTMLIFrameElement) frame.style.display = "none";
+      });
+      document.getElementById("asgard-here-close")?.remove();
+    }
   });
-  window.setInterval(placeHereClose, 300);
-  window.addEventListener("resize", placeHereClose);
+  window.setInterval(placeWalletClose, 300);
+  window.addEventListener("resize", placeWalletClose);
 }
 
 async function readNearBalance(accountId: string) {
@@ -206,6 +310,7 @@ export async function sendIntentDeposit(input: {
   amount: string;
   wrap: boolean;
 }): Promise<string | null> {
+  if (localStorage.getItem(READONLY_STORE)) throw new Error("This account is view-only. Connect Intear or HERE to sign.");
   await boot();
   const selector = await selectorPromise;
   if (!selector) throw new Error("Wallet is not ready.");

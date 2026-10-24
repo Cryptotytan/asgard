@@ -21,6 +21,7 @@ export function LendDesk() {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  useDesk((s) => s.clock);
   const health = healthFactor(supplied, loans);
   const room = borrowRoom(supplied, loans);
   const n = Number(amount) || 0;
@@ -96,7 +97,7 @@ export function LendDesk() {
           <div className="flex gap-2">
             <div className="rounded-xl bg-bg px-3 py-1.5">
               <p className="text-[10px] uppercase tracking-wide text-muted">Health</p>
-              <p className={`font-mono text-base sm:text-lg ${health > 0 && health < 1.15 ? "text-danger" : "text-primary"}`}>{health === 0 ? "—" : health.toFixed(2)}</p>
+              <p className={`font-mono text-base sm:text-lg ${health > 0 && health < 1.15 ? "text-danger" : "text-primary"}`}>{!Number.isFinite(health) || health === 0 ? "—" : health.toFixed(2)}</p>
             </div>
             <div className="rounded-xl bg-bg px-3 py-1.5">
               <p className="text-[10px] uppercase tracking-wide text-muted">Borrow room</p>
@@ -114,6 +115,7 @@ export function LendDesk() {
           />
         </label>
         <ul className="lift-deck mt-2 space-y-1.5">
+          {LEND_MARKETS.length === 0 && <li className="rounded-xl border border-line bg-bg p-4 text-sm text-muted">Loading live supply and borrow rates from Rhea.</li>}
           {LEND_MARKETS.map((market) => (
             <li key={market.symbol}>
               <div
@@ -145,7 +147,7 @@ export function LendDesk() {
             </li>
           ))}
         </ul>
-        <p className="mt-2 text-[11px] text-muted">Supply and withdraw settle through NEAR Intents into stNEAR. Borrow stays inside the 70% line.{note ? ` ${note}` : ""}</p>
+        <p className="mt-2 text-[11px] text-muted">Rates are live from Rhea. Supply and withdraw still settle through NEAR Intents into stNEAR. Borrow stays inside the 70% line.{note ? ` ${note}` : ""}</p>
       </section>
     </div>
   );

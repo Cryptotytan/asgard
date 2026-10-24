@@ -4,6 +4,25 @@ import { candles as buildCandles, fmt, money, type Candle } from "@/lib/market";
 const FRAME_MIN: Record<string, number> = { "1m": 1, "5m": 5, "15m": 15, "1H": 60, "4H": 240, "1D": 1440 };
 const DEFAULT_SPAN = 80;
 
+function bucket(points: Candle[], minutes: number): Candle[] {
+  const size = Math.max(1, Math.round(minutes / 5));
+  if (size === 1) return points;
+  const out: Candle[] = [];
+  for (let index = 0; index < points.length; index += size) {
+    const slice = points.slice(index, index + size);
+    const first = slice[0];
+    const last = slice[slice.length - 1];
+    if (!first || !last) continue;
+    out.push({
+      o: first.o,
+      h: Math.max(...slice.map((candle) => candle.h)),
+      l: Math.min(...slice.map((candle) => candle.l)),
+      c: last.c,
+    });
+  }
+  return out;
+}
+
 export type ChartHover = { o: number; h: number; l: number; c: number; label: string };
 
 export function CandleChart({
@@ -12,6 +31,7 @@ export function CandleChart({
   frame = "5m",
   compact = false,
   live,
+  series,
   onHover,
 }: {
   seed: string;
@@ -19,9 +39,10 @@ export function CandleChart({
   frame?: string;
   compact?: boolean;
   live?: number;
+  series?: Candle[];
   onHover?: (hover: ChartHover | null) => void;
 }) {
-  const all = useMemo(() => buildCandles(seed, last, 180), [seed, last]);
+  const all = useMemo(() => (series && series.length > 1 ? bucket(series, FRAME_MIN[frame] ?? 5) : []), [series, frame]);
   const [span, setSpan] = useState(DEFAULT_SPAN);
   const [end, setEnd] = useState(all.length);
   const [hover, setHover] = useState<number | null>(null);
@@ -69,7 +90,7 @@ export function CandleChart({
   const maxVol = Math.max(...vols, 1);
   const volTop = pad.t + priceH + 14;
   const volH = height - pad.b - volTop;
-  const lastCandle = data[data.length - 1];
+  const lastCandle = data[data.length - 1] ?? { o: last, h: last, l: last, c: last };
   const lastUp = lastCandle.c >= lastCandle.o;
   const ticks = [max, max - priceSpan * 0.33, max - priceSpan * 0.66, min];
   const active = hover !== null ? data[hover] : null;
@@ -173,6 +194,10 @@ export function CandleChart({
   function reset() {
     setSpan(DEFAULT_SPAN);
     setEnd(all.length);
+  }
+
+  if (data.length < 2) {
+    return <div className="grid h-80 place-items-center px-6 text-center text-sm text-muted">Live candles have not arrived yet. History comes from DefiLlama.</div>;
   }
 
   return (

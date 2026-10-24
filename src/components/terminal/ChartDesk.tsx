@@ -1,9 +1,10 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Check, ShieldAlert } from "lucide-react";
 import { CandleChart } from "@/components/terminal/CandleChart";
 import { TokenIcon, TokenPicker } from "@/components/terminal/TokenIcon";
-import { candles, fmt, tape, tokenBySymbol, usd } from "@/lib/market";
+import { fmt, tokenBySymbol, usd, type Print } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
+import { liveCandles, livePrints, loadPrints } from "@/lib/live";
 import { executeIntent } from "@/lib/intents";
 
 const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"];
@@ -15,12 +16,16 @@ export function ChartDesk({ mode, symbol, onSymbol }: { mode: "spot" | "perp"; s
   const [frame, setFrame] = useState("5m");
   const [picker, setPicker] = useState(false);
   const [book, setBook] = useState<"Trades" | "Positions" | "Orders">("Trades");
-  const bars = useMemo(() => candles(`${symbol}-${frame}`, mark), [symbol, frame, mark]);
-  const prints = useMemo(() => tape(symbol, mark), [symbol, mark]);
-  const open = bars[0];
-  const close = bars[bars.length - 1];
-  const high = Math.max(...bars.map((bar) => bar.h));
-  const low = Math.min(...bars.map((bar) => bar.l));
+  const series = liveCandles(symbol);
+  const bars = series && series.length > 1 ? series : [];
+  const prints = livePrints(symbol) ?? [];
+  useEffect(() => {
+    void loadPrints(symbol).catch(() => undefined);
+  }, [symbol]);
+  const open = bars[0] ?? { o: mark, h: mark, l: mark, c: mark };
+  const close = bars[bars.length - 1] ?? open;
+  const high = bars.length ? Math.max(...bars.map((bar) => bar.h)) : mark;
+  const low = bars.length ? Math.min(...bars.map((bar) => bar.l)) : mark;
   const delta = close.c - open.o;
   const up = delta >= 0;
 
@@ -51,7 +56,7 @@ export function ChartDesk({ mode, symbol, onSymbol }: { mode: "spot" | "perp"; s
           <Stat k="Liquidity" v={token.liquidity} />
           <Stat k="Volume" v={token.volume} />
           <Stat k="Txns 1H" v={token.txns} />
-          <Stat k="Safety" v={`${token.score}/100`} tone={token.verified ? "good" : "bad"} />
+          <Stat k="Safety" v={token.score > 0 ? `${token.score}/100` : "Live"} tone={token.verified ? "good" : "bad"} />
         </dl>
         <div className="mt-3 flex gap-1 overflow-auto">
           {FRAMES.map((item) => (
@@ -73,7 +78,7 @@ export function ChartDesk({ mode, symbol, onSymbol }: { mode: "spot" | "perp"; s
             {((delta / open.o) * 100).toFixed(2)}%)
           </span>
         </p>
-        <CandleChart seed={`${symbol}-${frame}`} last={mark} />
+        <CandleChart seed={`${symbol}-${frame}`} last={mark} series={liveCandles(symbol)} />
         <div className="mt-2 flex gap-1 overflow-auto">
           {(["Trades", "Positions", "Orders"] as const).map((item) => (
             <button
@@ -88,7 +93,7 @@ export function ChartDesk({ mode, symbol, onSymbol }: { mode: "spot" | "perp"; s
         </div>
         {book === "Trades" && <TradeTable prints={prints} symbol={token.symbol} />}
         {book === "Positions" && <Positions mode={mode} symbol={token.symbol} mark={mark} />}
-        {book === "Orders" && <p className="px-1 py-6 text-sm text-muted">No open orders. Market tickets fill immediately in this demo.</p>}
+        {book === "Orders" && <p className="px-1 py-6 text-sm text-muted">No open orders. Market tickets settle on NEAR Intents.</p>}
       </section>
       {mode === "spot" ? <SpotTicket token={token} /> : <PerpTicket token={token} mark={mark} />}
       <TokenPicker open={picker} onClose={() => setPicker(false)} onPick={onSymbol} />
@@ -105,7 +110,8 @@ function Stat({ k, v, tone }: { k: string; v: string; tone?: "good" | "bad" }) {
   );
 }
 
-function TradeTable({ prints, symbol }: { prints: ReturnType<typeof tape>; symbol: string }) {
+function TradeTable({ prints, symbol }: { prints: Print[]; symbol: string }) {
+  if (prints.length === 0) return <p className="px-1 py-6 text-sm text-muted">No recent NEAR transfers for {symbol}. The tape reads NearBlocks.</p>;
   return (
     <div className="overflow-auto">
       <table className="w-full min-w-[36rem] text-left font-mono text-xs">
@@ -120,8 +126,8 @@ function TradeTable({ prints, symbol }: { prints: ReturnType<typeof tape>; symbo
           </tr>
         </thead>
         <tbody>
-          {prints.map((row) => (
-            <tr key={row.trader + row.age}>
+          {prints.map((row, index) => (
+            <tr key={`${row.trader}-${row.age}-${index}`}>
               <td className="py-2 text-muted">{row.age}</td>
               <td className={row.side === "Buy" ? "text-primary" : "text-danger"}>{row.side}</td>
               <td>{fmt(row.amount)}</td>

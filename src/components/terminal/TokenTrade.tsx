@@ -5,22 +5,20 @@ import { SecurityGate } from "@/components/terminal/SecurityGate";
 import { TokenIcon, VerifiedMark } from "@/components/terminal/TokenIcon";
 import { PnlCard } from "@/components/terminal/PnlCard";
 import {
-  candles,
   canPerp,
   fmt,
-  holderRows,
   isHoneypot,
-  rankQuotes,
   signedPct,
-  tape,
   tokenBySymbol,
   usd,
   px,
   TOKENS,
+  type Print,
   type Token,
 } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
-import { executeIntent } from "@/lib/intents";
+import { liveCandles, livePrints, loadPrints } from "@/lib/live";
+import { executeIntent, quoteIntent, type IntentQuote } from "@/lib/intents";
 
 const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"] as const;
 const BOOKS = ["Trades", "Positions", "Orders", "Holders", "History"] as const;
@@ -46,6 +44,7 @@ export function TokenTrade({
   onFlash: (message: string) => void;
 }) {
   const mark = useDesk((s) => s.marks[symbol]);
+  useDesk((s) => s.clock);
   const token = tokenBySymbol(symbol);
   const [frame, setFrame] = useState<(typeof FRAMES)[number]>("5m");
   const [scale, setScale] = useState<"price" | "mcap">("price");
@@ -66,15 +65,19 @@ export function TokenTrade({
     if (!canPerp(symbol) && mode === "perp") onMode("spot");
   }, [symbol, mode, onMode]);
 
-  const last = scale === "price" ? token.price : token.mcapN;
-  const bars = useMemo(() => candles(`${symbol}-${frame}-${scale}`, last), [symbol, frame, scale, last]);
-  const open = bars[0];
-  const close = bars[bars.length - 1];
-  const high = Math.max(...bars.map((bar) => bar.h));
-  const low = Math.min(...bars.map((bar) => bar.l));
+  const last = scale === "price" ? (mark ?? token.price) : token.mcapN;
+  const series = scale === "price" ? liveCandles(symbol) : undefined;
+  const bars = series && series.length > 1 ? series : [];
+  const open = bars[0] ?? { o: last, h: last, l: last, c: last };
+  const close = bars[bars.length - 1] ?? open;
+  const high = bars.length ? Math.max(...bars.map((bar) => bar.h)) : last;
+  const low = bars.length ? Math.min(...bars.map((bar) => bar.l)) : last;
   const delta = close.c - open.o;
-  const prints = useMemo(() => tape(symbol, token.price), [symbol, token.price]);
-  const holders = useMemo(() => holderRows(symbol), [symbol]);
+  const prints = livePrints(symbol) ?? [];
+  useEffect(() => {
+    if (scale !== "price") return;
+    void loadPrints(symbol).catch(() => undefined);
+  }, [symbol, scale]);
 
   return (
     <div className="flex flex-col lg:block">
@@ -92,10 +95,7 @@ export function TokenTrade({
           <div className="hidden lg:block">
             <dt className="text-xs text-muted">Safety</dt>
             <dd className="mt-0.5 flex items-center gap-2">
-              <span className={`font-mono text-sm ${token.score >= 70 ? "text-primary" : "text-danger"}`}>{token.score}/100</span>
-              <span className="h-1.5 w-14 overflow-hidden rounded-full bg-surface-2">
-                <span className={`block h-full ${token.score >= 70 ? "bg-primary" : "bg-danger"}`} style={{ width: `${token.score}%` }} />
-              </span>
+              <span className="font-mono text-sm text-muted">{token.score > 0 ? `${token.score}/100` : "Live"}</span>
             </dd>
           </div>
         </dl>
@@ -130,7 +130,9 @@ export function TokenTrade({
             </div>
           </div>
           <p className="hidden px-4 font-mono text-xs text-muted sm:block">
-            {hover ? (
+            {bars.length < 2 ? (
+              "Waiting on DefiLlama candles"
+            ) : hover ? (
               <>
                 {hover.label} O {fmt(hover.o)} H {fmt(hover.h)} L {fmt(hover.l)} C {fmt(hover.c)}{" "}
                 <span className={hover.c >= hover.o ? "text-primary" : "text-danger"}>
@@ -151,7 +153,7 @@ export function TokenTrade({
             )}
           </p>
           <div className="px-3 py-3 sm:px-0 sm:py-0">
-            <CandleChart seed={`${symbol}-${frame}-${scale}`} last={last} frame={frame} compact={scale === "mcap"} live={scale === "price" ? mark : undefined} onHover={setHover} />
+            <CandleChart seed={`${symbol}-${frame}-${scale}`} last={last} frame={frame} compact={scale === "mcap"} live={scale === "price" ? mark : undefined} series={series} onHover={setHover} />
           </div>
         </section>
         <div className="order-2 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-stretch">
@@ -170,7 +172,7 @@ export function TokenTrade({
                 {item === "Holders" ? (
                   <>
                     <span className="sm:hidden">Hold</span>
-                    <span className="hidden sm:inline">Holders ({token.safety.holders})</span>
+                    <span className="hidden sm:inline">Holders</span>
                   </>
                 ) : (
                   item
@@ -182,7 +184,7 @@ export function TokenTrade({
             {book === "Trades" && <Trades prints={prints} symbol={token.symbol} />}
             {book === "Positions" && <Positions symbol={token.symbol} mark={token.price} />}
             {book === "Orders" && <Orders symbol={token.symbol} />}
-            {book === "Holders" && <Holders rows={holders} />}
+            {book === "Holders" && <Holders />}
             {book === "History" && <SessionHistory />}
           </div>
         </section>
@@ -312,7 +314,10 @@ function SessionHistory() {
   );
 }
 
-function Trades({ prints, symbol }: { prints: ReturnType<typeof tape>; symbol: string }) {
+function Trades({ prints, symbol }: { prints: Print[]; symbol: string }) {
+  if (prints.length === 0) {
+    return <p className="py-6 text-sm text-muted">No recent NEAR transfers for {symbol} yet. The tape reads NearBlocks, not a simulated book.</p>;
+  }
   const mobile = prints.slice(0, 4);
   return (
     <div>
@@ -325,8 +330,8 @@ function Trades({ prints, symbol }: { prints: ReturnType<typeof tape>; symbol: s
           <span>Price</span>
           <span className="text-right">Trader</span>
         </li>
-        {mobile.map((row) => (
-          <li key={row.trader + row.age} className="grid grid-cols-[2rem_2.4rem_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_3rem] gap-1 border-t border-line py-1 font-mono text-[10px]">
+        {mobile.map((row, index) => (
+          <li key={`${row.trader}-${row.age}-${index}`} className="grid grid-cols-[2rem_2.4rem_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_3rem] gap-1 border-t border-line py-1 font-mono text-[10px]">
             <span className="text-muted">{row.age}</span>
             <span className={row.side === "Buy" ? "text-primary" : "text-danger"}>{row.side}</span>
             <span className="truncate">{fmt(row.amount)}</span>
@@ -349,8 +354,8 @@ function Trades({ prints, symbol }: { prints: ReturnType<typeof tape>; symbol: s
             </tr>
           </thead>
           <tbody>
-            {prints.map((row) => (
-              <tr key={row.trader + row.age} className="border-t border-line">
+            {prints.map((row, index) => (
+              <tr key={`${row.trader}-${row.age}-${index}`} className="border-t border-line">
                 <td className="py-2 text-muted">{row.age}</td>
                 <td className={row.side === "Buy" ? "text-primary" : "text-danger"}>{row.side}</td>
                 <td>{fmt(row.amount)}</td>
@@ -415,18 +420,8 @@ function Orders({ symbol }: { symbol: string }) {
   );
 }
 
-function Holders({ rows }: { rows: ReturnType<typeof holderRows> }) {
-  return (
-    <ul className="py-2">
-      {rows.map((row) => (
-        <li key={row.wallet} className="flex items-center justify-between gap-2 border-t border-line py-2 font-mono text-xs">
-          <span className="min-w-0 flex-1 truncate">{row.wallet}</span>
-          <span className="text-muted">{row.tag}</span>
-          <span>{row.pct.toFixed(1)}%</span>
-        </li>
-      ))}
-    </ul>
-  );
+function Holders() {
+  return <p className="py-6 text-sm text-muted">Holder concentration is not published on the live feed. Balances you see in Portfolio are read from NEAR mainnet.</p>;
 }
 
 function Ticket({
@@ -447,6 +442,7 @@ function Ticket({
   const listed = canPerp(token.symbol);
   const viewMode: TicketMode = listed ? mode : "spot";
   const connected = useDesk((s) => s.connected);
+  const accountId = useDesk((s) => s.accountId);
   const balances = useDesk((s) => s.balances);
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [perpSide, setPerpSide] = useState<Side>("long");
@@ -466,6 +462,8 @@ function Ticket({
   const [acked, setAcked] = useState(false);
   const [gate, setGate] = useState(false);
   const [fills, setFills] = useState({ bought: 0, sold: 0 });
+  const [live, setLive] = useState<IntentQuote | null>(null);
+  const [quoting, setQuoting] = useState(false);
 
   useEffect(() => {
     setAmount(String(quickUsd));
@@ -477,9 +475,40 @@ function Ticket({
   const qty = Number(amount) || 0;
   const pay = side === "buy" ? tokenBySymbol("USDC") : token;
   const receiveToken = side === "buy" ? token : tokenBySymbol("USDC");
-  const quoteAmount = qty > 0 ? qty : 100;
   const slipPct = slip === "Auto" ? 1 : Number(slip.replace("%", ""));
-  const quotes = useMemo(() => rankQuotes(pay, receiveToken, quoteAmount, slipPct), [pay, receiveToken, quoteAmount, slipPct]);
+  useEffect(() => {
+    setLive(null);
+    if (!connected || !accountId || qty <= 0 || pay.symbol === receiveToken.symbol) return;
+    setQuoting(true);
+    const timer = window.setTimeout(() => {
+      void quoteIntent({
+        from: pay.symbol,
+        to: receiveToken.symbol,
+        amount: String(qty),
+        accountId,
+        dry: true,
+        slippageBps: Math.round(slipPct * 100),
+      })
+        .then((quote) => setLive(quote))
+        .catch(() => setLive(null))
+        .finally(() => setQuoting(false));
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [accountId, connected, pay.symbol, qty, receiveToken.symbol, slipPct]);
+  const quotes = useMemo(() => {
+    if (!live) return [];
+    const impact = live.amountInUsd > 0 ? Math.max(0, (1 - live.amountOutUsd / live.amountInUsd) * 100) : 0;
+    const feeBps = live.amountInUsd > 0 ? Math.max(0, ((live.amountInUsd - live.amountOutUsd) / live.amountInUsd) * 10_000) : 0;
+    return [
+      {
+        venue: { id: "intents", name: "NEAR Intents", kind: "Bridge" as const, feeBps, impactBps: Math.round(impact * 100), depthUsd: 0, eta: `${live.timeEstimate}s` },
+        feeBps,
+        impact,
+        receive: live.amountOutHuman,
+        score: 0,
+      },
+    ];
+  }, [live]);
   const quoteKey = quotes.map((quote) => `${quote.venue.id}:${quote.receive.toFixed(2)}`).join("|");
   useEffect(() => {
     if (!routesOpen) return;
@@ -488,7 +517,7 @@ function Ticket({
   const minFee = Math.min(...quotes.map((quote) => quote.feeBps), Infinity);
   const minImpact = Math.min(...quotes.map((quote) => quote.impact), Infinity);
   const picked = quotes[0];
-  const receive = picked ? picked.receive * (qty > 0 ? qty / quoteAmount : 0) : 0;
+  const receive = picked?.receive ?? 0;
   const blocked = isHoneypot(token);
   const balance = balances[pay.symbol] ?? 0;
   const windows = [
@@ -838,7 +867,7 @@ function Ticket({
               )}
             </div>
           ) : (
-            <p className="mt-2 text-xs text-danger">No route inside your slippage.</p>
+            <p className="mt-2 text-xs text-muted">{connected ? (quoting ? "Fetching the NEAR Intents quote…" : "No live Intents quote for this size.") : "Connect a wallet for a live Intents quote."}</p>
           )}
         </div>
       )}
@@ -851,7 +880,7 @@ function Ticket({
           <p className="flex items-start gap-2">
             <VerifiedMark className="mt-0.5" />
             <span>
-              Verified · {token.score}/100
+              Listed asset
               <span className="mt-1 hidden text-xs text-muted sm:block">{token.notes.join(" · ")}</span>
             </span>
           </p>
@@ -883,17 +912,8 @@ function Ticket({
       </dl>
 
       <div className="mt-4 hidden border-t border-line pt-3 sm:block">
-        <p className="mb-2 text-sm font-semibold">Token info</p>
-        <dl className="grid grid-cols-2 gap-y-2 font-mono text-xs">
-          <Info k="Top 10%" v={`${token.safety.top10}%`} bad={token.safety.top10 > 50} />
-          <Info k="Insiders" v={`${token.safety.insiders}%`} bad={token.safety.insiders > 20} />
-          <Info k="Snipers" v={`${token.safety.snipers}%`} bad={token.safety.snipers > 0} />
-          <Info k="Bundlers" v={`${token.safety.bundlers}%`} bad={token.safety.bundlers > 0} />
-          <Info k="Dev holds" v={`${token.safety.dev}%`} bad={token.safety.dev > 5} />
-          <Info k="LP locked" v={`${token.safety.lp}%`} bad={token.safety.lp < 50} />
-          <Info k="Buy tax" v={`${token.safety.buyTax}%`} bad={token.safety.buyTax > 0} />
-          <Info k="Sell tax" v={`${token.safety.sellTax}%`} bad={token.safety.sellTax > 0} />
-        </dl>
+        <p className="mb-2 text-sm font-semibold">Sources</p>
+        <p className="text-xs text-muted">Price and candles: DefiLlama. Liquidity and lend rates: Rhea. Transfers: NearBlocks. Quotes: NEAR Intents. Taxes, snipers, and holder share are not invented when a feed does not publish them.</p>
       </div>
       </div>
       {gate && (
@@ -908,14 +928,5 @@ function Ticket({
         />
       )}
     </aside>
-  );
-}
-
-function Info({ k, v, bad }: { k: string; v: string; bad?: boolean }) {
-  return (
-    <div>
-      <dt className="text-muted">{k}</dt>
-      <dd className={bad ? "text-danger" : "text-primary"}>{v}</dd>
-    </div>
   );
 }

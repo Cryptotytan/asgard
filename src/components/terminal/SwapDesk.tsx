@@ -269,7 +269,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
         </div>
         {routesOpen && (
           <ul className="route-deck mt-1 max-h-16 min-h-0 overflow-auto rounded-xl bg-bg sm:mt-2 sm:max-h-48">
-            {quotes.length === 0 && <li className="px-3 py-2 text-sm text-muted">Every route fails 1% slippage.</li>}
+            {quotes.length === 0 && <li className="px-3 py-2 text-sm text-muted">{connected ? "No live NEAR Intents quote for this size." : "Connect a wallet to price this on NEAR Intents."}</li>}
             {quotes.map((quote, index) => (
               <li key={`${deck}-${quote.venue.id}`} className={`route-card flex items-center justify-between gap-3 px-3 py-1.5 text-sm sm:py-2 ${index === 0 ? "is-best" : ""}`} style={{ animationDelay: `${index * 45}ms` }}>
                 <span className={index === 0 ? "" : "text-muted"}>
@@ -290,7 +290,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
           onClick={() => void submit()}
           className="mt-2 h-10 w-full rounded-xl bg-primary font-semibold text-primary-fg disabled:opacity-40"
         >
-          {settling ? "Settling…" : fetching ? "Fetching quote…" : amountN <= 0 ? "Enter an amount" : needsWallet ? "Connect wallet" : short ? "Not enough balance" : best ? `Swap via ${best.venue.name}` : "Slippage error"}
+          {settling ? "Settling…" : fetching ? "Fetching quote…" : amountN <= 0 ? "Enter an amount" : needsWallet ? "Connect wallet" : short ? "Not enough balance" : best ? `Swap via ${best.venue.name}` : "No live quote"}
         </button>
         {quoteError && !note && <p className="mt-2 font-mono text-xs text-danger">{quoteError}</p>}
         {note && <p className="mt-3 font-mono text-xs text-primary">{note}</p>}

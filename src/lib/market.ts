@@ -161,7 +161,7 @@ export function signedPct(n: number) {
 }
 
 export function ageLabel(hours: number) {
-  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))}m`;
+  if (!hours) return "—";
   if (hours < 24) return `${Math.max(1, Math.round(hours))}h`;
   const days = hours / 24;
   if (days < 60) return `${Math.round(days)}d`;
@@ -920,13 +920,71 @@ export const TOKENS: Token[] = [
   }),
 ];
 
+const KEEP = new Set(["NEAR", "USDC", "ETH", "wBTC", "AURORA", "RHEA", "SWEAT", "STNEAR", "BRRR", "LINEAR", "HOT"]);
+for (let i = TOKENS.length - 1; i >= 0; i -= 1) {
+  if (!KEEP.has(TOKENS[i].symbol)) TOKENS.splice(i, 1);
+}
+for (const token of TOKENS) {
+  token.mcapN = 0;
+  token.liqN = 0;
+  token.volN = 0;
+  token.txnsN = 0;
+  token.buys = 0;
+  token.sells = 0;
+  token.holdersN = 0;
+  token.ageH = 0;
+  token.mcap = "—";
+  token.fdv = "—";
+  token.liquidity = "—";
+  token.volume = "—";
+  token.txns = "—";
+  token.supply = "—";
+  token.change = 0;
+  token.price = Number.NaN;
+  token.windows = { m5: 0, h1: 0, h4: 0, h24: 0 };
+  token.score = 0;
+  token.safety = { top10: 0, insiders: 0, snipers: 0, bundlers: 0, dev: 0, lp: 0, buyTax: 0, sellTax: 0, holders: "—" };
+  token.notes = ["DefiLlama price", "Rhea liquidity when the asset is listed"];
+}
+
+export function ensureToken(input: { symbol: string; name: string; price: number; chain?: string; icon?: string }) {
+  const found = TOKENS.find((token) => token.symbol.toUpperCase() === input.symbol.toUpperCase());
+  if (found) return found;
+  const token = coin({
+    symbol: input.symbol,
+    name: input.name,
+    tag: input.name,
+    price: input.price,
+    icon: input.icon,
+    chain: input.chain ?? "NEAR",
+    ageH: 0,
+    mcapN: 0,
+    liqN: 0,
+    volN: 0,
+    txnsN: 0,
+    buyShare: 0.5,
+    holdersN: 0,
+    windows: w(0, 0, 0, 0),
+    verified: true,
+    score: 0,
+    notes: ["Rhea money market"],
+    safety: { ...clean, top10: 0, insiders: 0, snipers: 0, bundlers: 0, dev: 0, lp: 0, holders: "—" },
+    supply: "—",
+    fdvN: 0,
+    kind: "defi",
+  });
+  token.mcap = "—";
+  token.fdv = "—";
+  token.liquidity = "—";
+  token.volume = "—";
+  token.txns = "—";
+  token.score = 0;
+  TOKENS.push(token);
+  return token;
+}
+
 export const VENUES: Venue[] = [
-  { id: "rhea-clmm", name: "Rhea CLMM", kind: "Swap", feeBps: 8, impactBps: 4, depthUsd: 4_200_000, eta: "2s" },
-  { id: "rhea-amm", name: "Rhea AMM", kind: "Swap", feeBps: 30, impactBps: 9, depthUsd: 1_800_000, eta: "2s" },
-  { id: "intents", name: "NEAR Intents", kind: "Bridge", feeBps: 12, impactBps: 3, depthUsd: 8_500_000, eta: "4s" },
-  { id: "hex", name: "HEX", kind: "Bridge", feeBps: 18, impactBps: 7, depthUsd: 2_400_000, eta: "6s" },
-  { id: "aurora", name: "Aurora Swap", kind: "Swap", feeBps: 25, impactBps: 11, depthUsd: 960_000, eta: "5s" },
-  { id: "hot", name: "HOT", kind: "Bridge", feeBps: 15, impactBps: 6, depthUsd: 3_100_000, eta: "5s" },
+  { id: "intents", name: "NEAR Intents", kind: "Bridge", feeBps: 0, impactBps: 0, depthUsd: 0, eta: "live" },
 ];
 
 export const MARKETS = [
@@ -938,11 +996,7 @@ export function canPerp(symbol: string) {
   return MARKETS.some((market) => market.base === symbol);
 }
 
-export const LEND_MARKETS = [
-  { symbol: "USDC", supplyApy: 8.4, borrowApy: 6.1 },
-  { symbol: "NEAR", supplyApy: 5.2, borrowApy: 7.8 },
-  { symbol: "ETH", supplyApy: 2.1, borrowApy: 3.4 },
-] as const;
+export const LEND_MARKETS: { symbol: string; supplyApy: number; borrowApy: number }[] = [];
 
 const LTV = 0.7;
 
@@ -951,25 +1005,15 @@ export function tokenBySymbol(symbol: string) {
 }
 
 export function isHoneypot(token: Token) {
-  return token.safety.sellTax >= 90 || token.score < 15;
+  return token.safety.sellTax >= 90;
 }
 
-export function rankQuotes(from: Token, to: Token, amount: number, slippagePct = 1): Quote[] {
-  if (amount <= 0 || from.symbol === to.symbol) return [];
-  const usdNotional = amount * from.price;
-  const local = Math.max(1_000, Math.min(from.liqN, to.liqN));
-  const raw = VENUES.map((venue) => {
-    const noise = tilt(`${venue.id}:${from.symbol}:${to.symbol}`);
-    const feeBps = venue.feeBps + (noise % 5);
-    const pool = Math.min(venue.depthUsd, local);
-    const impact = venue.impactBps / 100 + (usdNotional / pool) * (12 + (noise % 8));
-    const mid = (amount * from.price) / to.price;
-    const receive = mid * (1 - feeBps / 10_000) * (1 - Math.min(impact, 40) / 100);
-    return { venue, feeBps, impact, receive, score: feeBps / 100 + impact };
-  });
-  return raw
-    .filter((quote) => quote.receive > 0 && quote.impact <= slippagePct && quote.impact < 40)
-    .sort((a, b) => a.feeBps - b.feeBps || a.impact - b.impact || b.receive - a.receive);
+export function rankQuotes(_from?: Token, _to?: Token, _amount?: number, _slippagePct?: number): Quote[] {
+  void _from;
+  void _to;
+  void _amount;
+  void _slippagePct;
+  return [];
 }
 
 export function fmt(n: number, digits = 4) {
@@ -980,6 +1024,7 @@ export function fmt(n: number, digits = 4) {
 }
 
 export function usd(n: number) {
+  if (!Number.isFinite(n)) return "—";
   return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
 }
 
@@ -1015,40 +1060,20 @@ export function candles(seed: string, last: number, count = 72): Candle[] {
 
 export type Print = { age: string; side: "Buy" | "Sell"; amount: number; usd: number; price: number; trader: string };
 
-export function tape(symbol: string, price: number): Print[] {
-  let h = tilt(symbol + "tape");
-  return Array.from({ length: 12 }, (_, index) => {
-    h = (h * 1664525 + 1013904223) >>> 0;
-    const amount = (h % 8000) / (price > 100 ? 100 : 10);
-    const pxn = price * (1 + ((h % 80) - 40) / 20000);
-    const id = (h >>> 0).toString(16).padStart(8, "0");
-    return {
-      age: `${index * 2}s`,
-      side: h % 3 === 0 ? "Sell" : "Buy",
-      amount,
-      usd: amount * pxn,
-      price: pxn,
-      trader: `${id.slice(0, 4)}…${id.slice(4, 8)}`,
-    };
-  });
+export function tape(): Print[] {
+  return [];
 }
 
-export function holderRows(symbol: string) {
-  let h = tilt(symbol + "holders");
-  let left = 100;
-  return Array.from({ length: 8 }, (_, index) => {
-    h = (h * 1664525 + 1013904223) >>> 0;
-    const pct = index === 7 ? Math.max(0.4, left) : Math.min(left - 0.4, 4 + (h % 220) / 10);
-    left = Math.max(0, left - pct);
-    const id = (h >>> 0).toString(16).padStart(8, "0");
-    const tag = index === 0 ? "Pool" : index === 1 ? "Dev" : "Holder";
-    return { wallet: `${id.slice(0, 4)}…${id.slice(4, 8)}.near`, pct, tag };
-  });
+export function holderRows(): { wallet: string; pct: number; tag: string }[] {
+  return [];
 }
 
 function bookUsd(book: Record<string, number>) {
   let total = 0;
-  for (const token of TOKENS) total += (book[token.symbol] ?? 0) * token.price;
+  for (const token of TOKENS) {
+    if (!Number.isFinite(token.price)) continue;
+    total += (book[token.symbol] ?? 0) * token.price;
+  }
   return total;
 }
 

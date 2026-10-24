@@ -55,7 +55,7 @@ type Desk = {
   wins: number;
   closes: number;
   clock: number;
-  connect: () => void;
+  connect: () => void | Promise<void>;
   disconnect: () => void;
   setAccount: (accountId: string | null) => void;
   setNearYocto: (nearYocto: string | null) => void;
@@ -87,12 +87,20 @@ type Desk = {
   tick: () => void;
 };
 
+let walletOpener: (() => void) | null = null;
+
+export function setWalletOpener(opener: () => void) {
+  walletOpener = opener;
+}
+
 function priceOf(symbol: string, marks: Book) {
   return marks[symbol] ?? tokenBySymbol(symbol).price;
 }
 
 function worth(symbol: string, amount: number, marks: Book) {
-  return amount * priceOf(symbol, marks);
+  const price = priceOf(symbol, marks);
+  if (!Number.isFinite(price) || !Number.isFinite(amount)) return 0;
+  return amount * price;
 }
 
 function push(activity: Activity[], title: string, detail: string, value: number): Activity[] {
@@ -193,7 +201,11 @@ export const useDesk = create<Desk>((set, get) => ({
   clock: 0,
 
   connect: () => {
-    void import("@/lib/near-wallet").then((mod) => mod.openNearWallets());
+    if (walletOpener) {
+      walletOpener();
+      return;
+    }
+    return import("@/lib/near-wallet").then((mod) => mod.openNearWallets());
   },
   disconnect: () => {
     void import("@/lib/near-wallet").then((mod) => mod.signOutNear());
@@ -449,11 +461,7 @@ export const useDesk = create<Desk>((set, get) => ({
 
   tick: () => {
     const state = get();
-    const marks = { ...state.marks };
-    for (const key of Object.keys(marks)) {
-      const wobble = (Math.random() - 0.48) * marks[key] * 0.0016;
-      marks[key] = Math.max(0.0001, marks[key] + wobble);
-    }
+    const marks = state.marks;
     let balances = state.balances;
     let orders = state.orders;
     let positions = state.positions;

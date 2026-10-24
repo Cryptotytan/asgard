@@ -58,7 +58,7 @@ export function PortfolioDesk() {
                 {accountId ?? "Not connected"}
                 <span className="rounded-full bg-bg px-2 py-0.5 text-[10px] font-medium text-muted">NEAR</span>
               </p>
-              <p className="truncate text-xs text-muted">{connected ? "NEAR mainnet · this desk stays simulated" : "Connect a NEAR wallet"}</p>
+              <p className="truncate text-xs text-muted">{connected ? "NEAR mainnet · balances read from the chain" : "Connect a NEAR wallet"}</p>
             </div>
           </div>
           <div className="flex w-full rounded-full bg-bg p-0.5 text-xs sm:w-auto sm:text-xs">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Bell, Eye, EyeOff, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { signedPct, TOKENS, usd, type Token } from "@/lib/market";
@@ -6,13 +6,10 @@ import { useDesk } from "@/lib/store";
 import {
   EMPTY_TRACKER,
   LABELS,
-  fillsOf,
-  heatOf,
-  holdingsOf,
+  loadChain,
   nearProblem,
+  peekChain,
   readTracker,
-  seriesOf,
-  walletStats,
   writeTracker,
   type AlertOn,
   type Label,
@@ -48,6 +45,7 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
   const [pane, setPane] = useState<"balances" | "performance" | "activity" | "dev">("balances");
   const [spam, setSpam] = useState(false);
   const [research, setResearch] = useState("");
+  const [chainRev, setChainRev] = useState(0);
   const [walletFilter, setWalletFilter] = useState("all");
   const [folderFilter, setFolderFilter] = useState("all");
   const [query, setQuery] = useState("");
@@ -74,16 +72,11 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
   }, [data, ready, accountId]);
 
   const wallet = data.wallets.find((item) => item.id === active) ?? null;
-  const fills = useMemo(() => fillsOf(data.wallets), [data.wallets]);
-  const visibleFills = fills.filter((fill) => {
-    const owner = data.wallets.find((item) => item.id === fill.walletId);
-    if (!owner) return false;
-    if (walletFilter !== "all" && owner.id !== walletFilter) return false;
-    if (folderFilter !== "all" && owner.folder !== folderFilter) return false;
-    if (fill.usd < owner.minUsd) return false;
-    if (owner.alert === "buys" && fill.side !== "buy") return false;
-    if (owner.alert === "sells" && fill.side !== "sell") return false;
-    return true;
+  const liveRows = data.wallets.flatMap((item) => {
+    if (walletFilter !== "all" && item.id !== walletFilter) return [];
+    if (folderFilter !== "all" && item.folder !== folderFilter) return [];
+    const live = peekChain(item.address);
+    return (live?.fills ?? []).map((fill) => ({ ...fill, wallet: item.name }));
   });
 
   function saveWallet() {
@@ -129,6 +122,16 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
     setWalletOpen(true);
   }
 
+  useEffect(() => {
+    if (!data.wallets.length) return;
+    let stop = false;
+    void Promise.all(data.wallets.map((item) => loadChain(item.address).catch(() => null))).then(() => {
+      if (!stop) setChainRev((value) => value + 1);
+    });
+    return () => {
+      stop = true;
+    };
+  }, [data.wallets]);
   const problem = form.address ? nearProblem(form.address, form.kind) : "";
   const watched = TOKENS.filter((token) => data.tokens.includes(token.symbol));
   const results = TOKENS.filter((token) => `${token.symbol} ${token.name}`.toLowerCase().includes(query.trim().toLowerCase()))
@@ -191,8 +194,8 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
             <>
             <ul className="grid gap-2 p-3 md:hidden">
               {data.wallets.map((item) => {
-                const stats = walletStats(item);
-                const pnl = `${stats.pnl >= 0 ? "+" : "-"}$${Math.abs(stats.pnl).toFixed(2)}`;
+                const live = peekChain(item.address);
+                const value = live ? `$${live.value.toFixed(2)}` : chainRev >= 0 ? "…" : "…";
                 return (
                   <li key={item.id}>
                     <button type="button" onClick={() => { setActive(item.id); setResearch(""); }} className="w-full rounded-2xl border border-line bg-surface p-3 text-left">
@@ -202,12 +205,12 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
                           <span className="block truncate font-semibold">{item.name} {item.labels[0] && <em className="text-xs font-normal text-primary not-italic">{item.labels[0]}</em>}</span>
                           <span className="block truncate text-xs text-muted">{item.note || item.address}</span>
                         </span>
-                        <span className={`font-mono text-sm ${stats.pnl >= 0 ? "text-primary" : "text-danger"}`}>{pnl}</span>
+                        <span className="font-mono text-sm text-fg">{value}</span>
                       </span>
                       <span className="mt-3 grid grid-cols-3 text-xs text-muted">
-                        <span>Win {stats.win.toFixed(0)}%</span>
-                        <span>{stats.trades} trades</span>
-                        <span className="text-right">{stats.ago}</span>
+                        <span>{live ? `${live.trades} transfers` : "On chain"}</span>
+                        <span>{live ? `${live.holdings.length} tokens` : "…"}</span>
+                        <span className="text-right">{live?.ago ?? "…"}</span>
                       </span>
                     </button>
                   </li>
@@ -218,14 +221,14 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
               <table className="w-full min-w-[760px] text-left text-sm">
                 <thead className="text-[11px] uppercase tracking-wide text-muted">
                   <tr className="border-b border-line">
-                    {["Wallet", "Note", "PnL", "Win rate", "Activity", "Last activity", ""].map((label) => (
+                    {["Wallet", "Note", "Value", "Transfers", "Last activity", ""].map((label) => (
                       <th key={label} className="px-3 py-2 font-medium">{label}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {data.wallets.map((item) => {
-                    const stats = walletStats(item);
+                    const live = peekChain(item.address);
                     return (
                       <tr key={item.id} className="cursor-pointer border-b border-line hover:bg-surface" onClick={() => { setActive(item.id); setResearch(""); }}>
                         <td className="px-3 py-2.5">
@@ -238,10 +241,9 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
                           </span>
                         </td>
                         <td className="max-w-48 truncate px-3 text-muted">{item.note || "—"}</td>
-                        <td className={`px-3 font-mono ${stats.pnl >= 0 ? "text-primary" : "text-danger"}`}>{stats.pnl >= 0 ? "+" : "-"}${Math.abs(stats.pnl).toFixed(2)}</td>
-                        <td className="px-3 font-mono text-primary">{stats.win.toFixed(0)}%</td>
-                        <td className="px-3 text-muted">{stats.trades} trades</td>
-                        <td className="px-3 text-muted">{stats.ago}</td>
+                        <td className="px-3 font-mono">{live ? `$${live.value.toFixed(2)}` : "…"}</td>
+                        <td className="px-3 font-mono">{live ? live.trades : "…"}</td>
+                        <td className="px-3 text-muted">{live?.ago ?? "…"}</td>
                         <td className="px-3">
                           <span className="flex justify-end gap-1">
                             <IconButton label={item.muted ? "Unmute" : "Mute"} onClick={() => setData((current) => ({ ...current, wallets: current.wallets.map((row) => row.id === item.id ? { ...row, muted: !row.muted } : row) }))}>{item.muted ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}</IconButton>
@@ -267,11 +269,10 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
             pane={pane}
             spam={spam}
             research={research}
-            fills={fills.filter((fill) => fill.walletId === wallet.id)}
             onRange={setRange}
             onPane={setPane}
             onSpam={setSpam}
-            onResearch={() => setResearch(`${wallet.name} is a ${wallet.labels[0] ?? "tracked"} NEAR account. Realized book is simulated from public-style activity. Nothing here is a live chain index.`)}
+            onResearch={() => setResearch(`${wallet.name} is a watched NEAR account. Balances and transfers are read from the chain.`)}
             onTrade={onTrade}
             onBack={() => setActive(null)}
           />
@@ -289,30 +290,25 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
                 {data.folders.map((folder) => <option key={folder}>{folder}</option>)}
               </select>
             </div>
-            {visibleFills.length === 0 ? (
-              <Empty title="No live trades yet" body="Track a NEAR account to see its buys and sells here." action="Add wallet" onClick={() => { setForm(blank); setWalletOpen(true); }} />
+            {liveRows.length === 0 ? (
+              <Empty title="No live transfers yet" body="Track a NEAR account. Recent fungible transfers from the chain show up here." action="Add wallet" onClick={() => { setForm(blank); setWalletOpen(true); }} />
             ) : (
               <div className="scroll-x">
-                <table className="w-full min-w-[820px] text-left text-sm">
+                <table className="w-full min-w-[720px] text-left text-sm">
                   <thead className="text-[11px] uppercase tracking-wide text-muted">
-                    <tr className="border-b border-line">{["Type", "Wallet", "Token", "Amount", "Price", "Mcap", "Time", ""].map((label) => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr>
+                    <tr className="border-b border-line">{["Type", "Wallet", "Token", "Amount", "Time", ""].map((label) => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr>
                   </thead>
                   <tbody>
-                    {visibleFills.map((fill) => {
-                      const owner = data.wallets.find((item) => item.id === fill.walletId);
-                      return (
-                        <tr key={fill.id} className="border-b border-line">
-                          <td className={`px-3 py-2 font-semibold ${fill.side === "buy" ? "text-primary" : "text-danger"}`}>{fill.side === "buy" ? "BUY" : "SELL"}</td>
-                          <td className="px-3">{owner?.name}</td>
-                          <td className="px-3"><span className="flex items-center gap-2"><TokenIcon token={fill.token} />{fill.token.symbol}</span></td>
-                          <td className="px-3 font-mono">${fill.usd.toFixed(2)}<span className="block text-xs text-muted">{fill.amount.toFixed(4)} {fill.token.symbol}</span></td>
-                          <td className={`px-3 font-mono ${fill.side === "buy" ? "text-primary" : "text-danger"}`}>{usd(fill.price)}</td>
-                          <td className="px-3 text-muted">{fill.token.mcap}</td>
-                          <td className="px-3 text-muted">{fill.ago}</td>
-                          <td className="px-3 text-right"><button type="button" onClick={() => onTrade(fill.token.symbol)} className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-black">Buy</button></td>
-                        </tr>
-                      );
-                    })}
+                    {liveRows.map((fill) => (
+                      <tr key={`${fill.wallet}-${fill.id}`} className="border-b border-line">
+                        <td className={`px-3 py-2 font-semibold ${fill.incoming ? "text-primary" : "text-danger"}`}>{fill.incoming ? "IN" : "OUT"}</td>
+                        <td className="px-3">{fill.wallet}</td>
+                        <td className="px-3">{fill.symbol}</td>
+                        <td className="px-3 font-mono">{fill.amount.toPrecision(4)}</td>
+                        <td className="px-3 text-muted">{fill.ago}</td>
+                        <td className="px-3 text-right"><button type="button" onClick={() => onTrade(fill.symbol)} className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-black">Trade</button></td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -450,14 +446,13 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
 }
 
 function WalletDetail({
-  wallet, range, pane, spam, research, fills, onRange, onPane, onSpam, onResearch, onTrade, onBack,
+  wallet, range, pane, spam, research, onRange, onPane, onSpam, onResearch, onTrade, onBack,
 }: {
   wallet: TrackedWallet;
   range: "1D" | "7D" | "30D" | "1Y";
   pane: "balances" | "performance" | "activity" | "dev";
   spam: boolean;
   research: string;
-  fills: ReturnType<typeof fillsOf>;
   onRange: (range: "1D" | "7D" | "30D" | "1Y") => void;
   onPane: (pane: "balances" | "performance" | "activity" | "dev") => void;
   onSpam: (value: boolean) => void;
@@ -465,11 +460,9 @@ function WalletDetail({
   onTrade: (symbol: string) => void;
   onBack: () => void;
 }) {
-  const stats = walletStats(wallet);
-  const points = range === "1D" ? 12 : range === "7D" ? 18 : range === "1Y" ? 36 : 28;
-  const series = seriesOf(wallet, points);
-  const held = holdingsOf(wallet).filter((row) => spam || !row.spam);
-  const top = holdingsOf(wallet).slice(0, 3);
+  const live = peekChain(wallet.address);
+  const held = (live?.holdings ?? []).filter((row) => spam || row.usd >= 0.05 || row.usd === 0);
+  const top = (live?.holdings ?? []).slice(0, 3);
   return (
     <div className="px-3 py-3 sm:px-4">
       <button type="button" onClick={onBack} className="text-xs text-muted">← Wallets</button>
@@ -489,26 +482,16 @@ function WalletDetail({
         </div>
       </div>
       {research && <p className="mt-2 max-w-3xl text-sm text-muted">{research}</p>}
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        <Stat k="Total value" v={`$${stats.value.toFixed(2)}`} />
-        <Stat k="Top holdings" v={top.map((row) => row.token.symbol).join(" ")} />
-        <Stat k="Realized PnL" v={`${stats.pnl >= 0 ? "+" : "-"}$${Math.abs(stats.pnl).toFixed(2)}`} good={stats.pnl >= 0} />
-        <Stat k="Win rate" v={`${stats.win.toFixed(0)}%`} good />
-        <Stat k="Trades" v={String(stats.trades)} />
-        <Stat k="Last" v={stats.ago} />
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+        <Stat k="Total value" v={live ? `$${live.value.toFixed(2)}` : "…"} />
+        <Stat k="Holdings" v={live ? String(live.holdings.length) : "…"} />
+        <Stat k="Top" v={top.map((row) => row.symbol).join(" ") || "—"} />
+        <Stat k="Last transfer" v={live?.ago ?? "…"} />
       </div>
-      <div className="mt-3 grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-xl border border-line bg-surface p-3">
-          <p className="text-xs text-muted">Realized {range} PnL</p>
-          <p className={`font-mono text-xl ${series.at(-1)! >= 0 ? "text-primary" : "text-danger"}`}>${series.at(-1)!.toFixed(2)}</p>
-          <Spark values={series} />
-        </div>
-        <div className="rounded-xl border border-line bg-surface p-3">
-          <p className="text-xs text-muted">Activity</p>
-          <div className="mt-3 grid grid-flow-col grid-rows-7 gap-1">
-            {heatOf(wallet).map((value, index) => <span key={index} className="size-2.5 rounded-[2px]" style={{ background: `rgba(0,236,151,${0.08 + value * 0.85})` }} />)}
-          </div>
-        </div>
+      <div className="mt-3 rounded-xl border border-line bg-surface p-3">
+        <p className="text-xs text-muted">On-chain balance</p>
+        <p className="font-mono text-xl">{live ? `$${live.value.toFixed(2)}` : "Loading NEAR…"}</p>
+        <p className="mt-1 text-xs text-muted">NEAR plus fungible tokens on this account. Prices are live where the terminal already lists the token.</p>
       </div>
       <div className="mt-4 flex items-center gap-3 border-b border-line">
         {(["balances", "performance", "activity", "dev"] as const).map((item) => (
@@ -522,22 +505,23 @@ function WalletDetail({
             <thead className="text-[11px] uppercase text-muted"><tr>{["Token", "Amount", "Value", "Share", ""].map((label) => <th key={label} className="py-2 font-medium">{label}</th>)}</tr></thead>
             <tbody>
               {held.map((row) => (
-                <tr key={row.token.symbol} className="border-t border-line">
-                  <td className="py-2"><span className="flex items-center gap-2"><TokenIcon token={row.token} />{row.token.symbol}</span></td>
+                <tr key={row.symbol} className="border-t border-line">
+                  <td className="py-2 font-semibold">{row.symbol}</td>
                   <td className="font-mono">{row.amount.toFixed(4)}</td>
-                  <td className="font-mono">${row.usd.toFixed(2)}</td>
+                  <td className="font-mono">{row.usd ? `$${row.usd.toFixed(2)}` : "—"}</td>
                   <td><span className="block h-1.5 w-24 overflow-hidden rounded-full bg-bg"><i className="block h-full bg-primary" style={{ width: `${row.share}%` }} /></span></td>
-                  <td className="text-right"><button type="button" onClick={() => onTrade(row.token.symbol)} className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-black">Buy</button></td>
+                  <td className="text-right"><button type="button" onClick={() => onTrade(row.symbol)} className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-black">Buy</button></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
-      {pane === "performance" && <p className="py-4 text-sm text-muted">Win rate {stats.win.toFixed(0)}% across {stats.trades} simulated NEAR fills. Realized {stats.pnl >= 0 ? "gain" : "loss"} ${Math.abs(stats.pnl).toFixed(2)}.</p>}
+      {pane === "performance" && <p className="py-4 text-sm text-muted">{live ? `${live.trades} recent fungible transfers on NEAR. Portfolio value is the live account balance.` : "Loading on-chain activity."}</p>}
       {pane === "activity" && (
         <ul className="divide-y divide-line text-sm">
-          {fills.map((fill) => <li key={fill.id} className="flex items-center justify-between py-2"><span className={fill.side === "buy" ? "text-primary" : "text-danger"}>{fill.side.toUpperCase()} {fill.token.symbol}</span><span className="font-mono">${fill.usd.toFixed(2)}</span><span className="text-muted">{fill.ago}</span></li>)}
+          {(live?.fills ?? []).map((fill) => <li key={fill.id} className="flex items-center justify-between py-2"><span className={fill.incoming ? "text-primary" : "text-danger"}>{fill.incoming ? "IN" : "OUT"} {fill.symbol}</span><span className="font-mono">{fill.amount.toPrecision(4)}</span><span className="text-muted">{fill.ago}</span></li>)}
+          {live && live.fills.length === 0 && <li className="py-3 text-muted">No recent fungible transfers.</li>}
         </ul>
       )}
       {pane === "dev" && <p className="py-4 text-sm text-muted">No NEAR contract deploy is attached to this watch. Labels: {wallet.labels.join(", ") || "none"}. {wallet.note || "No note."}</p>}

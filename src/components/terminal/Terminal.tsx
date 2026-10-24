@@ -9,7 +9,8 @@ import { TokenTrade } from "@/components/terminal/TokenTrade";
 import { TrackerDesk } from "@/components/terminal/TrackerDesk";
 import { VaultDesk } from "@/components/terminal/VaultDesk";
 import { canPerp, fmt, money, TOKENS } from "@/lib/market";
-import { useDesk } from "@/lib/store";
+import { setWalletOpener, useDesk } from "@/lib/store";
+import { startLiveFeed } from "@/lib/live";
 import { visitToken } from "@/lib/watch";
 
 const NAV = [
@@ -32,19 +33,25 @@ export function Terminal() {
   const [query, setQuery] = useState("");
   const [quickUsd] = useState(20);
   const [flash, setFlash] = useState("");
+  const [walletOpen, setWalletOpen] = useState(false);
+  const [walletError, setWalletError] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const connected = useDesk((s) => s.connected);
   const accountId = useDesk((s) => s.accountId);
   const nearYocto = useDesk((s) => s.nearYocto);
-  const connect = useDesk((s) => s.connect);
   const disconnect = useDesk((s) => s.disconnect);
   const balances = useDesk((s) => s.balances);
   const positions = useDesk((s) => s.positions);
   const tick = useDesk((s) => s.tick);
 
   useEffect(() => {
-    void import("@/lib/near-wallet").then((mod) => mod.restoreNearSession());
+    setWalletOpener(() => {
+      setWalletError("");
+      setWalletOpen(true);
+    });
+    void import("@/lib/near-wallet").then((mod) => mod.restoreNearSession()).catch(() => undefined);
+    startLiveFeed();
   }, []);
 
   useEffect(() => {
@@ -96,6 +103,48 @@ export function Terminal() {
     visitToken(next);
   }
 
+  function onWallet() {
+    if (connected) disconnect();
+    else {
+      setWalletError("");
+      setWalletOpen(true);
+    }
+  }
+
+  async function pickWallet(kind: "intear" | "here" | "more") {
+    setWalletError("");
+    try {
+      if (kind === "intear") {
+        const { connectIntearWallet } = await import("@/lib/near-wallet");
+        await connectIntearWallet();
+        setWalletOpen(false);
+        return;
+      }
+      if (kind === "here") {
+        const { connectHereWallet } = await import("@/lib/near-wallet");
+        await connectHereWallet();
+        setWalletOpen(false);
+        return;
+      }
+      const { openNearWallets } = await import("@/lib/near-wallet");
+      await openNearWallets();
+      setWalletOpen(false);
+    } catch (error) {
+      setWalletError(error instanceof Error ? error.message : "Wallet did not open");
+    }
+  }
+
+  async function watchAccount(account: string) {
+    setWalletError("");
+    try {
+      const { connectReadOnly } = await import("@/lib/near-wallet");
+      await connectReadOnly(account);
+      setWalletOpen(false);
+    } catch (error) {
+      setWalletError(error instanceof Error ? error.message : "Account did not load");
+    }
+  }
+
   function go(next: View) {
     if (next === "swap") setSwapFocus(undefined);
     if (next === "trade") {
@@ -114,7 +163,7 @@ export function Terminal() {
             <span className="mark" aria-hidden />
             <span className="text-base font-semibold tracking-tight">Asgard</span>
           </Link>
-          <WalletButton connected={connected} account={accountId} near={formatNear(nearYocto)} compact onClick={() => (connected ? disconnect() : connect())} />
+          <WalletButton connected={connected} account={accountId} near={formatNear(nearYocto)} compact onClick={onWallet} />
         </div>
         <nav className="grid grid-cols-7 border-t border-line md:hidden">
           {NAV.map(([id, label]) => (
@@ -145,7 +194,7 @@ export function Terminal() {
               </button>
             ))}
           </nav>
-          <WalletButton connected={connected} account={accountId} near={formatNear(nearYocto)} compact onClick={() => (connected ? disconnect() : connect())} />
+          <WalletButton connected={connected} account={accountId} near={formatNear(nearYocto)} compact onClick={onWallet} />
         </div>
         <div className="hidden items-center gap-5 px-6 py-3 lg:flex">
           <Link to="/" className="flex shrink-0 items-center gap-2.5">
@@ -179,7 +228,7 @@ export function Terminal() {
                 <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">Ctrl K</kbd>
               </label>
             )}
-            <WalletButton connected={connected} account={accountId} near={formatNear(nearYocto)} onClick={() => (connected ? disconnect() : connect())} />
+            <WalletButton connected={connected} account={accountId} near={formatNear(nearYocto)} onClick={onWallet} />
           </div>
         </div>
         {view === "markets" && (
@@ -260,6 +309,7 @@ export function Terminal() {
       </footer>
 
       {flash && <p className="fixed bottom-16 left-1/2 z-30 max-w-md -translate-x-1/2 rounded-full border border-line bg-bg px-4 py-2 text-center text-sm">{flash}</p>}
+      {walletOpen && <WalletSheet error={walletError} onClose={() => setWalletOpen(false)} onPick={(kind) => void pickWallet(kind)} onWatch={(account) => void watchAccount(account)} />}
     </div>
   );
 }
@@ -270,6 +320,77 @@ function FooterStat({ label, value, className = "" }: { label: string; value: st
       <span className="text-[9px] uppercase tracking-wide text-muted">{label}</span>
       <span className="max-w-full truncate font-mono text-xs text-fg">{value}</span>
     </span>
+  );
+}
+
+function WalletSheet({
+  error,
+  onClose,
+  onPick,
+  onWatch,
+}: {
+  error: string;
+  onClose: () => void;
+  onPick: (kind: "intear" | "here" | "more") => void;
+  onWatch: (account: string) => void;
+}) {
+  const [account, setAccount] = useState("");
+  return (
+    <div className="fixed inset-0 z-[80] grid place-items-end bg-black/70 p-3 sm:place-items-center" onClick={onClose}>
+      <section className="w-full max-w-md rounded-2xl border border-line bg-bg p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-muted">NEAR mainnet</p>
+            <h2 className="text-lg font-semibold">Connect a wallet</h2>
+          </div>
+          <button type="button" onClick={onClose} className="grid size-9 place-items-center rounded-full border border-line text-sm text-muted">
+            Close
+          </button>
+        </div>
+        <p className="mt-2 text-sm text-muted">Intear and HERE sign on this page. Extension wallets only work if they are installed.</p>
+        <div className="mt-4 grid gap-2">
+          <button type="button" onClick={() => onPick("intear")} className="h-12 rounded-xl bg-primary px-4 text-left text-sm font-semibold text-primary-fg">
+            Intear Wallet
+            <span className="mt-0.5 block text-xs font-normal opacity-80">Signs in this page. No extension.</span>
+          </button>
+          <button type="button" onClick={() => onPick("here")} className="h-12 rounded-xl border border-line px-4 text-left text-sm font-semibold">
+            HERE Wallet
+            <span className="mt-0.5 block text-xs font-normal text-muted">Opens an overlay on this page</span>
+          </button>
+          <button type="button" onClick={() => onPick("more")} className="h-11 rounded-xl border border-line px-4 text-left text-sm text-muted">
+            Meteor, Nightly, Sender, HOT
+          </button>
+        </div>
+        <form
+          className="mt-4 border-t border-line pt-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onWatch(account);
+          }}
+        >
+          <label className="block text-xs text-muted" htmlFor="near-account">
+            Or read a mainnet account
+          </label>
+          <div className="mt-2 flex gap-2">
+            <input
+              id="near-account"
+              value={account}
+              onChange={(event) => setAccount(event.target.value)}
+              placeholder="name.near"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 text-sm outline-none"
+            />
+            <button type="submit" className="h-11 shrink-0 rounded-xl border border-line px-3 text-sm font-semibold">
+              Load
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-muted">View only. Balances come from the chain. Swaps still need Intear or HERE to sign.</p>
+        </form>
+        {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+      </section>
+    </div>
   );
 }
 

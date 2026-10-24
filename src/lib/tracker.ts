@@ -135,3 +135,74 @@ export function fillsOf(wallets: TrackedWallet[]): Fill[] {
   }
   return rows.sort((a, b) => AGOS.indexOf(a.ago) - AGOS.indexOf(b.ago));
 }
+
+export type ChainHolding = { symbol: string; amount: number; usd: number; share: number };
+export type ChainFill = { id: string; symbol: string; incoming: boolean; amount: number; ago: string };
+export type ChainWallet = { value: number; holdings: ChainHolding[]; trades: number; ago: string; fills: ChainFill[] };
+
+const chainCache = new Map<string, ChainWallet>();
+
+function agoFrom(ns: string) {
+  const ms = Number(BigInt(ns) / 1_000_000n);
+  const delta = Math.max(0, Date.now() - ms);
+  const min = Math.round(delta / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hours = Math.round(min / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+export function peekChain(address: string) {
+  return chainCache.get(address.trim().toLowerCase()) ?? null;
+}
+
+export function loadChain(address: string) {
+  const key = address.trim().toLowerCase();
+  const cached = chainCache.get(key);
+  if (cached) return Promise.resolve(cached);
+  return fetchChain(key).then((row) => {
+    chainCache.set(key, row);
+    return row;
+  });
+}
+
+async function fetchChain(account: string): Promise<ChainWallet> {
+  const [accountRes, inventoryRes, txRes] = await Promise.all([
+    fetch(`https://api.nearblocks.io/v1/account/${account}`),
+    fetch(`https://api.nearblocks.io/v1/account/${account}/inventory`),
+    fetch(`https://api.nearblocks.io/v1/account/${account}/ft-txns?per_page=25`),
+  ]);
+  const accountBody = accountRes.ok ? ((await accountRes.json()) as { account?: { amount?: string } }) : {};
+  const inventoryBody = inventoryRes.ok ? ((await inventoryRes.json()) as { inventory?: { fts?: { amount?: string; ft_meta?: { symbol?: string; decimals?: number } }[] } }) : {};
+  const txBody = txRes.ok ? ((await txRes.json()) as { txns?: { transaction_hash?: string; delta_amount?: string; block_timestamp?: string; ft?: { symbol?: string; decimals?: number } }[] }) : {};
+  const near = Number(accountBody.account?.amount ?? "0") / 1e24;
+  const nearPrice = TOKENS.find((token) => token.symbol === "NEAR")?.price ?? 0;
+  const holdings: ChainHolding[] = [];
+  if (near > 0) holdings.push({ symbol: "NEAR", amount: near, usd: near * nearPrice, share: 0 });
+  for (const row of inventoryBody.inventory?.fts ?? []) {
+    const symbol = row.ft_meta?.symbol || "FT";
+    const decimals = row.ft_meta?.decimals ?? 0;
+    const amount = Number(row.amount ?? "0") / 10 ** decimals;
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const known = TOKENS.find((token) => token.symbol.toLowerCase() === symbol.toLowerCase());
+    holdings.push({ symbol, amount, usd: known ? amount * known.price : 0, share: 0 });
+  }
+  const total = holdings.reduce((sum, row) => sum + row.usd, 0);
+  for (const row of holdings) row.share = total > 0 ? (row.usd / total) * 100 : 0;
+  holdings.sort((a, b) => b.usd - a.usd || b.amount - a.amount);
+  const fills: ChainFill[] = (txBody.txns ?? []).slice(0, 20).map((tx, index) => {
+    const decimals = tx.ft?.decimals ?? 0;
+    const raw = tx.delta_amount ?? "0";
+    const amount = Number(raw.replace("-", "")) / 10 ** decimals;
+    return {
+      id: tx.transaction_hash ?? `${index}`,
+      symbol: tx.ft?.symbol || "FT",
+      incoming: !raw.startsWith("-"),
+      amount: Number.isFinite(amount) ? amount : 0,
+      ago: tx.block_timestamp ? agoFrom(tx.block_timestamp) : "—",
+    };
+  });
+  return { value: total, holdings: holdings.slice(0, 12), trades: txBody.txns?.length ?? 0, ago: fills[0]?.ago ?? "—", fills };
+}
+
