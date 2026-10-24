@@ -25,14 +25,13 @@ export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "s
   const [step, setStep] = useState(0);
   const sources = useMemo(() => {
     const chain = token.chain === "Ethereum" ? "ethereum" : token.chain === "Aurora" ? "aurora" : "near";
-    const list = [knownLogo(token.symbol), token.icon];
+    const base = token.symbol.replace(/\.(Aurora|Ethereum)$/i, "");
+    const list = chain === "near" ? [knownLogo(token.symbol), token.icon] : [token.icon];
     if (token.address) {
       list.push(`https://cdn.dexscreener.com/tokens/${chain}/${token.address}.png`);
       list.push(`https://dd.dexscreener.com/ds-data/tokens/${chain}/${token.address}.png`);
-      if (chain !== "near") {
-        list.push(`https://cdn.dexscreener.com/tokens/near/${token.address}.png`);
-      }
     }
+    if (chain !== "near") list.push(knownLogo(base));
     return [...new Set(list.filter((src) => src && !src.startsWith("data:image/svg+xml;utf8,")))];
   }, [token.address, token.chain, token.icon, token.symbol]);
   useEffect(() => {

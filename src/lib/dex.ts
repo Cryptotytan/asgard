@@ -328,6 +328,12 @@ type GeckoPool = {
   relationships?: { base_token?: { data?: { id?: string } } };
 };
 
+type GeckoToken = {
+  id?: string;
+  type?: string;
+  attributes?: { image_url?: string | null };
+};
+
 function chainSymbol(name: string) {
   const head = (name.split("/")[0] ?? "").trim().replace(/\s+\d+(?:\.\d+)?%$/, "");
   return head.replace(/\s/g, "").replace(/^\$/, "");
@@ -336,6 +342,18 @@ function chainSymbol(name: string) {
 function chainAddress(id: string) {
   const cut = id.indexOf("_");
   return (cut >= 0 ? id.slice(cut + 1) : id).trim();
+}
+
+function chainImages(included: GeckoToken[] | undefined) {
+  const map = new Map<string, string>();
+  for (const item of included ?? []) {
+    const image = item.attributes?.image_url;
+    if (!item.id || !image || !image.startsWith("https://")) continue;
+    map.set(item.id.toLowerCase(), image);
+    const address = chainAddress(item.id).toLowerCase();
+    if (address) map.set(address, image);
+  }
+  return map;
 }
 
 function placeChainToken(input: { symbol: string; name: string; price: number; chain: "Aurora" | "Ethereum"; address: string; icon: string; liq: number; vol: number; mcap: number; change: number }) {
@@ -380,10 +398,10 @@ export function loadChainBook(chain: "Aurora" | "Ethereum") {
 
 async function fetchChainBook(chain: "Aurora" | "Ethereum") {
   const net = CHAIN_NET[chain];
-  const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/trending_pools`, { headers: { accept: "application/json" } });
+  const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/${net}/trending_pools?include=base_token`, { headers: { accept: "application/json" } });
   if (!response.ok) return;
-  const body = (await response.json()) as { data?: GeckoPool[] };
-  const dex = net === "eth" ? "ethereum" : "aurora";
+  const body = (await response.json()) as { data?: GeckoPool[]; included?: GeckoToken[] };
+  const images = chainImages(body.included);
   let wrote = 0;
   for (const pool of body.data ?? []) {
     const id = pool.relationships?.base_token?.data?.id ?? "";
@@ -397,7 +415,7 @@ async function fetchChainBook(chain: "Aurora" | "Ethereum") {
       price,
       chain,
       address,
-      icon: `https://cdn.dexscreener.com/tokens/${dex}/${address}.png`,
+      icon: images.get(address.toLowerCase()) || images.get(id.toLowerCase()) || "",
       liq: Number(pool.attributes?.reserve_in_usd) || 0,
       vol: Number(pool.attributes?.volume_usd?.h24) || 0,
       mcap: Number(pool.attributes?.market_cap_usd) || Number(pool.attributes?.fdv_usd) || 0,
