@@ -73,8 +73,20 @@ type DexPair = {
   fdv?: number;
   marketCap?: number;
   pairCreatedAt?: number;
+  pairAddress?: string;
   info?: { imageUrl?: string };
 };
+
+const poolByToken = new Map<string, string>();
+
+export function knownPool(chain: string, address: string) {
+  return poolByToken.get(`${chain}:${address.toLowerCase()}`) ?? "";
+}
+
+function rememberPool(chain: string, address: string, pool?: string) {
+  if (!chain || !address || !pool || pool.includes(" ")) return;
+  poolByToken.set(`${chain}:${address.toLowerCase()}`, pool);
+}
 
 const memeHits = new Set<string>();
 
@@ -620,6 +632,7 @@ function ingestForeignPairs(pairs: DexPair[], icons: Map<string, string>, loose 
       token.notes = token.verified ? ["Widely traded"] : ["Live DexScreener market"];
     }
     if (image) paintIcon(token, image);
+    rememberPool(chain, address, pair.pairAddress);
     applyLiveStats(token, pair, false);
   }
 }
@@ -853,6 +866,7 @@ function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
     token.price = price;
     token.chain = "NEAR";
     token.icon = dexImage || preferIcon(token.icon, icon || undefined);
+    rememberPool("NEAR", address, pair.pairAddress);
     token.tag = base.name || token.tag;
     token.change = change.h24;
     token.windows = change;

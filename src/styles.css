@@ -176,11 +176,12 @@
 
   .book-hinge {
     perspective: 1200px;
+    overflow: hidden;
   }
 
   .book-page {
-    transform-origin: left center;
-    animation: book-page 0.45s cubic-bezier(0.2, 0.7, 0.2, 1);
+    transform-origin: top center;
+    animation: book-page 0.4s cubic-bezier(0.2, 0.7, 0.2, 1);
   }
 
   .swap-stage {
@@ -291,8 +292,8 @@
 
 @keyframes book-page {
   from {
-    opacity: 0.45;
-    transform: rotateY(-68deg);
+    opacity: 0.4;
+    transform: rotateX(-46deg) translateY(10px);
   }
   to {
     opacity: 1;

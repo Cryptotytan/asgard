@@ -1,5 +1,5 @@
 import { ensureToken, isCanonical, isMajorAsset, LEND_MARKETS, money, qualityScore, TOKENS, type Candle, type Print } from "@/lib/market";
-import { iconFor, geckoIdFor, loadIconBook, refreshDexMarkets, syncNearMarkets, applyIconBook } from "@/lib/dex";
+import { iconFor, geckoIdFor, knownPool, loadIconBook, refreshDexMarkets, syncNearMarkets, applyIconBook } from "@/lib/dex";
 import { useDesk } from "@/lib/store";
 
 const LLAMA = "https://coins.llama.fi";
@@ -221,9 +221,9 @@ function enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
   return run;
 }
 
-async function llamaSeries(id: string, start: number, period: string, search: number) {
+async function llamaSeries(id: string, start: number, period: string, search: number, span = PAGE) {
   const response = await fetch(
-    `${LLAMA}/chart/${id}?start=${Math.floor(start)}&span=${PAGE}&period=${period}&searchWidth=${search}`,
+    `${LLAMA}/chart/${id}?start=${Math.floor(start)}&span=${span}&period=${period}&searchWidth=${search}`,
   );
   if (response.status === 429 || response.status >= 500) return null;
   if (!response.ok) return [] as Point[];
@@ -339,9 +339,9 @@ async function geckoPool(network: string, address: string) {
   return pool;
 }
 
-async function geckoBars(network: string, pool: string, frame: string, before?: number) {
+async function geckoBars(network: string, pool: string, frame: string, before?: number, limit = 1000) {
   const plan = geckoFrame(frame);
-  const query = new URLSearchParams({ aggregate: String(plan.aggregate), limit: "1000", currency: "usd" });
+  const query = new URLSearchParams({ aggregate: String(plan.aggregate), limit: String(limit), currency: "usd" });
   if (before && before > 0) query.set("before_timestamp", String(Math.floor(before)));
   const body = await geckoGet(`https://api.geckoterminal.com/api/v2/networks/${network}/pools/${pool}/ohlcv/${plan.tf}?${query}`);
   const rows = (body as { data?: { attributes?: { ohlcv_list?: unknown } } } | null)?.data?.attributes?.ohlcv_list;
@@ -354,9 +354,15 @@ async function loadGeckoBook(symbol: string, frame: string, book: Book) {
   const raw = token?.address ?? "";
   if (!network || !raw || raw.includes(":")) return false;
   const address = raw.startsWith("0x") ? raw.toLowerCase() : raw;
-  const pool = book.id.startsWith("gecko:") ? book.id.split(":").slice(2).join(":") : await geckoPool(network, address);
+  const hinted = token && token.chain !== "NEAR" ? knownPool(token.chain, raw) : "";
+  let pool = book.id.startsWith("gecko:") ? book.id.split(":").slice(2).join(":") : hinted || (await geckoPool(network, address));
   if (!pool) return false;
-  const bars = await geckoBars(network, pool, frame);
+  let bars = await geckoBars(network, pool, frame, undefined, 120);
+  if (bars.length < 2 && hinted) {
+    pool = await geckoPool(network, address);
+    if (!pool) return false;
+    bars = await geckoBars(network, pool, frame, undefined, 120);
+  }
   if (bars.length < 2) return false;
   if (book.id && !book.id.startsWith("gecko:") && book.points.length > 1) return false;
   book.id = `gecko:${network}:${pool}`;
@@ -364,6 +370,35 @@ async function loadGeckoBook(symbol: string, frame: string, book: Book) {
   book.points = book.bars.map((bar) => ({ timestamp: bar.t ?? 0, price: bar.c }));
   book.from = book.bars[0]?.t ?? book.from;
   return book.bars.length > 1;
+}
+
+const deepening = new Set<string>();
+
+async function deepen(symbol: string, frame: string, key: string) {
+  if (deepening.has(key)) return;
+  deepening.add(key);
+  const book = books.get(key);
+  if (!book?.id) return;
+  const plan = historyPlan(frame);
+  const now = Math.floor(Date.now() / 1000);
+  if (book.id.startsWith("gecko:")) {
+    const network = book.id.split(":")[1] ?? "";
+    const pool = book.id.split(":").slice(2).join(":");
+    const bars = network && pool ? await geckoBars(network, pool, frame) : [];
+    if (bars.length > (book.bars?.length ?? 0)) {
+      book.bars = mergeBars(book.bars, bars);
+      book.points = book.bars.map((bar) => ({ timestamp: bar.t ?? 0, price: bar.c }));
+      book.from = book.bars[0]?.t ?? book.from;
+      publishBook(key, book);
+    }
+    return;
+  }
+  const start = Math.max(ORIGIN, now - PAGE * plan.step);
+  const part = await llamaSeries(book.id, start, plan.period, plan.search);
+  if (!part || part.length <= book.points.length) return;
+  book.points = mergePoints([book.points, part]);
+  book.from = start;
+  publishBook(key, book);
 }
 
 async function fetchCandles(symbol: string, frame: string, key: string) {
@@ -387,7 +422,7 @@ async function fetchCandles(symbol: string, frame: string, key: string) {
     await Promise.all([
       (async () => {
         if (!primary) return;
-        const part = await llamaSeries(primary, start, plan.period, plan.search);
+        const part = await llamaSeries(primary, start, plan.period, plan.search, 80);
         if (!part || part.length < 2 || book.id.startsWith("gecko:")) return;
         book.id = primary;
         book.from = start;
@@ -402,7 +437,7 @@ async function fetchCandles(symbol: string, frame: string, key: string) {
     ]);
     if (!shown && primary) {
       for (const id of llamaCandidates(symbol).slice(1, 3)) {
-        const part = await llamaSeries(id, start, plan.period, plan.search);
+        const part = await llamaSeries(id, start, plan.period, plan.search, 80);
         if (!part || part.length < 2) continue;
         book.id = id;
         book.from = start;
@@ -412,6 +447,7 @@ async function fetchCandles(symbol: string, frame: string, key: string) {
         break;
       }
     }
+    if (shown) void deepen(symbol, frame, key);
     return candles.get(key) ?? [];
   }
   if (book.id.startsWith("gecko:")) {

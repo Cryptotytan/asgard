@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Star, X } from "lucide-react";
+import { ChevronDown, Search, Star, X } from "lucide-react";
 import { TokenIcon, VerifiedMark, ChainBadge } from "@/components/terminal/TokenIcon";
 import {
   ageLabel,
@@ -37,6 +37,7 @@ export function Markets({
   const [win, setWin] = useState<WindowId>("h24");
   const [chain, setChain] = useState("All");
   const [chainOpen, setChainOpen] = useState(false);
+  const [chainQuery, setChainQuery] = useState("");
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const chainMenu = useRef<HTMLDivElement>(null);
 
@@ -108,7 +109,10 @@ export function Markets({
                 type="button"
                 aria-label={chain === "All" ? "Chains" : chain}
                 aria-expanded={chainOpen}
-                onClick={() => setChainOpen((value) => !value)}
+                onClick={() => {
+                  setChainQuery("");
+                  setChainOpen((value) => !value);
+                }}
                 className="flex h-8 items-center gap-1.5 rounded-full bg-surface px-2.5 text-xs font-semibold"
               >
                 {chain !== "All" && <ChainLogo id={chain} className="size-4" />}
@@ -116,23 +120,42 @@ export function Markets({
                 <ChevronDown className={`size-3.5 shrink-0 text-muted ${chainOpen ? "rotate-180" : ""}`} />
               </button>
               {chainOpen && (
-                <ul className="absolute right-0 top-10 z-30 max-h-72 w-52 overflow-y-auto rounded-xl border border-line bg-surface py-1 shadow-2xl">
-                  {chainOptions.map((id) => (
-                    <li key={id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setChain(id);
-                          setChainOpen(false);
-                        }}
-                        className={`flex h-10 w-full items-center gap-2 px-3 text-left text-sm ${chain === id ? "bg-bg text-fg" : "text-muted"}`}
-                      >
-                        {id !== "All" && <ChainLogo id={id} />}
-                        <span className="truncate">{id === "All" ? "Chains" : id}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <div className="absolute right-0 top-10 z-30 w-56 overflow-hidden rounded-xl border border-line bg-surface shadow-2xl">
+                  <label className="flex h-10 items-center gap-2 border-b border-line px-3">
+                    <Search className="size-3.5 shrink-0 text-muted" />
+                    <input
+                      autoFocus
+                      value={chainQuery}
+                      onChange={(event) => setChainQuery(event.target.value)}
+                      placeholder="Search chains"
+                      className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                    />
+                  </label>
+                  <ul className="max-h-72 overflow-y-auto py-1">
+                    {chainOptions
+                      .filter((id) => {
+                        const q = chainQuery.trim().toLowerCase();
+                        if (!q) return true;
+                        return (id === "All" ? "all chains" : id).toLowerCase().includes(q);
+                      })
+                      .map((id) => (
+                        <li key={id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setChain(id);
+                              setChainQuery("");
+                              setChainOpen(false);
+                            }}
+                            className={`flex h-10 w-full items-center gap-2 px-3 text-left text-sm ${chain === id ? "bg-bg text-fg" : "text-muted"}`}
+                          >
+                            {id !== "All" && <ChainLogo id={id} />}
+                            <span className="truncate">{id === "All" ? "Chains" : id}</span>
+                          </button>
+                        </li>
+                      ))}
+                  </ul>
+                </div>
               )}
             </div>
             <button
