@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Search, Wallet } from "lucide-react";
+import { ChevronDown, Search, Unplug, Wallet } from "lucide-react";
 import { LendDesk } from "@/components/terminal/LendDesk";
 import { Markets } from "@/components/terminal/Markets";
 import { PortfolioDesk } from "@/components/terminal/PortfolioDesk";
@@ -509,18 +509,25 @@ function WalletButton({ compact = false, onConnectNew }: { compact?: boolean; on
   const hint = current?.id === "near" ? (nearText ? `${nearText} NEAR` : "NEAR") : current?.label ?? null;
   return (
     <div ref={box} className="relative">
-      <button type="button" onClick={() => setOpen((value) => !value)} className={`flex h-10 min-w-0 items-center gap-2 overflow-hidden rounded-full text-left ${current ? `border border-line bg-surface py-1 pl-1 pr-3 ${compact ? "max-w-[46vw] shrink" : "max-w-56"}` : "bg-primary px-4 text-sm font-semibold text-primary-fg"}`}>
+      <button type="button" onClick={() => setOpen((value) => !value)} className={`flex h-11 min-w-0 items-center gap-2 rounded-full text-left ${current ? `border border-line bg-surface pl-1 pr-2 ${compact ? "max-w-[52vw] shrink" : "max-w-64"}` : "bg-primary pl-1.5 pr-4 text-sm font-semibold text-primary-fg"}`}>
         {current ? (
           <>
-            <img src={WALLET_MARK[current.id]} alt="" className="size-8 shrink-0 rounded-full bg-bg object-cover" />
-            <span className="min-w-0 leading-none">
-              <span className="block truncate font-mono text-sm font-semibold">{midAddress(current.address)}</span>
-              <span className="mt-0.5 block truncate text-[10px] font-medium text-muted">{hint}</span>
+            <span className="flex shrink-0 -space-x-2">
+              {rows.slice(0, 3).map((row) => (
+                <img key={row.id} src={WALLET_MARK[row.id]} alt="" className="size-8 rounded-full bg-bg object-cover ring-2 ring-surface" />
+              ))}
             </span>
+            <span className="min-w-0 leading-none">
+              <span className="block truncate font-mono text-sm font-semibold">{rows.length > 1 ? `${rows.length} wallets` : midAddress(current.address)}</span>
+              <span className="mt-0.5 block truncate text-[10px] font-medium text-muted">{rows.length > 1 ? rows.map((row) => row.label).join(" · ") : hint}</span>
+            </span>
+            <ChevronDown className={`size-4 shrink-0 text-muted transition ${open ? "rotate-180" : ""}`} />
           </>
         ) : (
           <>
-            <Wallet className="size-4" />
+            <span className="grid size-8 place-items-center rounded-full bg-black/20">
+              <Wallet className="size-4" />
+            </span>
             {compact ? "Connect" : "Connect wallet"}
           </>
         )}
@@ -533,26 +540,25 @@ function WalletButton({ compact = false, onConnectNew }: { compact?: boolean; on
           </div>
           <ul className="space-y-2 p-2">
             {rows.map((row) => (
-              <li key={row.id} className="rounded-xl bg-surface p-3">
-                <div className="flex items-center gap-3">
-                  <img src={WALLET_MARK[row.id]} alt="" className="size-10 shrink-0 rounded-full bg-bg object-cover" />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5 text-sm font-semibold">
-                      {row.label}
-                      <span className="size-1.5 rounded-full bg-primary" />
-                    </span>
-                    <span className="mt-0.5 block truncate font-mono text-xs text-muted">{midAddress(row.address)}</span>
+              <li key={row.id} className="flex items-center gap-3 rounded-xl bg-surface px-3 py-2.5">
+                <img src={WALLET_MARK[row.id]} alt="" className="size-10 shrink-0 rounded-full bg-bg object-cover" />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5 text-sm font-semibold">
+                    {row.label}
+                    <span className="size-1.5 rounded-full bg-primary" />
                   </span>
-                </div>
+                  <span className="mt-0.5 block truncate font-mono text-xs text-muted">{midAddress(row.address)}</span>
+                </span>
                 <button
                   type="button"
+                  aria-label={`Disconnect ${row.label}`}
                   onClick={() => {
                     if (row.id === "near") disconnect();
                     else disconnectForeign(row.id);
                   }}
-                  className="mt-3 h-8 w-full rounded-lg border border-line text-xs font-medium text-danger"
+                  className="grid size-9 shrink-0 place-items-center rounded-full text-danger hover:bg-danger/10"
                 >
-                  Disconnect
+                  <Unplug className="size-4" />
                 </button>
               </li>
             ))}

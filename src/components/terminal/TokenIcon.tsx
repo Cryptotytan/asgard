@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Check, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { knownLogo, lookupNearToken, searchNearTokens } from "@/lib/dex";
-import { chainByLabel, chainIcon } from "@/lib/chains";
+import { chainIcon } from "@/lib/chains";
 import { CHAIN_ICON, CHAINS, fmt, glyph, px, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 
@@ -86,9 +86,6 @@ export function VerifiedMark({ className }: { className?: string }) {
 export function TokenPicker({
   open,
   balances,
-  walletKind,
-  walletName,
-  heldOnly,
   loadingBalances,
   onClose,
   onPick,
@@ -107,9 +104,6 @@ export function TokenPicker({
   const [looking, setLooking] = useState(false);
   const clock = useDesk((state) => state.clock);
   const needle = query.trim().toLowerCase();
-  useEffect(() => {
-    if (walletKind) setChain("All");
-  }, [walletKind]);
   const tabs = useMemo(() => {
     const present = new Set(TOKENS.filter((token) => token.listed && token.price > 0).map((token) => token.chain));
     const ordered = CHAINS.filter((id) => present.has(id));
@@ -120,17 +114,16 @@ export function TokenPicker({
     () =>
       TOKENS.filter((token) => {
         if (!token.listed || !Number.isFinite(token.price) || token.price <= 0) return false;
-        if (walletKind && chainByLabel(token.chain)?.kind !== walletKind) return false;
         if (chain !== "All" && token.chain !== chain) return false;
-        const held = balances?.[token.symbol] ?? 0;
-        if (walletKind && heldOnly && !needle && held <= 0) return false;
         if (!needle) return true;
         return `${token.symbol} ${token.name} ${token.address ?? ""}`.toLowerCase().includes(needle);
       }).sort((a, b) => {
-        if (walletKind && balances) return (balances[b.symbol] ?? 0) * b.price - (balances[a.symbol] ?? 0) * a.price;
+        const heldUsd = (token: Token) => (balances?.[token.symbol] ?? 0) * (token.price || 0);
+        const byHold = heldUsd(b) - heldUsd(a);
+        if (byHold !== 0) return byHold;
         return b.volN - a.volN || b.liqN - a.liqN;
       }),
-    [balances, chain, clock, heldOnly, needle, walletKind],
+    [balances, chain, clock, needle],
   );
   useEffect(() => {
     if (!open) {
@@ -251,9 +244,7 @@ export function TokenPicker({
                     ? "Reading this wallet…"
                     : needle
                       ? "No token matches that name or contract."
-                      : walletKind
-                        ? `No swappable tokens in ${walletName ?? "this wallet"}.`
-                        : "No tokens on this chain."}
+                      : "No tokens on this chain."}
                 </li>
               )}
             </ul>

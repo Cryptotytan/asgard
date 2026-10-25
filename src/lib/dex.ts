@@ -131,6 +131,7 @@ function publishTradable(map: Map<string, IntentAsset>) {
     token.rails = ["NEAR"];
     token.verified = isCanonical({ symbol: token.symbol, address });
     token.notes = token.verified ? ["Widely used NEAR asset"] : ["Tradable on NEAR Intents"];
+    if (asset.coingeckoId) geckoBySymbol.set(token.symbol, asset.coingeckoId);
   }
 }
 
@@ -163,6 +164,7 @@ function publishForeign(assets: IntentAsset[]) {
     token.rails = [chain];
     token.verified = isMajorAsset(base, chain);
     token.notes = [`Crosschain on ${chain} via NEAR Intents`];
+    if (asset.coingeckoId) geckoBySymbol.set(token.symbol, asset.coingeckoId);
     const icon = knownLogo(base) || foreignIcon(asset.blockchain, asset.contractAddress);
     if (icon) token.icon = preferIcon(token.icon, icon);
   }
@@ -171,15 +173,36 @@ function publishForeign(assets: IntentAsset[]) {
 async function warmLogos(assets: IntentAsset[]) {
   const ids = [...new Set(assets.map((asset) => asset.coingeckoId).filter((id): id is string => Boolean(id)))];
   const images = new Map<string, string>();
+  let changed = false;
   for (let i = 0; i < ids.length; i += 80) {
     const chunk = ids.slice(i, i + 80).join(",");
     const response = await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${encodeURIComponent(chunk)}&per_page=250&sparkline=false`).catch(() => null);
     if (!response?.ok) continue;
-    const rows = (await response.json()) as { id?: string; image?: string }[];
+    const rows = (await response.json()) as { id?: string; image?: string; market_cap?: number; total_volume?: number; price_change_percentage_24h?: number }[];
     for (const row of rows) if (row.id && row.image) images.set(row.id, row.image);
+    for (const row of rows) {
+      if (!row.id) continue;
+      for (const token of TOKENS) {
+        if (geckoBySymbol.get(token.symbol) !== row.id) continue;
+        if (!(token.volN > 0) && row.total_volume && row.total_volume > 0) {
+          token.volN = row.total_volume;
+          token.volume = money(row.total_volume);
+          token.volBy = { m5: token.volBy?.m5 ?? 0, h1: token.volBy?.h1 ?? 0, h6: token.volBy?.h6 ?? 0, h24: row.total_volume };
+        }
+        if (!(token.mcapN > 0) && row.market_cap && row.market_cap > 0) {
+          token.mcapN = row.market_cap;
+          token.mcap = money(row.market_cap);
+        }
+        if (row.price_change_percentage_24h != null && !token.windows?.h24) {
+          const change = row.price_change_percentage_24h;
+          token.change = change;
+          token.windows = { m5: token.windows?.m5 ?? 0, h1: token.windows?.h1 ?? 0, h6: token.windows?.h6 ?? 0, h24: change };
+        }
+        token.score = qualityScore(token) ?? token.score;
+        changed = true;
+      }
+    }
   }
-  if (!images.size) return;
-  let changed = false;
   for (const asset of assets) {
     const image = asset.coingeckoId ? images.get(asset.coingeckoId) : "";
     const token = TOKENS.find((item) => item.assetId === asset.assetId);
@@ -194,6 +217,7 @@ async function warmLogos(assets: IntentAsset[]) {
 }
 let iconAt = 0;
 let discover: string[] = [];
+const geckoBySymbol = new Map<string, string>();
 
 function safeIcon(icon: unknown) {
   if (typeof icon !== "string" || icon.length > 80_000) return "";
@@ -430,12 +454,13 @@ const NATIVE_PAIR: Record<string, string> = {
 async function paintForeignStats() {
   const groups = new Map<string, { symbol: string; address: string }[]>();
   for (const token of TOKENS) {
-    if (!token.listed || token.chain === "NEAR") continue;
-    const slug = DEX_SLUG[token.chain];
+    if (!token.listed) continue;
+    if (token.liqN > 0 && token.volN > 0 && token.txnsN > 0 && token.ageH > 0) continue;
+    const slug = token.chain === "NEAR" ? "near" : DEX_SLUG[token.chain];
     if (!slug) continue;
     const base = token.symbol.split(".")[0].toUpperCase();
     const raw = token.address ?? "";
-    const address = raw && !raw.includes(":") && !raw.endsWith(".near") ? raw : NATIVE_PAIR[`${token.chain}|${base}`];
+    const address = raw && !raw.includes(":") ? raw : NATIVE_PAIR[`${token.chain}|${base}`];
     if (!address) continue;
     const list = groups.get(slug) ?? [];
     list.push({ symbol: token.symbol, address });
@@ -447,24 +472,44 @@ async function paintForeignStats() {
         const chunk = rows.slice(index, index + 30);
         const pairs = await getJson<DexPair[]>(`https://api.dexscreener.com/tokens/v1/${slug}/${chunk.map((row) => row.address).join(",")}`).catch(() => null);
         if (!Array.isArray(pairs)) continue;
-        const best = new Map<string, DexPair>();
-        for (const pair of pairs) {
-          const id = pair.baseToken?.address?.toLowerCase();
-          if (!id) continue;
-          const prev = best.get(id);
-          if (!prev || num(pair.liquidity?.usd) >= num(prev.liquidity?.usd)) best.set(id, pair);
-        }
-        for (const row of chunk) {
-          const pair = best.get(row.address.toLowerCase());
-          const token = TOKENS.find((item) => item.symbol === row.symbol);
-          if (pair && token) applyLiveStats(token, pair);
-        }
+        applyBestPairs(chunk, pairs);
       }
     }),
   );
+  const missing = TOKENS.filter((token) => token.listed && token.address && !token.address.includes(":") && !(token.liqN > 0 && token.txnsN > 0));
+  for (let index = 0; index < missing.length; index += 30) {
+    const chunk = missing.slice(index, index + 30).map((token) => ({ symbol: token.symbol, address: token.address as string }));
+    const pairs = await getJson<DexPair[]>(`https://api.dexscreener.com/latest/dex/tokens/${chunk.map((row) => row.address).join(",")}`).catch(() => null);
+    const list = pairs && Array.isArray((pairs as { pairs?: DexPair[] }).pairs) ? (pairs as { pairs?: DexPair[] }).pairs ?? [] : Array.isArray(pairs) ? pairs : [];
+    if (list.length) applyBestPairs(chunk, list);
+  }
 }
 
-function applyLiveStats(token: (typeof TOKENS)[number], pair: DexPair) {
+function sameAddr(left?: string, right?: string) {
+  if (!left || !right) return false;
+  if (left.startsWith("0x") || left.startsWith("0X") || right.startsWith("0x") || right.startsWith("0X")) return left.toLowerCase() === right.toLowerCase();
+  return left === right;
+}
+
+function applyBestPairs(rows: { symbol: string; address: string }[], pairs: DexPair[]) {
+  const best = new Map<string, { pair: DexPair; score: number; quote: boolean }>();
+  for (const pair of pairs) {
+    for (const row of rows) {
+      const asBase = sameAddr(pair.baseToken?.address, row.address);
+      const asQuote = !asBase && sameAddr(pair.quoteToken?.address, row.address);
+      if (!asBase && !asQuote) continue;
+      const score = num(pair.liquidity?.usd) + (asBase ? 1e12 : 0);
+      const prev = best.get(row.symbol);
+      if (!prev || score > prev.score) best.set(row.symbol, { pair, score, quote: asQuote });
+    }
+  }
+  for (const [symbol, hit] of best) {
+    const token = TOKENS.find((item) => item.symbol === symbol);
+    if (token) applyLiveStats(token, hit.pair, hit.quote);
+  }
+}
+
+function applyLiveStats(token: (typeof TOKENS)[number], pair: DexPair, asQuote = false) {
   const liq = num(pair.liquidity?.usd);
   const vol = windows(pair.volume);
   const change = windows(pair.priceChange);
@@ -481,21 +526,23 @@ function applyLiveStats(token: (typeof TOKENS)[number], pair: DexPair) {
     token.volN = vol.h24;
     token.volume = money(vol.h24);
   }
-  token.windows = change;
-  token.change = change.h24;
+  if (!asQuote) {
+    token.windows = change;
+    token.change = change.h24;
+    if (mcapN > 0) {
+      token.mcapN = mcapN;
+      token.mcap = money(mcapN);
+      token.fdv = num(pair.fdv) > 0 ? money(num(pair.fdv)) : token.mcap;
+    }
+  }
   token.txnsN = buys + sells;
   token.buys = buys;
   token.sells = sells;
   token.txns = token.txnsN > 0 ? token.txnsN.toLocaleString("en-US") : "—";
   if (pair.pairCreatedAt) token.ageH = Math.max(0.05, (Date.now() - pair.pairCreatedAt) / 3_600_000);
-  if (mcapN > 0) {
-    token.mcapN = mcapN;
-    token.mcap = money(mcapN);
-    token.fdv = num(pair.fdv) > 0 ? money(num(pair.fdv)) : token.mcap;
-  }
   token.score = qualityScore(token) ?? token.score;
   const image = safeIcon(pair.info?.imageUrl);
-  if (image) token.icon = preferIcon(token.icon, image);
+  if (image && !asQuote) token.icon = preferIcon(token.icon, image);
 }
 
 function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {

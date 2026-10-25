@@ -1,18 +1,24 @@
 import { useMemo, useState } from "react";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { PnlCard } from "@/components/terminal/PnlCard";
-import { fmt, money, TOKENS, usd } from "@/lib/market";
+import { linkedWallets, useForeign, WALLET_MARK } from "@/lib/foreign-wallet";
+import { fmt, money, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
+import { useHoldings } from "@/lib/wallet-holdings";
 
 const RANGES = ["1D", "7D", "30D", "1Y"] as const;
 const TABS = ["Balances", "Vault", "Lending", "Positions", "History"] as const;
 type Tab = (typeof TABS)[number];
 
 export function PortfolioDesk() {
-  const connected = useDesk((s) => s.connected);
   const accountId = useDesk((s) => s.accountId);
   const connect = useDesk((s) => s.connect);
-  const balances = useDesk((s) => s.balances);
+  const foreign = useForeign();
+  const wallets = linkedWallets(accountId, foreign);
+  const nearHold = useHoldings(wallets.find((wallet) => wallet.id === "near") ?? null);
+  const evmHold = useHoldings(wallets.find((wallet) => wallet.id === "evm") ?? null);
+  const solHold = useHoldings(wallets.find((wallet) => wallet.id === "sol") ?? null);
+  const btcHold = useHoldings(wallets.find((wallet) => wallet.id === "btc") ?? null);
   const vault = useDesk((s) => s.vault);
   const supplied = useDesk((s) => s.supplied);
   const loans = useDesk((s) => s.loans);
@@ -26,13 +32,22 @@ export function PortfolioDesk() {
   const [range, setRange] = useState<(typeof RANGES)[number]>("30D");
   const [tab, setTab] = useState<Tab>("Balances");
 
-  const holdings = useMemo(
-    () =>
-      TOKENS.map((token) => ({ token, amount: balances[token.symbol] ?? 0 }))
-        .filter((row) => row.amount > 1e-8)
-        .sort((a, b) => b.amount * (marks[b.token.symbol] ?? b.token.price) - a.amount * (marks[a.token.symbol] ?? a.token.price)),
-    [balances, marks],
-  );
+  const holdings = useMemo(() => {
+    const rows: { token: Token; amount: number; wallet: string }[] = [];
+    const take = (book: Record<string, number>, label: string) => {
+      for (const [symbol, amount] of Object.entries(book)) {
+        if (amount <= 1e-8) continue;
+        const token = TOKENS.find((item) => item.symbol === symbol);
+        if (!token) continue;
+        rows.push({ token, amount, wallet: label });
+      }
+    };
+    take(nearHold.book, "NEAR");
+    take(evmHold.book, "EVM");
+    take(solHold.book, "Solana");
+    take(btcHold.book, "Bitcoin");
+    return rows.sort((a, b) => b.amount * (marks[b.token.symbol] ?? b.token.price) - a.amount * (marks[a.token.symbol] ?? a.token.price));
+  }, [nearHold.book, evmHold.book, solHold.book, btcHold.book, marks]);
   const walletValue = holdings.reduce((sum, row) => sum + row.amount * (marks[row.token.symbol] ?? row.token.price), 0);
   const vaultRows = useMemo(() => rowsOf(vault, marks), [vault, marks]);
   const lendRows = useMemo(() => rowsOf(supplied, marks), [supplied, marks]);
@@ -52,10 +67,18 @@ export function PortfolioDesk() {
       <section className="panel overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-line px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-sm font-bold text-primary-fg">{(accountId ?? "A").slice(0, 1).toUpperCase()}</span>
+            {wallets.length > 0 ? (
+              <span className="flex shrink-0 -space-x-2">
+                {wallets.map((wallet) => (
+                  <img key={wallet.id} src={WALLET_MARK[wallet.id]} alt="" className="size-10 rounded-full bg-bg object-cover ring-2 ring-surface" />
+                ))}
+              </span>
+            ) : (
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-sm font-bold text-primary-fg">A</span>
+            )}
             <div className="min-w-0 flex-1">
-              <p className="truncate font-semibold">{accountId ? (accountId.length > 18 ? `${accountId.slice(0, 8)}…${accountId.slice(-6)}` : accountId) : "Not connected"}</p>
-              <p className="truncate text-xs text-muted">{connected ? "NEAR mainnet · balances read from the chain" : "Connect a NEAR wallet"}</p>
+              <p className="truncate font-semibold">{wallets.length ? `${wallets.length} wallet${wallets.length === 1 ? "" : "s"} connected` : "Not connected"}</p>
+              <p className="truncate text-xs text-muted">{wallets.length ? wallets.map((wallet) => wallet.label).join(" · ") : "Connect a wallet to read its balances"}</p>
             </div>
           </div>
           <div className="flex w-full rounded-full bg-bg p-0.5 text-xs sm:w-auto sm:text-xs">
@@ -97,11 +120,11 @@ export function PortfolioDesk() {
         </div>
 
         <div className="min-h-40">
-          {!connected ? (
+          {wallets.length === 0 ? (
             <Gate onConnect={connect} />
           ) : (
             <>
-              {tab === "Balances" && <Holdings rows={holdings} wallet={walletValue} empty="Deposit or swap to start. Balances show up here as you trade." />}
+              {tab === "Balances" && <Holdings rows={holdings} wallet={walletValue} empty="Nothing in these wallets yet. Balances are read from each chain you connect." loading={nearHold.loading || evmHold.loading || solHold.loading || btcHold.loading} />}
               {tab === "Vault" && <Book rows={vaultRows} empty="Nothing in the vault yet. Deposits you make in Vault land here." />}
               {tab === "Lending" && (
                 <div>
@@ -167,12 +190,14 @@ function Holdings({
   rows,
   wallet,
   empty,
+  loading,
 }: {
-  rows: { token: (typeof TOKENS)[number]; amount: number }[];
+  rows: { token: Token; amount: number; wallet: string }[];
   wallet: number;
   empty: string;
+  loading?: boolean;
 }) {
-  if (rows.length === 0) return <Empty title="Nothing here yet" body={empty} />;
+  if (rows.length === 0) return <Empty title={loading ? "Reading wallets…" : "Nothing here yet"} body={loading ? "Balances are loaded from each connected chain." : empty} />;
   const marks = useDesk.getState().marks;
   return (
     <ul className="divide-y divide-line px-3 sm:px-4">
@@ -180,7 +205,7 @@ function Holdings({
         const value = row.amount * (marks[row.token.symbol] ?? row.token.price);
         const share = wallet > 0 ? Math.min(100, (value / wallet) * 100) : 0;
         return (
-          <li key={row.token.symbol} className="flex items-center gap-3 py-3">
+          <li key={`${row.wallet}-${row.token.symbol}`} className="flex items-center gap-3 py-3">
             <TokenIcon token={row.token} className="size-9" />
             <span className="min-w-0 flex-1">
               <span className="flex items-baseline justify-between gap-2">
@@ -188,7 +213,7 @@ function Holdings({
                 <span className="font-mono text-sm">{usd(value)}</span>
               </span>
               <span className="mt-0.5 flex items-baseline justify-between gap-2 text-xs text-muted">
-                <span className="truncate">{row.token.name}</span>
+                <span className="truncate">{row.token.chain} · {row.wallet}</span>
                 <span className="shrink-0 font-mono">{fmt(row.amount)}</span>
               </span>
               <span className="mt-2 block h-1 overflow-hidden rounded-full bg-bg">
@@ -242,7 +267,7 @@ function Book({
 function Gate({ onConnect }: { onConnect: () => void }) {
   return (
     <div>
-      <Empty title="Nothing here yet" body="Connect a NEAR wallet to see this." />
+      <Empty title="Nothing here yet" body="Connect a wallet. Balances are read from that chain." />
       <div className="px-3 pb-5 text-center">
         <button type="button" onClick={onConnect} className="h-10 rounded-full bg-primary px-4 text-sm font-semibold text-primary-fg">
           Connect

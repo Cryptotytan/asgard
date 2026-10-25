@@ -111,15 +111,19 @@ export function SwapDesk({ focus }: { focus?: string }) {
   const risk = !sell.verified || !buy.verified;
 
   useEffect(() => {
-    if (!sellActive || chainByLabel(sell.chain)?.kind === sellActive.id) return;
+    if (!sellWalletId) return;
+    const wallet = wallets.find((item) => item.id === sellWalletId);
+    if (!wallet || chainByLabel(tokenBySymbol(sellS).chain)?.kind === wallet.id) return;
     const top = Object.entries(sellHold.book).sort((a, b) => b[1] * (tokenBySymbol(b[0]).price || 0) - a[1] * (tokenBySymbol(a[0]).price || 0))[0];
     if (top) setSellS(top[0]);
-  }, [sellActive?.id, sellHold.book]);
+  }, [sellWalletId]);
   useEffect(() => {
-    if (!buyActive || chainByLabel(buy.chain)?.kind === buyActive.id) return;
+    if (!buyWalletId) return;
+    const wallet = wallets.find((item) => item.id === buyWalletId);
+    if (!wallet || chainByLabel(tokenBySymbol(buyS).chain)?.kind === wallet.id) return;
     const top = Object.entries(buyHold.book).sort((a, b) => b[1] * (tokenBySymbol(b[0]).price || 0) - a[1] * (tokenBySymbol(a[0]).price || 0))[0];
     if (top) setBuyS(top[0]);
-  }, [buyActive?.id, buyHold.book]);
+  }, [buyWalletId]);
 
   useEffect(() => {
     setAcked(false);
@@ -360,7 +364,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
           onClick={() => void submit()}
           className="mt-2 h-10 w-full rounded-xl bg-primary font-semibold text-primary-fg disabled:opacity-40"
         >
-          {settling ? "Settling…" : fetching ? "Fetching quote…" : amountN <= 0 ? "Enter an amount" : !sellActive ? "Connect wallet" : !originConnected ? "Choose a held token" : short ? "Not enough balance" : best && best.impact > slipPct ? "Fee above 5%" : best ? `Bridge via ${best.venue.name}` : "No live quote"}
+          {settling ? "Settling…" : fetching ? "Fetching quote…" : amountN <= 0 ? "Enter an amount" : !sellActive ? "Connect wallet" : !originConnected ? `Connect a ${sell.chain} wallet` : short ? "Not enough balance" : best && best.impact > slipPct ? "Fee above 5%" : best ? `Bridge via ${best.venue.name}` : "No live quote"}
         </button>
         {quoteError && !note && <p className="mt-2 font-mono text-xs text-danger">{quoteError}</p>}
         {note && <p className="mt-3 break-words font-mono text-xs text-primary">{note}</p>}
@@ -370,16 +374,20 @@ export function SwapDesk({ focus }: { focus?: string }) {
         balances={picking === "buy" ? buyHold.book : sellHold.book}
         walletKind={picking === "buy" ? buyActive?.id : sellActive?.id}
         walletName={picking === "buy" ? buyActive?.label : sellActive?.label}
-        heldOnly={picking === "sell"}
         loadingBalances={picking === "buy" ? buyHold.loading : sellHold.loading}
         onClose={() => setPicking(null)}
         onPick={(symbol) => {
+          const next = tokenBySymbol(symbol);
+          const kind = chainByLabel(next.chain)?.kind;
+          const match = wallets.find((wallet) => wallet.id === kind);
           if (picking === "sell") {
             if (symbol === buyS) setBuyS(sellS);
             setSellS(symbol);
+            if (match) setSellWalletId(match.id);
           } else {
             if (symbol === sellS) setSellS(buyS);
             setBuyS(symbol);
+            if (match) setBuyWalletId(match.id);
           }
         }}
       />

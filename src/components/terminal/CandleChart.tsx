@@ -83,11 +83,17 @@ export function CandleChart({
     setYShift(0);
     setHover(null);
   } else if (firstT !== trackedFirst) {
-    if (firstT != null && trackedFirst != null && firstT < trackedFirst && right != null) {
+    if (firstT != null && trackedFirst != null && firstT < trackedFirst) {
       let added = 0;
       while (added < all.length && (all[added]?.t ?? 0) < trackedFirst) added++;
-      viewRight = right + added;
-      setRight(viewRight);
+      if (drag.current) {
+        drag.current.right += added;
+        drag.current.first = firstT;
+      }
+      if (right != null) {
+        viewRight = right + added;
+        setRight(viewRight);
+      }
     }
     setTrackedFirst(firstT);
   }
@@ -103,8 +109,8 @@ export function CandleChart({
 
   function limits(spanNext: number, len: number) {
     const liveEdge = len + RIGHT_GAP;
-    const maxRight = liveEdge + Math.floor(spanNext * 0.4);
-    const minRight = endedRef.current ? Math.min(spanNext, Math.max(liveEdge, 1)) : Math.min(liveEdge, Math.max(8, spanNext - 40));
+    const maxRight = liveEdge + Math.round(spanNext * 0.75);
+    const minRight = endedRef.current ? Math.min(liveEdge, Math.max(8, spanNext)) : Math.min(liveEdge, 8);
     return { liveEdge, maxRight, minRight };
   }
 
@@ -289,12 +295,7 @@ export function CandleChart({
         const dy = event.clientY - drag.current.y;
         const rect = event.currentTarget.getBoundingClientRect();
         const shift = (-dx / Math.max(rect.width, 1)) * spanRef.current;
-        let extra = 0;
-        const seriesNow = seriesRef.current;
-        if (seriesNow.length && (seriesNow[0]?.t ?? 0) < drag.current.first) {
-          while (extra < seriesNow.length && (seriesNow[extra]?.t ?? 0) < drag.current.first) extra++;
-        }
-        commit(spanRef.current, drag.current.right + extra + shift, false);
+        commit(spanRef.current, drag.current.right + shift, false);
         if (Math.abs(dy) > 8) {
           const shiftY = drag.current.yShift + dy / Math.max(rect.height, 1) / Math.max(yScaleRef.current, 0.4);
           setYShift(shiftY);
