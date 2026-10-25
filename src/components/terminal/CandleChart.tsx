@@ -110,18 +110,26 @@ export function CandleChart({
 
   function limits(spanNext: number, len: number) {
     const liveEdge = len + RIGHT_GAP;
-    const maxRight = liveEdge + Math.round(spanNext * 0.75);
-    const minRight = endedRef.current ? Math.min(liveEdge, Math.max(8, spanNext)) : Math.min(liveEdge, 8);
-    return { liveEdge, maxRight, minRight };
+    const rest = liveEdge < spanNext ? spanNext : liveEdge;
+    const slack = Math.round(spanNext * 0.75);
+    const maxRight = Math.max(rest, liveEdge) + slack;
+    const floor = liveEdge < spanNext ? Math.max(1, Math.round(spanNext * 0.12)) : endedRef.current ? Math.max(8, spanNext) : 8;
+    const minRight = Math.min(rest, floor);
+    return { liveEdge, rest, maxRight, minRight };
+  }
+
+  function shownEdge(len = lenRef.current, spanNext = spanRef.current) {
+    if (rightRef.current != null) return rightRef.current;
+    return len + RIGHT_GAP < spanNext ? spanNext : len + RIGHT_GAP;
   }
 
   function commit(nextSpan: number, nextRight: number | null, pin = true) {
     const len = lenRef.current;
     const spanNext = clamp(Math.round(nextSpan), MIN_SPAN, MAX_SPAN);
-    const { liveEdge, maxRight, minRight } = limits(spanNext, len);
+    const { rest, maxRight, minRight } = limits(spanNext, len);
     spanRef.current = spanNext;
     setSpan(spanNext === defaultSpan(frame) ? null : spanNext);
-    if (nextRight == null || (pin && nextRight >= liveEdge)) {
+    if (nextRight == null || (pin && nextRight >= rest - 0.5)) {
       rightRef.current = null;
       setRight(null);
       return;
@@ -135,7 +143,7 @@ export function CandleChart({
     const len = lenRef.current;
     const current = spanRef.current || defaultSpan(frame);
     const next = clamp(Math.round(current * factor), MIN_SPAN, MAX_SPAN);
-    const edge = rightRef.current == null ? len + RIGHT_GAP : rightRef.current;
+    const edge = shownEdge(len, current);
     const left = edge - current;
     const at = clamp(focus, 0, 1);
     commit(next, left + at * current + (1 - at) * next);
@@ -153,7 +161,7 @@ export function CandleChart({
       const rect = node.getBoundingClientRect();
       const spanNow = spanRef.current || defaultSpan(frame);
       const len = lenRef.current;
-      const edge = rightRef.current == null ? len + RIGHT_GAP : rightRef.current;
+      const edge = shownEdge(len, spanNow);
       if (Math.abs(event.deltaX) > Math.abs(event.deltaY) && event.deltaX !== 0) {
         commit(spanNow, edge + (event.deltaX / Math.max(rect.width, 1)) * spanNow, false);
         return;
@@ -177,7 +185,7 @@ export function CandleChart({
       const len = seriesRef.current.length;
       if (len < 2) return false;
       const spanNow = spanRef.current || defaultSpan(frame);
-      const edge = rightRef.current == null ? len + RIGHT_GAP : rightRef.current;
+      const edge = shownEdge(len, spanNow);
       return edge - spanNow < 160;
     };
     if (!near()) return;
@@ -188,9 +196,8 @@ export function CandleChart({
     return () => window.clearInterval(timer);
   }, [all.length, viewRight, wanted, frame, historyEnded, historyTick]);
 
-  const { liveEdge, maxRight, minRight } = limits(wanted, all.length);
-  const followEdge = all.length + RIGHT_GAP < wanted ? wanted : liveEdge;
-  const rightEdge = viewRight == null ? followEdge : clamp(viewRight, minRight, maxRight);
+  const { rest, maxRight, minRight } = limits(wanted, all.length);
+  const rightEdge = viewRight == null ? rest : clamp(viewRight, minRight, maxRight);
   const start = rightEdge - wanted;
   const from = Math.max(0, Math.floor(start));
   const to = Math.min(all.length, Math.ceil(rightEdge));
@@ -282,8 +289,7 @@ export function CandleChart({
     if (pinch.current && pointers.current.size >= 2) {
       const [a, b] = [...pointers.current.values()];
       const dist = Math.max(8, Math.hypot(a.x - b.x, a.y - b.y));
-      const len = lenRef.current;
-      const edge = rightRef.current == null ? len + RIGHT_GAP : rightRef.current;
+      const edge = shownEdge();
       commit(pinch.current.span * (pinch.current.dist / dist), edge, false);
       return;
     }
@@ -298,8 +304,7 @@ export function CandleChart({
         drag.current.x = event.clientX;
         const rect = event.currentTarget.getBoundingClientRect();
         const shift = (-dx / Math.max(rect.width, 1)) * spanRef.current;
-        const len = lenRef.current;
-        const edge = rightRef.current == null ? len + RIGHT_GAP : rightRef.current;
+        const edge = shownEdge();
         commit(spanRef.current, edge + shift, false);
         if (Math.abs(dy) > 8) {
           const shiftY = drag.current.yShift + dy / Math.max(rect.height, 1) / Math.max(yScaleRef.current, 0.4);
@@ -328,7 +333,7 @@ export function CandleChart({
     drag.current = {
       x: event.clientX,
       y: event.clientY,
-      right: rightRef.current == null ? len + RIGHT_GAP : rightRef.current,
+      right: shownEdge(len),
       yScale: yScaleRef.current,
       yShift: yShiftRef.current,
       axis: point.px > plotRight,
@@ -345,8 +350,8 @@ export function CandleChart({
       drag.current = null;
       setDragging(false);
       if (active && !active.axis) {
-        const len = lenRef.current;
-        if (rightRef.current != null && rightRef.current >= len + RIGHT_GAP - 0.5) {
+        const { rest } = limits(spanRef.current, lenRef.current);
+        if (rightRef.current != null && Math.abs(rightRef.current - rest) < 1.5) {
           rightRef.current = null;
           setRight(null);
         }
@@ -366,7 +371,7 @@ export function CandleChart({
   function key(event: KeyboardEvent<HTMLDivElement>) {
     const len = lenRef.current;
     const spanNow = spanRef.current || defaultSpan(frame);
-    const edge = rightRef.current == null ? len + RIGHT_GAP : rightRef.current;
+    const edge = shownEdge(len, spanNow);
     const step = Math.max(1, Math.round(spanNow / 8));
     if (event.key === "ArrowLeft") {
       event.preventDefault();
