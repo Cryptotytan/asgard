@@ -14,7 +14,7 @@ export function ChartDesk({ mode, symbol, onSymbol }: { mode: "spot" | "perp"; s
   const marks = useDesk((s) => s.marks);
   useDesk((s) => s.clock);
   const mark = mode === "perp" ? (marks[token.symbol] ?? token.price) : token.price;
-  const [frame, setFrame] = useState("1D");
+  const [frame, setFrame] = useState("15m");
   const [picker, setPicker] = useState(false);
   const [book, setBook] = useState<"Trades" | "Positions" | "Orders">("Trades");
   const series = liveCandles(symbol, frame);

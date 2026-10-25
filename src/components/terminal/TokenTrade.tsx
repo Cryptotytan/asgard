@@ -49,12 +49,13 @@ export function TokenTrade({
   const mark = useDesk((s) => s.marks[symbol]);
   useDesk((s) => s.clock);
   const token = tokenBySymbol(symbol);
-  const [frame, setFrame] = useState<(typeof FRAMES)[number]>("1D");
+  const [frame, setFrame] = useState<(typeof FRAMES)[number]>("15m");
   const [scale, setScale] = useState<"price" | "mcap">("price");
   const [book, setBook] = useState<(typeof BOOKS)[number]>("Trades");
   const scanning = false;
   const [hover, setHover] = useState<ChartHover | null>(null);
 
+  useEffect(() => setFrame("15m"), [symbol]);
   useEffect(() => setHover(null), [frame, scale]);
 
   useEffect(() => {
@@ -291,7 +292,7 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
                     setQuery("");
                   }}
                   className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-surface-2"
-                  onPointerDown={() => void loadCandles(item.symbol, "1D")}
+                  onPointerDown={() => void loadCandles(item.symbol, "15m")}
                 >
                   <TokenIcon token={item} />
                   <span className="min-w-0 flex-1">

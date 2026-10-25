@@ -907,7 +907,7 @@ export function startLiveFeed() {
     if (document.visibilityState === "visible") run();
   });
   window.setTimeout(() => {
-    void loadCandles("NEAR", "1D").catch(() => undefined);
+    void loadCandles("NEAR", "15m").catch(() => undefined);
     void loadCandles("NEAR", "5m").catch(() => undefined);
   }, 400);
 }
