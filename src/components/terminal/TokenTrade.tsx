@@ -2,11 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Search, ShieldAlert } from "lucide-react";
 import { CandleChart, type ChartHover } from "@/components/terminal/CandleChart";
 import { SecurityGate } from "@/components/terminal/SecurityGate";
-import { TokenIcon, VerifiedMark } from "@/components/terminal/TokenIcon";
+import { TokenIcon, VerifiedMark, ChainBadge } from "@/components/terminal/TokenIcon";
 import { PnlCard } from "@/components/terminal/PnlCard";
 import {
   canPerp,
-  CHAIN_ICON,
   displayName,
   fmt,
   isHoneypot,
@@ -20,7 +19,7 @@ import {
   type Token,
 } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
-import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, watchCandles, type HolderRow } from "@/lib/live";
+import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, watchCandles, type HolderBand, type HolderRow } from "@/lib/live";
 import { searchTokens } from "@/lib/dex";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 
@@ -271,7 +270,7 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
             <ChevronDown className={`size-4 text-muted ${open ? "rotate-180" : ""}`} />
           </span>
           <span className="flex items-center gap-1 truncate text-xs text-muted">
-            <img src={CHAIN_ICON[token.chain]} alt="" className="size-3.5 rounded-full object-cover" />
+            <ChainBadge chain={token.chain} />
             {token.chain}
           </span>
         </span>
@@ -307,7 +306,7 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
                       {item.verified && <VerifiedMark />}
                     </span>
                     <span className="flex items-center gap-1 truncate text-xs text-muted">
-                      <img src={CHAIN_ICON[item.chain]} alt="" className="size-3.5 shrink-0 rounded-full object-cover" />
+                      <ChainBadge chain={item.chain} />
                       {item.chain}
                     </span>
                   </span>
@@ -357,7 +356,7 @@ function SessionHistory() {
 
 function Trades({ prints, symbol }: { prints: Print[]; symbol: string }) {
   if (prints.length === 0) {
-    return <p className="py-6 text-sm text-muted">No recent NEAR transfers for {symbol} yet. The tape reads NearBlocks, not a simulated book.</p>;
+    return <p className="py-6 text-sm text-muted">No recent trades published for {symbol} yet.</p>;
   }
   const mobile = prints.slice(0, 4);
   return (
@@ -463,23 +462,25 @@ function Orders({ symbol }: { symbol: string }) {
 
 function Holders({ token }: { token: Token }) {
   const [rows, setRows] = useState<HolderRow[] | null>(null);
+  const [bands, setBands] = useState<HolderBand[]>([]);
   const [top10, setTop10] = useState<number | null>(null);
+  const [count, setCount] = useState<number | null>(null);
   const [miss, setMiss] = useState(false);
   useEffect(() => {
     let cancel = false;
     setRows(null);
+    setBands([]);
     setTop10(null);
+    setCount(null);
     setMiss(false);
-    if (!token.address && token.symbol !== "NEAR" && token.symbol !== "USDC" && token.symbol !== "ETH" && token.symbol !== "wBTC" && token.symbol !== "USDT" && token.symbol !== "STNEAR" && token.symbol !== "AURORA") {
-      setRows([]);
-      setMiss(true);
-      return;
-    }
     void loadHolders(token.symbol, token.address)
       .then((result) => {
         if (cancel) return;
         setRows(result.rows);
+        setBands(result.bands);
         setTop10(result.top10);
+        setCount(result.count);
+        setMiss(result.rows.length === 0 && result.bands.length === 0 && result.count == null);
       })
       .catch(() => {
         if (!cancel) {
@@ -491,17 +492,29 @@ function Holders({ token }: { token: Token }) {
       cancel = true;
     };
   }, [token.address, token.symbol]);
-  if (!rows) return <p className="py-6 text-sm text-muted">Reading holders from NEAR mainnet…</p>;
-  if (rows.length === 0) {
-    return <p className="py-6 text-sm text-muted">{miss ? "This token has no NEAR contract on the live feed, so holders cannot be read." : "NEAR did not return a holder list for this contract."}</p>;
-  }
+  if (!rows) return <p className="py-6 text-sm text-muted">Reading holders…</p>;
+  if (miss) return <p className="py-6 text-sm text-muted">No holder list has been published for this token.</p>;
   return (
     <div className="py-2">
       <p className="mb-2 text-xs text-muted">
+        {count != null ? `${count.toLocaleString("en-US")} holders. ` : ""}
         {top10 == null || top10 > 100
-          ? "Top accounts. Indexed balances exceed the published supply, so a concentration total is not shown."
+          ? rows.length
+            ? "Top accounts. Indexed balances exceed the published supply, so a concentration total is not shown."
+            : "Holder distribution is published without individual accounts."
           : `Top 10 hold ${top10.toFixed(1)}% of supply.`}
       </p>
+      {bands.length > 0 && (
+        <ul className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {bands.map((band) => (
+            <li key={band.label} className="rounded-lg border border-line px-2 py-1.5">
+              <p className="text-[10px] uppercase text-muted">{band.label}</p>
+              <p className="font-mono text-sm">{band.pct.toFixed(1)}%</p>
+            </li>
+          ))}
+        </ul>
+      )}
+      {rows.length > 0 && (
       <table className="w-full table-fixed border-collapse text-xs">
         <colgroup>
           <col />
@@ -527,6 +540,7 @@ function Holders({ token }: { token: Token }) {
           ))}
         </tbody>
       </table>
+      )}
     </div>
   );
 }

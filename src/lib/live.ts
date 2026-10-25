@@ -326,10 +326,17 @@ async function geckoGet(url: string) {
   return response.json() as Promise<Record<string, unknown>>;
 }
 
+const poolCache = new Map<string, string>();
+
 async function geckoPool(network: string, address: string) {
+  const key = `${network}:${address}`;
+  const cached = poolCache.get(key);
+  if (cached) return cached;
   const body = await geckoGet(`https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${encodeURIComponent(address)}/pools?page=1`);
   const rows = (body as { data?: { attributes?: { address?: string } }[] } | null)?.data;
-  return rows?.[0]?.attributes?.address ?? "";
+  const pool = rows?.[0]?.attributes?.address ?? "";
+  if (pool) poolCache.set(key, pool);
+  return pool;
 }
 
 async function geckoBars(network: string, pool: string, frame: string, before?: number) {
@@ -351,6 +358,7 @@ async function loadGeckoBook(symbol: string, frame: string, book: Book) {
   if (!pool) return false;
   const bars = await geckoBars(network, pool, frame);
   if (bars.length < 2) return false;
+  if (book.id && !book.id.startsWith("gecko:") && book.points.length > 1) return false;
   book.id = `gecko:${network}:${pool}`;
   book.bars = mergeBars(book.bars, bars);
   book.points = book.bars.map((bar) => ({ timestamp: bar.t ?? 0, price: bar.c }));
@@ -367,21 +375,44 @@ async function fetchCandles(symbol: string, frame: string, key: string) {
     books.set(key, book);
   }
   if (!book.id) {
-    for (const id of llamaCandidates(symbol)) {
-      const start = Math.max(ORIGIN, now - PAGE * plan.step);
-      const part = await llamaSeries(id, start, plan.period, plan.search);
-      if (!part || part.length < 2) continue;
-      book.id = id;
-      book.from = start;
-      book.points = mergePoints([book.points, part]);
-      break;
+    const primary = llamaCandidates(symbol)[0] ?? "";
+    const start = Math.max(ORIGIN, now - PAGE * plan.step);
+    let shown = false;
+    const show = () => {
+      if ((book.bars && book.bars.length > 1) || book.points.length > 1) {
+        shown = true;
+        publishBook(key, book);
+      }
+    };
+    await Promise.all([
+      (async () => {
+        if (!primary) return;
+        const part = await llamaSeries(primary, start, plan.period, plan.search);
+        if (!part || part.length < 2 || book.id.startsWith("gecko:")) return;
+        book.id = primary;
+        book.from = start;
+        book.points = mergePoints([book.points, part]);
+        book.bars = undefined;
+        show();
+      })(),
+      (async () => {
+        const found = await loadGeckoBook(symbol, frame, book);
+        if (found && !shown) show();
+      })(),
+    ]);
+    if (!shown && primary) {
+      for (const id of llamaCandidates(symbol).slice(1, 3)) {
+        const part = await llamaSeries(id, start, plan.period, plan.search);
+        if (!part || part.length < 2) continue;
+        book.id = id;
+        book.from = start;
+        book.points = mergePoints([book.points, part]);
+        book.bars = undefined;
+        show();
+        break;
+      }
     }
-    if (!book.id || book.points.length < 2) {
-      const found = await loadGeckoBook(symbol, frame, book);
-      if (!found) return candles.get(key) ?? [];
-      return publishBook(key, book);
-    }
-    return publishBook(key, book);
+    return candles.get(key) ?? [];
   }
   if (book.id.startsWith("gecko:")) {
     const pool = book.id.split(":").slice(2).join(":");
@@ -499,24 +530,40 @@ function publish(marks: Record<string, number>) {
 }
 
 export type HolderRow = { account: string; amount: number; share: number | null };
+export type HolderBand = { label: string; pct: number };
 
-export async function loadHolders(symbol: string, address?: string): Promise<{ rows: HolderRow[]; top10: number | null }> {
-  const contract = address || CONTRACTS[symbol] || "";
-  if (!contract) return { rows: [], top10: null };
-  const [holdersRes, supply, decimals] = await Promise.all([
-    fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(contract)}/holders?page=1&per_page=10`).catch(() => null),
-    ftSupplyRaw(contract),
-    ftDecimals(contract),
+export async function loadHolders(symbol: string, address?: string): Promise<{ rows: HolderRow[]; top10: number | null; count: number | null; bands: HolderBand[] }> {
+  const token = TOKENS.find((item) => item.symbol === symbol);
+  const contract = address || token?.address || CONTRACTS[symbol] || "";
+  const near = !token || token.chain === "NEAR";
+  const network = token ? GECKO_NET[token.chain] : "";
+  const raw = contract && !contract.includes(":") ? (contract.startsWith("0x") ? contract.toLowerCase() : contract) : "";
+  const [holdersRes, supply, decimals, info] = await Promise.all([
+    near && contract ? fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(contract)}/holders?page=1&per_page=10`).catch(() => null) : Promise.resolve(null),
+    near && contract ? ftSupplyRaw(contract) : Promise.resolve("0"),
+    near && contract ? ftDecimals(contract) : Promise.resolve(0),
+    network && raw ? geckoGet(`https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${encodeURIComponent(raw)}/info`) : Promise.resolve(null),
   ]);
   const body = holdersRes && holdersRes.ok ? ((await holdersRes.json()) as { holders?: { account?: string; amount?: string }[] }) : {};
   const rows = (body.holders ?? [])
     .map((row) => {
-      const raw = (row.amount ?? "0").replace(/\D/g, "") || "0";
-      return { account: row.account || "—", amount: humanRaw(raw, decimals), share: sharePct(raw, supply) };
+      const rawAmount = (row.amount ?? "0").replace(/\D/g, "") || "0";
+      return { account: row.account || "—", amount: humanRaw(rawAmount, decimals), share: sharePct(rawAmount, supply) };
     })
     .filter((row) => row.amount > 0);
-  const top10 = rows.some((row) => row.share != null) ? rows.reduce((sum, row) => sum + (row.share ?? 0), 0) : null;
-  return { rows, top10 };
+  const holders = (info as { data?: { attributes?: { holders?: { count?: number; distribution_percentage?: Record<string, string> } } } } | null)?.data?.attributes?.holders;
+  const dist = holders?.distribution_percentage ?? {};
+  const bands = [
+    ["Top 10", dist.top_10],
+    ["11–20", dist["11_20"] ?? dist["11_30"]],
+    ["21–40", dist["21_40"]],
+    ["Rest", dist.rest],
+  ]
+    .map(([label, value]) => ({ label: label as string, pct: Number(value) }))
+    .filter((band) => band.label && band.pct > 0);
+  const top10 = rows.some((row) => row.share != null) ? rows.reduce((sum, row) => sum + (row.share ?? 0), 0) : bands.find((band) => band.label === "Top 10")?.pct ?? null;
+  const count = Number(holders?.count);
+  return { rows, top10, count: count > 0 ? count : null, bands };
 }
 
 async function ftView(contract: string, method: string) {
@@ -667,32 +714,86 @@ function shortAccount(id: string) {
   return `${id.slice(0, 6)}…${id.slice(-4)}`;
 }
 
-export async function loadPrints(symbol: string) {
-  const contract = CONTRACTS[symbol];
-  if (!contract) {
-    prints.set(symbol, []);
-    return [];
+function agoIso(stamp: string) {
+  const ms = Date.parse(stamp);
+  if (!Number.isFinite(ms)) return "—";
+  const min = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  if (min < 1) return "now";
+  if (min < 60) return `${min}m`;
+  const hours = Math.round(min / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+function sameToken(left: string, right: string) {
+  if (left.startsWith("0x") || right.startsWith("0x")) return left.toLowerCase() === right.toLowerCase();
+  return left === right;
+}
+
+async function poolPrints(symbol: string): Promise<Print[]> {
+  const token = TOKENS.find((item) => item.symbol === symbol);
+  const network = token ? GECKO_NET[token.chain] : "";
+  const raw = token?.address ?? "";
+  if (!network || !raw || raw.includes(":")) return [];
+  const address = raw.startsWith("0x") ? raw.toLowerCase() : raw;
+  const pool = await geckoPool(network, address);
+  if (!pool) return [];
+  const body = await geckoGet(`https://api.geckoterminal.com/api/v2/networks/${network}/pools/${pool}/trades`);
+  const rows = (body as { data?: { attributes?: Record<string, string> }[] } | null)?.data ?? [];
+  const prints: Print[] = [];
+  for (const row of rows) {
+    const trade = row.attributes ?? {};
+    const to = trade.to_token_address ?? "";
+    const from = trade.from_token_address ?? "";
+    const buying = Boolean(to) && sameToken(to, address);
+    const selling = Boolean(from) && sameToken(from, address);
+    if (!buying && !selling) continue;
+    const amount = Number(buying ? trade.to_token_amount : trade.from_token_amount);
+    const price = Number(buying ? trade.price_to_in_usd : trade.price_from_in_usd);
+    const usd = Number(trade.volume_in_usd);
+    if (!(amount > 0)) continue;
+    prints.push({
+      age: agoIso(trade.block_timestamp ?? ""),
+      side: buying ? "Buy" : "Sell",
+      amount,
+      usd: Number.isFinite(usd) ? usd : 0,
+      price: Number.isFinite(price) ? price : 0,
+      trader: shortAccount(trade.tx_from_address ?? "—"),
+    });
+    if (prints.length >= 16) break;
   }
-  const response = await fetch(`https://api.nearblocks.io/v1/account/${contract}/ft-txns?per_page=16`);
-  if (!response.ok) return prints.get(symbol) ?? [];
-  const body = (await response.json()) as {
-    txns?: { delta_amount?: string; block_timestamp?: string; involved_account_id?: string; ft?: { decimals?: number; symbol?: string } }[];
-  };
-  const price = TOKENS.find((token) => token.symbol === symbol)?.price ?? 0;
-  const rows: Print[] = (body.txns ?? []).slice(0, 16).map((tx) => {
-    const decimals = tx.ft?.decimals ?? 0;
-    const raw = tx.delta_amount ?? "0";
-    const amount = Number(raw.replace("-", "")) / 10 ** decimals;
-    const side = raw.startsWith("-") ? "Sell" : "Buy";
-    return {
-      age: tx.block_timestamp ? agoFrom(tx.block_timestamp) : "—",
-      side,
-      amount: Number.isFinite(amount) ? amount : 0,
-      usd: Number.isFinite(amount) ? amount * price : 0,
-      price,
-      trader: shortAccount(tx.involved_account_id ?? contract),
-    } satisfies Print;
-  });
+  return prints;
+}
+
+export async function loadPrints(symbol: string) {
+  const token = TOKENS.find((item) => item.symbol === symbol);
+  const contract = token?.chain === "NEAR" ? token.address || CONTRACTS[symbol] || "" : CONTRACTS[symbol] || "";
+  const [pool, response] = await Promise.all([
+    poolPrints(symbol).catch(() => [] as Print[]),
+    contract ? fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(contract)}/txns?page=1&per_page=16`).catch(() => null) : Promise.resolve(null),
+  ]);
+  const nearRows: Print[] = [];
+  if (response && response.ok) {
+    const body = (await response.json()) as {
+      txns?: { delta_amount?: string; block_timestamp?: string; involved_account_id?: string; ft?: { decimals?: number } }[];
+    };
+    const price = token?.price ?? 0;
+    for (const tx of (body.txns ?? []).slice(0, 16)) {
+      const decimals = tx.ft?.decimals ?? 0;
+      const raw = tx.delta_amount ?? "0";
+      const amount = Number(raw.replace("-", "")) / 10 ** (Number.isFinite(decimals) ? decimals : 0);
+      if (!(amount > 0)) continue;
+      nearRows.push({
+        age: tx.block_timestamp ? agoFrom(tx.block_timestamp) : "—",
+        side: raw.startsWith("-") ? "Sell" : "Buy",
+        amount,
+        usd: amount * price,
+        price,
+        trader: shortAccount(tx.involved_account_id ?? contract),
+      });
+    }
+  }
+  const rows = (pool.length ? pool : nearRows).slice(0, 16);
   prints.set(symbol, rows);
   useDesk.setState((state) => ({ clock: state.clock + 1 }));
   return rows;

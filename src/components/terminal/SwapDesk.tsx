@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowDownUp, ChevronDown, ShieldAlert } from "lucide-react";
-import { TokenIcon, TokenPicker, VerifiedMark } from "@/components/terminal/TokenIcon";
+import { TokenIcon, TokenPicker, VerifiedMark, ChainBadge } from "@/components/terminal/TokenIcon";
 import { linkedWallets, useForeign, WALLET_MARK, type LinkedWallet } from "@/lib/foreign-wallet";
-import { canSign, chainByLabel, chainIcon, validAddress } from "@/lib/chains";
-import { CHAIN_ICON, fmt, scoreLabel, tokenBySymbol, tokenLabel, usd } from "@/lib/market";
+import { canSign, chainByLabel, validAddress } from "@/lib/chains";
+import { fmt, scoreLabel, tokenBySymbol, tokenLabel, usd } from "@/lib/market";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 import { useDesk } from "@/lib/store";
 import { useHoldings } from "@/lib/wallet-holdings";
@@ -446,7 +446,7 @@ function SwapRow({
             <span className="min-w-0 text-left leading-tight">
               <span className="block truncate text-sm font-semibold">{tokenLabel(token)}</span>
               <span className="flex items-center gap-1 truncate text-[10px] text-muted">
-                <img src={CHAIN_ICON[token.chain] || chainIcon(token.chain)} alt="" className="size-3 shrink-0 rounded-full object-cover" />
+                <ChainBadge chain={token.chain} className="size-3" />
                 {token.chain}
               </span>
             </span>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronDown, Search, Unplug, Wallet } from "lucide-react";
+import { ChainBadge, TokenIcon } from "@/components/terminal/TokenIcon";
 import { LendDesk } from "@/components/terminal/LendDesk";
 import { Markets } from "@/components/terminal/Markets";
 import { PortfolioDesk } from "@/components/terminal/PortfolioDesk";
@@ -8,7 +9,6 @@ import { SwapDesk } from "@/components/terminal/SwapDesk";
 import { TokenTrade } from "@/components/terminal/TokenTrade";
 import { TrackerDesk } from "@/components/terminal/TrackerDesk";
 import { VaultDesk } from "@/components/terminal/VaultDesk";
-import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { canPerp, fmt, money, sealMajors, tokenBySymbol, TOKENS } from "@/lib/market";
 import { setWalletOpener, useDesk } from "@/lib/store";
 import { startLiveFeed } from "@/lib/live";
@@ -431,6 +431,7 @@ function WalletSheet({
                 <button type="button" onClick={() => onForeign(chain.kind)} className="min-w-0 flex-1 text-left">
                   <span className="flex items-center gap-1.5 text-[15px] font-semibold">
                     {chain.name}
+                    <ChainBadge chain={chain.kind === "sol" ? "Solana" : "Ethereum"} className="size-4" />
                     {chain.address && <span className="size-1.5 rounded-full bg-[#00ec97]" />}
                   </span>
                   <span className="mt-0.5 block truncate font-mono text-[11px] text-[#8d938c]">{chain.address ? midAddress(chain.address) : chain.note}</span>
@@ -553,6 +554,7 @@ function WalletButton({ compact = false, onConnectNew }: { compact?: boolean; on
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5 text-sm font-semibold">
                     {row.label}
+                    <ChainBadge chain={row.id === "near" ? "NEAR" : row.id === "sol" ? "Solana" : row.id === "btc" ? "Bitcoin" : "Ethereum"} className="size-4" />
                     <span className="size-1.5 rounded-full bg-primary" />
                   </span>
                   <span className="mt-1 block truncate rounded-lg bg-bg px-2 py-1 font-mono text-xs text-muted">{midAddress(row.address)}</span>

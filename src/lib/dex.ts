@@ -76,7 +76,6 @@ type DexPair = {
   info?: { imageUrl?: string };
 };
 
-const MEME_SEEDS = ["meme-cooking", "nearlytrade", "justhoot", "shitzu", "blackdragon", "tkn.near", "neko", "launchpad", "marmaj"];
 const memeHits = new Set<string>();
 
 export let marketsSynced = false;
@@ -97,31 +96,49 @@ function isNearMeme(address: string) {
 }
 
 async function pullNearMemes(take: (pair: DexPair) => void, seen: Set<string>) {
-  const searches = await Promise.all(
-    MEME_SEEDS.map((q) => getJson<{ pairs?: DexPair[] }>(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(q)}`).catch(() => null)),
-  );
+  const queries = ["meme", "shitzu", "blackdragon", "nearmeme", "ref", "pump", "dog", "pepe"];
+  const [top, latest, profiles, ...searches] = await Promise.all([
+    getJson<{ chainId?: string; tokenAddress?: string; icon?: string }[]>("https://api.dexscreener.com/token-boosts/top/v1").catch(() => null),
+    getJson<{ chainId?: string; tokenAddress?: string; icon?: string }[]>("https://api.dexscreener.com/token-boosts/latest/v1").catch(() => null),
+    getJson<{ chainId?: string; tokenAddress?: string; icon?: string }[]>("https://api.dexscreener.com/token-profiles/latest/v1").catch(() => null),
+    ...queries.map((q) => getJson<{ pairs?: DexPair[] }>(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(q)}`).catch(() => null)),
+  ]);
+  const icons = new Map<string, string>();
+  const wanted: string[] = [];
+  const pushAddress = (address: string, icon?: string) => {
+    if (!address || blockedMeme(address) || seen.has(address)) return;
+    memeHits.add(address.toLowerCase());
+    if (icon) icons.set(address.toLowerCase(), icon);
+    if (!wanted.some((item) => item.toLowerCase() === address.toLowerCase())) wanted.push(address);
+  };
+  for (const row of [top, latest, profiles].flatMap((rows) => rows ?? [])) {
+    if (row.chainId !== "near" || !row.tokenAddress) continue;
+    pushAddress(row.tokenAddress, row.icon);
+  }
   for (const body of searches) {
     for (const pair of body?.pairs ?? []) {
-      if (pair.chainId && pair.chainId !== "near") continue;
+      if (pair.chainId !== "near") continue;
       const address = pair.baseToken?.address;
       if (!address || blockedMeme(address)) continue;
       memeHits.add(address.toLowerCase());
+      const icon = safeIcon(pair.info?.imageUrl);
+      if (icon) pair.info = { ...pair.info, imageUrl: icon };
       take(pair);
     }
   }
-  const known = iconBook ? [...iconBook.keys()] : Object.keys((await getJson<Record<string, unknown>>(REF).catch(() => null)) ?? {});
-  const extra = known.filter((address) => memeHost(address) && !seen.has(address)).slice(0, 180);
-  for (const address of extra) memeHits.add(address.toLowerCase());
   const chunks: string[] = [];
-  for (let i = 0; i < extra.length; i += 30) chunks.push(extra.slice(i, i + 30).join(","));
-  for (let i = 0; i < chunks.length; i += 4) {
-    const batch = await Promise.all(chunks.slice(i, i + 4).map((chunk) => getJson<DexPair[]>(`${TOKENS_API}/${chunk}`).catch(() => null)));
-    for (const rows of batch) {
-      for (const pair of Array.isArray(rows) ? rows : []) {
-        const address = pair.baseToken?.address;
-        if (!address || !isNearMeme(address)) continue;
-        take(pair);
+  for (let i = 0; i < wanted.length && i < 150; i += 30) chunks.push(wanted.slice(i, i + 30).join(","));
+  const batches = await Promise.all(chunks.map((chunk) => getJson<DexPair[]>(`${TOKENS_API}/${chunk}`).catch(() => null)));
+  for (const rows of batches) {
+    for (const pair of Array.isArray(rows) ? rows : []) {
+      const address = pair.baseToken?.address;
+      if (!address || blockedMeme(address)) continue;
+      memeHits.add(address.toLowerCase());
+      if (!pair.info?.imageUrl) {
+        const icon = icons.get(address.toLowerCase());
+        if (icon) pair.info = { ...(pair.info ?? {}), imageUrl: icon };
       }
+      take(pair);
     }
   }
 }
@@ -285,10 +302,10 @@ export function knownLogo(symbol: string) {
 }
 
 export function iconFor(address: string | undefined, symbol: string, dexImage?: string) {
+  const dex = safeIcon(dexImage);
+  if (dex && !dex.includes("cdn.dexscreener.com/tokens/") && !dex.includes("dd.dexscreener.com/ds-data/tokens/")) return dex;
   const local = knownLogo(symbol.split(".")[0] ?? symbol) || knownLogo(symbol);
   if (local) return local;
-  const dex = safeIcon(dexImage);
-  if (dex && !dex.includes("cdn.dexscreener.com/tokens/")) return dex;
   const listed = address ? safeIcon(iconBook?.get(address)) : "";
   if (listed) return listed;
   return "";
@@ -835,7 +852,7 @@ function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
     token.address = address;
     token.price = price;
     token.chain = "NEAR";
-    token.icon = preferIcon(token.icon, icon || undefined);
+    token.icon = dexImage || preferIcon(token.icon, icon || undefined);
     token.tag = base.name || token.tag;
     token.change = change.h24;
     token.windows = change;

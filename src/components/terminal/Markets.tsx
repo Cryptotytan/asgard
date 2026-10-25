@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Star, X } from "lucide-react";
-import { TokenIcon, VerifiedMark } from "@/components/terminal/TokenIcon";
+import { TokenIcon, VerifiedMark, ChainBadge } from "@/components/terminal/TokenIcon";
 import {
   ageLabel,
   CHAIN_ICON,
@@ -235,7 +235,7 @@ function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowPro
             <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
               <span>{ageLabel(token.ageH)}</span>
               <span className="inline-flex items-center rounded bg-surface-2 p-0.5">
-                <img src={CHAIN_ICON[token.chain] || chainIcon(token.chain)} alt={token.chain} className="size-3.5 rounded-full bg-bg object-cover" />
+                <ChainBadge chain={token.chain} />
               </span>
               <IconButton
                 label={starred ? "Unstar" : "Star"}
@@ -321,7 +321,7 @@ function MobileRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowProp
           </span>
           <span className="block truncate text-xs text-muted">{token.tag}</span>
           <span className="mt-0.5 flex items-center gap-1 text-xs text-muted">
-            {ageLabel(token.ageH)} · <img src={CHAIN_ICON[token.chain] || chainIcon(token.chain)} alt={token.chain} className="size-3.5 rounded-full bg-bg object-cover" />
+            {ageLabel(token.ageH)} · <ChainBadge chain={token.chain} />
           </span>
         </span>
         <span className="text-right font-mono">

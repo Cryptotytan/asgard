@@ -17,6 +17,15 @@ if (typeof window !== "undefined") {
   }
 }
 
+export function ChainBadge({ chain, className = "size-3.5" }: { chain: string; className?: string }) {
+  const [failed, setFailed] = useState(false);
+  const src = CHAIN_ICON[chain] || chainIcon(chain);
+  if (!src || failed) {
+    return <span className={cn("grid shrink-0 place-items-center rounded-full bg-surface-2 text-[8px] font-semibold", className)}>{chain.slice(0, 1)}</span>;
+  }
+  return <img src={src} alt="" onError={() => setFailed(true)} className={cn("shrink-0 rounded-full bg-bg object-cover", className)} />;
+}
+
 export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "symbol" | "address"> & { chain?: string }; className?: string }) {
   const seen = useRef(token.symbol + token.icon + (token.chain ?? ""));
   const [turn, setTurn] = useState<"a" | "b" | null>(null);
@@ -195,7 +204,7 @@ export function TokenPicker({
                         {token.verified && <VerifiedMark />}
                       </span>
                       <span className="flex items-center gap-1 truncate text-xs text-muted">
-                        <img src={CHAIN_ICON[token.chain]} alt="" className="size-3.5 shrink-0 rounded-full object-cover" />
+                        <ChainBadge chain={token.chain} />
                         {token.chain}
                       </span>
                     </span>

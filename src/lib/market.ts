@@ -109,6 +109,7 @@ export const CHAIN_ICON: Record<string, string> = {
   Aleo: "/chains/aleo.png",
   Monad: "/chains/monad.png",
   Plasma: "/chains/plasma.png",
+  ADI: "/chains/adi.png",
   Abstract: "/chains/abstract.png",
   Hyperliquid: "/chains/hyperliquid.png",
   Hood: "/chains/hyperliquid.png",
@@ -416,7 +417,7 @@ function sameTokenAddress(left?: string, right?: string) {
 
 export function preferIcon(current: string, incoming?: string) {
   if (!incoming || incoming.startsWith("javascript:") || incoming.startsWith("data:text")) return current;
-  if (iconRank(incoming) >= iconRank(current) && iconRank(incoming) > 0) return incoming;
+  if (iconRank(incoming) > iconRank(current) && iconRank(incoming) > 0) return incoming;
   return current;
 }
 
