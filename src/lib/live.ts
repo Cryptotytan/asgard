@@ -236,15 +236,22 @@ function enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
   return run;
 }
 
+const llamaFlight = new Map<string, Promise<Point[] | null>>();
+
 async function llamaSeries(id: string, start: number, period: string, search: number, span = PAGE) {
-  const response = await fetch(`${LLAMA}/chart/${id}?start=${Math.floor(start)}&span=${span}&period=${period}&searchWidth=${search}`, {
-    signal: AbortSignal.timeout(8000),
-  }).catch(() => null);
-  if (!response || response.status === 429 || response.status >= 500) return null;
-  if (!response.ok) return [] as Point[];
-  const body = (await response.json()) as { coins?: Record<string, { prices?: Point[] }> };
-  const coin = body.coins?.[id] ?? Object.values(body.coins ?? {})[0];
-  return coin?.prices ?? [];
+  const url = `${LLAMA}/chart/${id}?start=${Math.floor(start)}&span=${span}&period=${period}&searchWidth=${search}`;
+  const pending = llamaFlight.get(url);
+  if (pending) return pending;
+  const job = (async () => {
+    const response = await fetch(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+    if (!response || response.status === 429 || response.status >= 500) return null;
+    if (!response.ok) return [] as Point[];
+    const body = (await response.json()) as { coins?: Record<string, { prices?: Point[] }> };
+    const coin = body.coins?.[id] ?? Object.values(body.coins ?? {})[0];
+    return coin?.prices ?? [];
+  })().finally(() => llamaFlight.delete(url));
+  llamaFlight.set(url, job);
+  return job;
 }
 
 async function earliest(id: string) {
@@ -278,10 +285,63 @@ function mergePoints(parts: Point[][]) {
 
 function publishBook(key: string, book: Book) {
   const next = book.bars && book.bars.length > 1 ? book.bars : book.points.length > 1 ? toCandles(book.points) : [];
+  if (next.length < 2) return next;
   candles.set(key, next);
   candleAt.set(key, Date.now());
+  const split = key.lastIndexOf(":");
+  remember(key.slice(0, split), next, bucket(key.slice(split + 1)));
   useDesk.setState((state) => ({ clock: state.clock + 1 }));
   return next;
+}
+
+const FRAME_SEC: Record<string, number> = { "1m": 60, "5m": 300, "15m": 900, "1H": 3600, "4H": 14400, "1D": 86400 };
+const ALL_FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"];
+const sources = new Map<string, { step: number; bars: Candle[] }[]>();
+
+function bucket(frame: string) {
+  return FRAME_SEC[frame] ?? 900;
+}
+
+function aggregateBars(bars: Candle[], step: number) {
+  const buckets = new Map<number, Candle>();
+  for (const bar of bars) {
+    const t = bar.t ?? 0;
+    if (!t || !(bar.c > 0)) continue;
+    const key = Math.floor(t / step) * step;
+    const have = buckets.get(key);
+    if (!have) buckets.set(key, { t: key, o: bar.o, h: bar.h, l: bar.l, c: bar.c });
+    else {
+      have.h = Math.max(have.h, bar.h);
+      have.l = Math.min(have.l, bar.l);
+      have.c = bar.c;
+    }
+  }
+  return [...buckets.values()].sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
+}
+
+function remember(symbol: string, bars: Candle[], step: number) {
+  if (!symbol || bars.length < 2 || step <= 0) return;
+  const list = sources.get(symbol) ?? [];
+  const index = list.findIndex((source) => source.step === step);
+  if (index >= 0 && list[index].bars.length >= bars.length) return;
+  if (index >= 0) list[index] = { step, bars };
+  else list.push({ step, bars });
+  sources.set(symbol, list);
+  for (const frame of ALL_FRAMES) {
+    const frameStep = bucket(frame);
+    const ride = frame === "1m" && step === 300;
+    if (step > frameStep && !ride) continue;
+    const agg = step === frameStep || ride ? bars : aggregateBars(bars, frameStep);
+    if (agg.length < 2) continue;
+    const key = `${symbol}:${frame}`;
+    const have = candles.get(key);
+    if (have && have.length >= agg.length) continue;
+    candles.set(key, agg);
+  }
+}
+
+export function warmCharts(symbol: string) {
+  for (const frame of ALL_FRAMES) void loadCandles(symbol, frame).catch(() => undefined);
 }
 
 export function candleMeta(symbol: string, frame = "5m") {

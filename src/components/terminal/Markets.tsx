@@ -17,7 +17,7 @@ import {
 import { marketsSynced, trendScore } from "@/lib/dex";
 import { chainIcon } from "@/lib/chains";
 import { hideToken, toggleStar, useWatch, visitToken } from "@/lib/watch";
-import { loadCandles } from "@/lib/live";
+import { warmCharts } from "@/lib/live";
 import { useDesk } from "@/lib/store";
 
 const TABS = ["Trending", "Newest", "All", "Recents"] as const;
@@ -248,7 +248,7 @@ function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowPro
   return (
     <tr
       className="row-lift cursor-pointer border-b border-line hover:bg-surface"
-      onPointerDown={() => void loadCandles(token.symbol, "15m")}
+      onPointerDown={() => warmCharts(token.symbol)}
       onClick={onOpen}
     >
       <td className="px-4 py-3">
@@ -340,7 +340,7 @@ function MobileRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowProp
   const volume = token.volBy?.[win] ?? token.volN;
   return (
     <article className="row-lift border-b border-line px-3 py-2">
-      <button type="button" onPointerDown={() => void loadCandles(token.symbol, "15m")} onClick={onOpen} className="flex w-full items-center gap-2 text-left">
+      <button type="button" onPointerDown={() => warmCharts(token.symbol)} onClick={onOpen} className="flex w-full items-center gap-2 text-left">
         <TokenIcon token={token} className="size-9 rounded-lg" />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1">

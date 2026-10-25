@@ -19,7 +19,7 @@ import {
   type Token,
 } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
-import { candleMeta, liveCandles, livePrints, loadCandles, loadHolders, loadOlderCandles, loadPrints, watchCandles, type HolderBand, type HolderRow } from "@/lib/live";
+import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, warmCharts, watchCandles, type HolderBand, type HolderRow } from "@/lib/live";
 import { searchTokens } from "@/lib/dex";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 
@@ -77,6 +77,7 @@ export function TokenTrade({
   const delta = close.c - open.o;
   const prints = livePrints(symbol) ?? [];
   useEffect(() => {
+    warmCharts(symbol);
     if (scale !== "price") return;
     return watchCandles(symbol, frame);
   }, [symbol, frame, scale]);
@@ -292,7 +293,7 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
                     setQuery("");
                   }}
                   className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-surface-2"
-                  onPointerDown={() => void loadCandles(item.symbol, "15m")}
+                  onPointerDown={() => warmCharts(item.symbol)}
                 >
                   <TokenIcon token={item} />
                   <span className="min-w-0 flex-1">
