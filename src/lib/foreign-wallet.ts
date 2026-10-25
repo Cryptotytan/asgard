@@ -49,6 +49,13 @@ export function useForeign() {
 
 export type LinkedWallet = { id: "near" | "evm" | "sol" | "btc"; label: string; address: string };
 
+export const WALLET_MARK: Record<LinkedWallet["id"], string> = {
+  near: "/tokens/near.svg",
+  evm: "/tokens/eth.png",
+  sol: "/chains/solana.png",
+  btc: "/chains/bitcoin.png",
+};
+
 export function linkedWallets(near: string | null, foreign: ForeignWallets): LinkedWallet[] {
   const rows: LinkedWallet[] = [];
   if (near) rows.push({ id: "near", label: "NEAR", address: near });

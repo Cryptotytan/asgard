@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownUp, ChevronDown, ShieldAlert } from "lucide-react";
 import { TokenIcon, TokenPicker, VerifiedMark } from "@/components/terminal/TokenIcon";
-import { linkedWallets, useForeign, type LinkedWallet } from "@/lib/foreign-wallet";
+import { linkedWallets, useForeign, WALLET_MARK, type LinkedWallet } from "@/lib/foreign-wallet";
 import { canSign, chainByLabel, validAddress } from "@/lib/chains";
 import { fmt, rankQuotes, scoreLabel, tokenBySymbol, tokenLabel, usd, type Quote } from "@/lib/market";
 import { executeIntent, quoteIntent, type IntentQuote } from "@/lib/intents";
@@ -466,10 +466,10 @@ function SwapRow({
           <ul className="space-y-1">
             {wallets.map((wallet) => (
               <li key={wallet.id}>
-                <button type="button" onClick={() => onChoose(wallet.id)} className={`flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left ${wallet.id === activeId ? "bg-surface-2 ring-1 ring-primary" : "hover:bg-surface"}`}>
-                  <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/15 text-[11px] font-bold text-primary">{wallet.label.slice(0, 1)}</span>
+                <button type="button" onClick={() => onChoose(wallet.id)} className={`flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left ${wallet.id === activeId ? "bg-surface-2 ring-1 ring-primary" : "hover:bg-surface"}`}>
+                  <img src={WALLET_MARK[wallet.id]} alt="" className="size-9 shrink-0 rounded-full bg-bg object-cover" />
                   <span className="min-w-0 flex-1">
-                    <span className="block text-xs font-semibold">{wallet.label}</span>
+                    <span className="block text-sm font-semibold">{wallet.label}</span>
                     <span className="block truncate font-mono text-[11px] text-muted">{shortAddr(wallet.address)}</span>
                   </span>
                   {wallet.id === activeId && <span className="text-[10px] font-semibold text-primary">Using</span>}
