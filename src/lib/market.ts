@@ -41,6 +41,7 @@ export type Token = {
   windows: Record<WindowId, number>;
   volBy: Record<WindowId, number>;
   address?: string;
+  assetId?: string;
   listed?: boolean;
   rails?: string[];
   kind: "major" | "defi" | "meme";
@@ -73,12 +74,21 @@ export const WINDOWS: { id: WindowId; label: string }[] = [
   { id: "h24", label: "24H" },
 ];
 
-export const CHAINS = ["NEAR", "Aurora", "Ethereum"] as const;
+export const CHAINS = ["NEAR", "Ethereum", "Solana", "Base", "Arbitrum", "Optimism", "BNB", "Polygon", "Avalanche", "Bitcoin", "Gnosis", "Aurora"] as const;
 
 export const CHAIN_ICON: Record<string, string> = {
   NEAR: "/tokens/near.svg",
-  Aurora: "/tokens/aurora.jpg",
   Ethereum: "/tokens/eth.png",
+  Solana: "https://assets.coingecko.com/coins/images/4128/small/solana.png",
+  Base: "https://assets.coingecko.com/coins/images/31164/small/base.png",
+  Arbitrum: "https://assets.coingecko.com/coins/images/16547/small/arb.jpg",
+  Optimism: "https://assets.coingecko.com/coins/images/25244/small/Optimism.png",
+  BNB: "https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png",
+  Polygon: "https://assets.coingecko.com/coins/images/4713/small/polygon.png",
+  Avalanche: "https://assets.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png",
+  Bitcoin: "https://assets.coingecko.com/coins/images/1/small/bitcoin.png",
+  Gnosis: "https://assets.coingecko.com/coins/images/11062/small/GNOSIS.png",
+  Aurora: "/tokens/aurora.jpg",
 };
 
 const clean: Safety = {
@@ -395,6 +405,11 @@ const LTV = 0.7;
 
 export function tokenBySymbol(symbol: string) {
   return TOKENS.find((token) => token.symbol === symbol) ?? TOKENS.find((token) => token.symbol === "NEAR") ?? TOKENS[0];
+}
+
+export function tokenLabel(token: { symbol: string; chain: string }) {
+  const suffix = `.${token.chain}`;
+  return token.symbol.endsWith(suffix) ? token.symbol.slice(0, -suffix.length) : token.symbol;
 }
 
 export function isHoneypot(token: Token) {

@@ -1,4 +1,5 @@
 import { ensureToken, isCanonical, money, preferIcon, qualityScore, TOKENS, type WindowId } from "@/lib/market";
+import { chainLabel, foreignIcon } from "@/lib/chains";
 import { loadIntentAssets, type IntentAsset } from "@/lib/intents";
 import { useDesk } from "@/lib/store";
 
@@ -62,23 +63,14 @@ export let marketsSynced = false;
 
 let iconBook: Map<string, string> | null = null;
 let tradableGate: Map<string, IntentAsset> | null = null;
-let ethSymbols = new Set<string>();
-let auroraSymbols = new Set<string>();
 
 async function tradableMap() {
   if (tradableGate && tradableGate.size) return tradableGate;
   const all = await loadIntentAssets();
   const map = new Map<string, IntentAsset>();
-  const eth = new Set<string>();
-  const aurora = new Set<string>();
   for (const asset of all) {
-    const symbol = asset.symbol.toUpperCase();
-    if (asset.blockchain === "eth") eth.add(symbol);
-    if (asset.blockchain === "aurora") aurora.add(symbol);
     if (asset.blockchain === "near" && asset.contractAddress && Number(asset.price) > 0) map.set(asset.contractAddress.toLowerCase(), asset);
   }
-  ethSymbols = eth;
-  auroraSymbols = aurora;
   tradableGate = map;
   return map;
 }
@@ -87,26 +79,17 @@ function canTrade(address: string) {
   return !tradableGate || tradableGate.has(address.toLowerCase());
 }
 
-function railsFor(symbol: string, address: string) {
-  const rails = ["NEAR"];
-  const sym = symbol.toUpperCase();
-  const addr = address.toLowerCase();
-  const bridged = addr.endsWith(".factory.bridge.near") || addr === "eth.bridge.near" || addr === "usdt.tether-token.near";
-  if (ethSymbols.has(sym) || bridged) rails.push("Ethereum");
-  if (sym === "AURORA" || auroraSymbols.has(sym)) rails.push("Aurora");
-  return rails;
-}
-
 function publishTradable(map: Map<string, IntentAsset>) {
   const allowed = new Set(map.keys());
   for (const token of TOKENS) {
+    if (token.chain !== "NEAR") continue;
     const address = token.address?.toLowerCase();
-    if (!address || !allowed.has(address) || token.chain !== "NEAR") token.listed = false;
+    if (!address || !allowed.has(address)) token.listed = false;
   }
   for (const asset of map.values()) {
     const address = asset.contractAddress ?? "";
     const key = address.toLowerCase();
-    let token = TOKENS.find((item) => item.address?.toLowerCase() === key);
+    let token = TOKENS.find((item) => item.address?.toLowerCase() === key && item.chain === "NEAR");
     const preferred = ADDRESS_SYMBOL[address] ?? ADDRESS_SYMBOL[key] ?? asset.symbol;
     if (!token) {
       const clash = TOKENS.some((item) => item.symbol.toUpperCase() === preferred.toUpperCase());
@@ -122,13 +105,72 @@ function publishTradable(map: Map<string, IntentAsset>) {
       if (token.address && token.address.toLowerCase() !== key) continue;
     }
     token.address = address;
+    token.assetId = asset.assetId;
     token.chain = "NEAR";
     token.price = Number(asset.price);
     token.listed = true;
-    token.rails = railsFor(token.symbol, address);
+    token.rails = ["NEAR"];
     token.verified = isCanonical({ symbol: token.symbol, address });
     token.notes = token.verified ? ["Widely used NEAR asset"] : ["Tradable on NEAR Intents"];
   }
+}
+
+function publishForeign(assets: IntentAsset[]) {
+  for (const asset of assets) {
+    if (asset.blockchain === "near" || !(Number(asset.price) > 0)) continue;
+    const chain = chainLabel(asset.blockchain);
+    const base = asset.symbol.replace(/\s/g, "") || chain;
+    let token = TOKENS.find((item) => item.assetId === asset.assetId);
+    if (!token) {
+      const taken = TOKENS.some((item) => item.symbol.toUpperCase() === base.toUpperCase());
+      const symbol = taken ? `${base}.${chain}` : base;
+      const icon = knownLogo(base) || foreignIcon(asset.blockchain, asset.contractAddress) || undefined;
+      token = ensureToken({
+        symbol,
+        name: `${base} on ${chain}`,
+        price: Number(asset.price),
+        chain,
+        icon,
+        address: asset.contractAddress ?? asset.assetId,
+      });
+      if (token.assetId && token.assetId !== asset.assetId) continue;
+    }
+    token.assetId = asset.assetId;
+    token.chain = chain;
+    token.address = asset.contractAddress ?? token.address;
+    token.price = Number(asset.price);
+    token.listed = true;
+    token.rails = [chain];
+    token.verified = false;
+    token.notes = [`Crosschain on ${chain} via NEAR Intents`];
+    const icon = knownLogo(base) || foreignIcon(asset.blockchain, asset.contractAddress);
+    if (icon) token.icon = preferIcon(token.icon, icon);
+  }
+}
+
+async function warmLogos(assets: IntentAsset[]) {
+  const ids = [...new Set(assets.map((asset) => asset.coingeckoId).filter((id): id is string => Boolean(id)))];
+  const images = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 80) {
+    const chunk = ids.slice(i, i + 80).join(",");
+    const response = await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${encodeURIComponent(chunk)}&per_page=250&sparkline=false`).catch(() => null);
+    if (!response?.ok) continue;
+    const rows = (await response.json()) as { id?: string; image?: string }[];
+    for (const row of rows) if (row.id && row.image) images.set(row.id, row.image);
+  }
+  if (!images.size) return;
+  let changed = false;
+  for (const asset of assets) {
+    const image = asset.coingeckoId ? images.get(asset.coingeckoId) : "";
+    const token = TOKENS.find((item) => item.assetId === asset.assetId);
+    if (!token || !image) continue;
+    const next = preferIcon(token.icon, image);
+    if (next !== token.icon) {
+      token.icon = next;
+      changed = true;
+    }
+  }
+  if (changed) useDesk.setState((state) => ({ clock: state.clock + 1 }));
 }
 let iconAt = 0;
 let discover: string[] = [];
@@ -266,6 +308,12 @@ export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (mar
   if (extras.length) {
     paintDex(best, marks);
     if (gate) publishTradable(gate);
+    onPaint?.({ ...marks });
+  }
+  const assets = await loadIntentAssets().catch(() => null);
+  if (assets) {
+    publishForeign(assets);
+    void warmLogos(assets);
     onPaint?.({ ...marks });
   }
   marketsSynced = true;

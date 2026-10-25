@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import { Check, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { knownLogo, lookupNearToken, searchNearTokens } from "@/lib/dex";
-import { CHAIN_ICON, fmt, glyph, px, TOKENS, type Token } from "@/lib/market";
+import { chainIcon } from "@/lib/chains";
+import { CHAIN_ICON, CHAINS, fmt, glyph, px, TOKENS, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 
 if (typeof window !== "undefined") {
@@ -24,14 +25,31 @@ export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "s
   const [turn, setTurn] = useState<"a" | "b" | null>(null);
   const [step, setStep] = useState(0);
   const sources = useMemo(() => {
-    const chain = token.chain === "Ethereum" ? "ethereum" : token.chain === "Aurora" ? "aurora" : "near";
-    const base = token.symbol.replace(/\.(Aurora|Ethereum)$/i, "");
-    const list = chain === "near" ? [knownLogo(token.symbol), token.icon] : [token.icon];
+    const slug =
+      token.chain === "Ethereum"
+        ? "ethereum"
+        : token.chain === "Solana"
+          ? "solana"
+          : token.chain === "Base"
+            ? "base"
+            : token.chain === "Arbitrum"
+              ? "arbitrum"
+              : token.chain === "Optimism"
+                ? "optimism"
+                : token.chain === "BNB"
+                  ? "bsc"
+                  : token.chain === "Polygon"
+                    ? "polygon"
+                    : token.chain === "Avalanche"
+                      ? "avalanche"
+                      : token.chain === "Aurora"
+                        ? "aurora"
+                        : "near";
+    const list = slug === "near" ? [knownLogo(token.symbol), token.icon] : [token.icon, knownLogo(token.symbol.split(".")[0] ?? token.symbol)];
     if (token.address) {
-      list.push(`https://cdn.dexscreener.com/tokens/${chain}/${token.address}.png`);
-      list.push(`https://dd.dexscreener.com/ds-data/tokens/${chain}/${token.address}.png`);
+      list.push(`https://cdn.dexscreener.com/tokens/${slug}/${token.address}.png`);
+      list.push(`https://dd.dexscreener.com/ds-data/tokens/${slug}/${token.address}.png`);
     }
-    if (chain !== "near") list.push(knownLogo(base));
     return [...new Set(list.filter((src) => src && !src.startsWith("data:image/svg+xml;utf8,")))];
   }, [token.address, token.chain, token.icon, token.symbol]);
   useEffect(() => {
@@ -65,13 +83,6 @@ export function VerifiedMark({ className }: { className?: string }) {
   );
 }
 
-const CHAINS = [
-  { id: "All", label: "All chains" },
-  { id: "NEAR", label: "NEAR", icon: CHAIN_ICON.NEAR },
-  { id: "Aurora", label: "Aurora", icon: CHAIN_ICON.Aurora },
-  { id: "Ethereum", label: "Ethereum", icon: CHAIN_ICON.Ethereum },
-] as const;
-
 export function TokenPicker({
   open,
   balances,
@@ -88,11 +99,17 @@ export function TokenPicker({
   const [looking, setLooking] = useState(false);
   const clock = useDesk((state) => state.clock);
   const needle = query.trim().toLowerCase();
+  const tabs = useMemo(() => {
+    const present = new Set(TOKENS.filter((token) => token.listed && token.price > 0).map((token) => token.chain));
+    const ordered = CHAINS.filter((id) => present.has(id));
+    const extra = [...present].filter((id) => !(CHAINS as readonly string[]).includes(id)).sort();
+    return [{ id: "All", label: "All chains", icon: "" }, ...[...ordered, ...extra].map((id) => ({ id, label: id, icon: CHAIN_ICON[id] || chainIcon(id) }))];
+  }, [clock]);
   const list = useMemo(
     () =>
       TOKENS.filter((token) => {
         if (!token.listed || !Number.isFinite(token.price) || token.price <= 0) return false;
-        if (chain !== "All" && !(token.rails ?? ["NEAR"]).includes(chain)) return false;
+        if (chain !== "All" && token.chain !== chain) return false;
         if (!needle) return true;
         return `${token.symbol} ${token.name} ${token.address ?? ""}`.toLowerCase().includes(needle);
       }).sort((a, b) => b.volN - a.volN || b.liqN - a.liqN),
@@ -149,15 +166,15 @@ export function TokenPicker({
           </button>
         </div>
         <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-3 px-4 pb-4 sm:grid-cols-[12rem_minmax(0,1fr)] sm:grid-rows-1">
-          <div className="flex min-w-0 flex-wrap content-start gap-2 sm:flex-col sm:flex-nowrap">
-            {CHAINS.map((item) => (
+          <div className="flex max-h-28 min-w-0 flex-wrap content-start gap-2 overflow-y-auto sm:max-h-none sm:flex-col sm:flex-nowrap">
+            {tabs.map((item) => (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => setChain(item.id)}
                 className={`flex h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-left text-sm sm:h-11 sm:w-full ${chain === item.id ? "bg-surface-2 text-fg" : "text-muted"}`}
               >
-                {"icon" in item ? <img src={item.icon} alt="" className="size-5 rounded-full object-cover" /> : <span className="size-5 rounded-full bg-surface-2" />}
+                {item.icon ? <img src={item.icon} alt="" className="size-5 rounded-full object-cover" /> : <span className="size-5 rounded-full bg-surface-2" />}
                 {item.label}
               </button>
             ))}
@@ -191,7 +208,7 @@ export function TokenPicker({
                       </span>
                       <span className="flex items-center gap-1 truncate text-xs text-muted">
                         <img src={CHAIN_ICON[token.chain]} alt="" className="size-3.5 shrink-0 rounded-full object-cover" />
-                        {token.name} · {chain !== "All" && chain !== "NEAR" ? `${chain} on NEAR` : token.chain}
+                        {token.name} · {token.chain}
                       </span>
                       {token.address && <span className="block truncate font-mono text-[10px] text-muted">{token.address}</span>}
                     </span>

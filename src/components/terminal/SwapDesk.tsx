@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownUp, ShieldAlert } from "lucide-react";
 import { TokenIcon, TokenPicker, VerifiedMark } from "@/components/terminal/TokenIcon";
-import { fmt, rankQuotes, scoreLabel, tokenBySymbol, usd, type Quote } from "@/lib/market";
+import { addressFor, connectBtc, connectEvm, connectSol, useForeign } from "@/lib/foreign-wallet";
+import { canSign, chainByLabel, validAddress } from "@/lib/chains";
+import { fmt, rankQuotes, scoreLabel, tokenBySymbol, tokenLabel, usd, type Quote } from "@/lib/market";
 import { executeIntent, quoteIntent, type IntentQuote } from "@/lib/intents";
 import { useDesk } from "@/lib/store";
 
@@ -30,6 +32,9 @@ export function SwapDesk({ focus }: { focus?: string }) {
   const [flipped, setFlipped] = useState(false);
   const [turn, setTurn] = useState<"a" | "b" | null>(null);
   const turnLock = useRef(false);
+  const foreign = useForeign();
+  const [refundEdit, setRefundEdit] = useState<string | null>(null);
+  const [receiveEdit, setReceiveEdit] = useState<string | null>(null);
 
   function flipPair() {
     if (turnLock.current) return;
@@ -62,14 +67,20 @@ export function SwapDesk({ focus }: { focus?: string }) {
   const sell = tokenBySymbol(sellS);
   const buy = tokenBySymbol(buyS);
   const amountN = Number(amount) || 0;
-  const slipPct = 1;
+  const slipPct = 5;
+  const wallets = { near: accountId, evm: foreign.evm, sol: foreign.sol, btc: foreign.btc };
+  const refundTo = (refundEdit ?? addressFor(sell.chain, wallets)).trim();
+  const recipient = (receiveEdit ?? addressFor(buy.chain, wallets)).trim();
+  const refundOk = validAddress(sell.chain, refundTo);
+  const receiveOk = validAddress(buy.chain, recipient);
+  const originKind = chainByLabel(sell.chain)?.kind;
+  const originConnected =
+    originKind === "near" ? Boolean(accountId) : originKind === "evm" ? Boolean(foreign.evm) : originKind === "sol" ? Boolean(foreign.sol) : originKind === "btc" ? Boolean(foreign.btc) : false;
   const book = useMemo(() => rankQuotes(sell, buy, amountN, slipPct), [sell, buy, amountN]);
-  const liveImpact = live && amountN > 0 ? Math.max(0, (1 - live.amountOutHuman / ((amountN * sell.price) / Math.max(buy.price, 1e-12))) * 100) : 0;
+  const liveImpact = live && live.amountInUsd > 0 ? Math.max(0, (1 - live.amountOutUsd / live.amountInUsd) * 100) : 0;
   const liveFeeBps = live && live.amountInUsd > 0 ? Math.max(0, ((live.amountInUsd - live.amountOutUsd) / live.amountInUsd) * 10_000) : 0;
   const quotes = useMemo(() => {
     if (!live) return book;
-    const rest = book.filter((quote) => quote.venue.id !== "intents");
-    if (liveImpact > slipPct) return rest;
     const venue = book.find((quote) => quote.venue.id === "intents")?.venue ?? {
       id: "intents",
       name: "NEAR Intents",
@@ -80,24 +91,35 @@ export function SwapDesk({ focus }: { focus?: string }) {
       eta: `${live.timeEstimate}s`,
     };
     const row: Quote = { venue, feeBps: liveFeeBps, impact: liveImpact, receive: live.amountOutHuman, score: liveFeeBps / 100 + liveImpact };
-    return [...rest, row].sort((a, b) => a.feeBps - b.feeBps || a.impact - b.impact || b.receive - a.receive);
+    return [row];
   }, [book, live, liveImpact, liveFeeBps]);
   const best = quotes[0] ?? null;
   const parked = Object.values(receipts).reduce((sum, receipt) => sum + (receipt.asset === sell.symbol ? receipt.amount : 0), 0);
   const margin = sell.symbol === "USDC" ? positions.reduce((sum, position) => sum + position.margin, 0) : 0;
-  const held = connected ? Math.max(0, (chain[sell.symbol] ?? 0) - (vault[sell.symbol] ?? 0) - parked - margin) : balances[sell.symbol] ?? 0;
-  const short = connected && amountN > held + 1e-8;
-  const needsWallet = !connected && amountN > 0;
+  const held = sell.chain === "NEAR" && connected ? Math.max(0, (chain[sell.symbol] ?? 0) - (vault[sell.symbol] ?? 0) - parked - margin) : balances[sell.symbol] ?? 0;
+  const short = sell.chain === "NEAR" && connected && amountN > held + 1e-8;
+  const needsWallet = amountN > 0 && !originConnected;
   const risk = !sell.verified || !buy.verified;
+
+  useEffect(() => {
+    setRefundEdit(null);
+  }, [sell.chain]);
+  useEffect(() => {
+    setReceiveEdit(null);
+  }, [buy.chain]);
 
   useEffect(() => {
     setAcked(false);
     setLive(null);
     setQuoteError("");
-    if (!connected || !accountId || amountN <= 0 || sell.symbol === buy.symbol) return;
+    if (amountN <= 0 || sell.symbol === buy.symbol) return;
+    if (!refundOk || !receiveOk) {
+      setQuoteError(`Add a ${!refundOk ? sell.chain : buy.chain} address. A failed bridge refunds there.`);
+      return;
+    }
     setFetching(true);
     const timer = window.setTimeout(() => {
-      void quoteIntent({ from: sell.symbol, to: buy.symbol, amount, accountId, dry: true })
+      void quoteIntent({ from: sell.symbol, to: buy.symbol, amount, accountId: accountId || refundTo, refundTo, recipient, dry: true })
         .then((quote) => {
           setLive(quote);
           setQuoteError("");
@@ -109,7 +131,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
         .finally(() => setFetching(false));
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [sell.symbol, buy.symbol, amount, amountN, accountId, connected]);
+  }, [sell.symbol, buy.symbol, amount, amountN, accountId, refundTo, recipient, refundOk, receiveOk]);
 
   useEffect(() => {
     if (fetching || !routesOpen) return;
@@ -122,24 +144,49 @@ export function SwapDesk({ focus }: { focus?: string }) {
     setAmount(String(Number((spendable * pct).toPrecision(8))));
   }
 
+  async function connectOrigin() {
+    try {
+      if (originKind === "near") connect();
+      else if (originKind === "evm") await connectEvm();
+      else if (originKind === "sol") await connectSol();
+      else if (originKind === "btc") await connectBtc();
+      else setNote(`No browser wallet can sign ${sell.chain}. Nothing was sent.`);
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : "Wallet did not connect.");
+    }
+  }
+
   async function submit() {
-    if (!connected || !accountId) {
-      connect();
-      setNote("Connect a NEAR wallet to swap.");
+    if (!canSign(sell.chain)) {
+      setNote(`No browser wallet can sign ${sell.chain}. Nothing was sent.`);
       return;
     }
-    if (!best || amountN <= 0 || short || (risk && !acked) || settling) {
-      if (!best && amountN > 0) setNote("No route inside 1% slippage.");
+    if (!originConnected) {
+      await connectOrigin();
+      return;
+    }
+    if (!refundOk || !receiveOk || !best || amountN <= 0 || short || (risk && !acked) || settling) {
+      if (!best && amountN > 0) setNote(quoteError || "No route inside 1% slippage.");
       return;
     }
     setSettling(true);
-    setNote(`Confirm the deposit. ${best.venue.name} is the cheapest route inside your slippage.`);
+    setNote("Confirm the deposit in the origin wallet. A failed bridge refunds to your origin address.");
     try {
-      const result = await executeIntent({ from: sell.symbol, to: buy.symbol, amount, accountId, purpose: "Swap", slippageBps: 100, maxImpactPct: slipPct });
+      const result = await executeIntent({
+        from: sell.symbol,
+        to: buy.symbol,
+        amount,
+        accountId: accountId || refundTo,
+        refundTo,
+        recipient,
+        purpose: "Swap",
+        slippageBps: 100,
+        maxImpactPct: slipPct,
+      });
       setAmount("");
-      setNote(result.status === "SUCCESS" ? `Settled ${fmt(result.amountOutHuman)} ${buy.symbol} · ${best.venue.name}` : `Deposit sent · ${best.venue.name} · ${result.status}`);
+      setNote(`Settled ${fmt(result.amountOutHuman)} ${tokenLabel(buy)} on ${buy.chain}.`);
     } catch (error) {
-      setNote(error instanceof Error ? error.message : "Swap failed.");
+      setNote(error instanceof Error ? error.message : "Swap failed. Nothing else was sent.");
     } finally {
       setSettling(false);
     }
@@ -192,7 +239,13 @@ export function SwapDesk({ focus }: { focus?: string }) {
 
       <section className="deck panel max-h-full overflow-visible p-2.5 sm:p-4">
         <h2 className="text-sm font-semibold tracking-tight sm:text-xl">Swap your assets</h2>
-        <p className="mt-1 hidden text-sm text-muted sm:block">A live NEAR Intents 1-Click quote. Confirming sends the deposit from your wallet.</p>
+        <p className="mt-1 hidden text-sm text-muted sm:block">NEAR Intents picks the route. You sign on the origin chain. A failed bridge refunds there.</p>
+        <div className="mt-2 flex gap-1.5 overflow-x-auto text-[11px]">
+          <WalletChip label="NEAR" value={accountId} onClick={() => connect()} />
+          <WalletChip label="EVM" value={foreign.evm} onClick={() => void connectEvm().catch((error: unknown) => setNote(error instanceof Error ? error.message : "EVM wallet did not connect."))} />
+          <WalletChip label="Solana" value={foreign.sol} onClick={() => void connectSol().catch((error: unknown) => setNote(error instanceof Error ? error.message : "Solana wallet did not connect."))} />
+          <WalletChip label="Bitcoin" value={foreign.btc} onClick={() => void connectBtc().catch((error: unknown) => setNote(error instanceof Error ? error.message : "Bitcoin wallet did not connect."))} />
+        </div>
         <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-muted sm:mt-3 sm:text-xs">
           <span className="font-mono">Bal {fmt(held)}</span>
           <span className="flex gap-1">
@@ -251,6 +304,8 @@ export function SwapDesk({ focus }: { focus?: string }) {
             <Row k="Price impact" v={best ? `${best.impact.toFixed(2)}%` : "—"} />
             <Row k="Network cost" v={best ? "Wallet gas" : "—"} />
             <Row k="Max slippage" v="1%" />
+            <Row k="Refund" v={refundTo ? shortAddr(refundTo) : "—"} />
+            <Row k="Receive" v={recipient ? shortAddr(recipient) : "—"} />
             <Row k="Settles in" v={live ? `${live.timeEstimate}s` : "—"} />
           </dl>
         </div>
@@ -287,14 +342,18 @@ export function SwapDesk({ focus }: { focus?: string }) {
 
         <button
           type="button"
-          disabled={settling || (!needsWallet && amountN > 0 && (fetching || !best || short || (risk && !acked) || sell.symbol === buy.symbol))}
+          disabled={settling || (!needsWallet && amountN > 0 && (fetching || !best || short || (risk && !acked) || sell.symbol === buy.symbol || (best?.impact ?? 0) > slipPct))}
           onClick={() => void submit()}
           className="mt-2 h-10 w-full rounded-xl bg-primary font-semibold text-primary-fg disabled:opacity-40"
         >
-          {settling ? "Settling…" : fetching ? "Fetching quote…" : amountN <= 0 ? "Enter an amount" : needsWallet ? "Connect wallet" : short ? "Not enough balance" : best ? `Swap via ${best.venue.name}` : "No live quote"}
+          {settling ? "Settling…" : fetching ? "Fetching quote…" : amountN <= 0 ? "Enter an amount" : needsWallet ? `Connect ${sell.chain}` : !canSign(sell.chain) ? `Can't sign ${sell.chain}` : short ? "Not enough balance" : best && best.impact > slipPct ? "Fee above 5%" : best ? `Bridge via ${best.venue.name}` : "No live quote"}
         </button>
         {quoteError && !note && <p className="mt-2 font-mono text-xs text-danger">{quoteError}</p>}
         {note && <p className="mt-3 font-mono text-xs text-primary">{note}</p>}
+        <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+          <AddressField label={`Refund on ${sell.chain}`} value={refundTo} onChange={setRefundEdit} />
+          <AddressField label={`Receive on ${buy.chain}`} value={recipient} onChange={setReceiveEdit} />
+        </div>
       </section>
       <TokenPicker
         open={picking !== null}
@@ -352,13 +411,35 @@ function SwapRow({
         )}
         <button type="button" onClick={onPick} className="flex h-8 items-center gap-1.5 rounded-full bg-surface-2 px-2 sm:h-10 sm:gap-2 sm:px-3">
           <TokenIcon token={token} />
-          <span className="font-semibold">{token.symbol}</span>
+          <span className="font-semibold">{tokenLabel(token)}</span>
           <span className="hidden text-xs text-muted sm:inline">{token.chain}</span>
         </button>
       </div>
       <p className="font-mono text-[11px] text-muted sm:text-xs">{usd(usdValue)}</p>
     </div>
   );
+}
+
+function WalletChip({ label, value, onClick }: { label: string; value: string | null; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-surface-2 px-2.5">
+      <span className="text-muted">{label}</span>
+      <span className="font-mono text-fg">{value ? shortAddr(value) : "Connect"}</span>
+    </button>
+  );
+}
+
+function AddressField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="block text-[11px] text-muted">
+      {label}
+      <input value={value} onChange={(event) => onChange(event.target.value.trim())} className="mt-1 h-8 w-full rounded-lg border border-line bg-bg px-2 font-mono text-xs text-fg outline-none" />
+    </label>
+  );
+}
+
+function shortAddr(value: string) {
+  return value.length > 18 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value;
 }
 
 function Pair({ k, v }: { k: string; v: string }) {

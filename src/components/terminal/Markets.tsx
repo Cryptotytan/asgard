@@ -42,7 +42,7 @@ export function Markets({
     const q = query.trim().toLowerCase();
     let list = TOKENS.filter((token) => !watch.hidden.includes(token.symbol));
     if (tab !== "Recents") list = list.filter((token) => token.listed && Number.isFinite(token.price) && token.price > 0);
-    if (chain !== "All") list = list.filter((token) => (token.rails ?? ["NEAR"]).includes(chain));
+    if (chain !== "All") list = list.filter((token) => token.chain === chain);
     if (verifiedOnly) list = list.filter((token) => token.verified);
     if (q) list = list.filter((token) => `${token.symbol} ${token.name} ${token.tag} ${token.chain} ${token.address ?? ""}`.toLowerCase().includes(q));
     if (tab === "Recents") {
@@ -81,7 +81,7 @@ export function Markets({
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex max-w-[11rem] items-center gap-1 overflow-x-auto sm:max-w-none">
             {CHAINS.map((item) => (
               <button
                 key={item}

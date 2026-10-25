@@ -1,4 +1,6 @@
 import { sendIntentDeposit, syncWallet } from "@/lib/near-wallet";
+import { sendOriginDeposit } from "@/lib/foreign-wallet";
+import { TOKENS } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 
 const BASE = "https://1click.chaindefuser.com";
@@ -11,6 +13,7 @@ export type IntentAsset = {
   blockchain: string;
   contractAddress: string | null;
   price?: number;
+  coingeckoId?: string;
 };
 
 export type IntentQuote = {
@@ -70,9 +73,12 @@ export async function tradableNearAssets(): Promise<IntentAsset[]> {
 }
 
 export async function resolveAsset(symbol: string): Promise<IntentAsset | null> {
-  const list = await loadNearAssets();
+  const list = await loadIntentAssets();
+  const token = TOKENS.find((item) => item.symbol === symbol);
+  if (token?.assetId) return list.find((asset) => asset.assetId === token.assetId) ?? null;
+  const near = list.filter((asset) => asset.blockchain === "near" && asset.contractAddress && Number(asset.price) > 0);
   const want = (ALIAS[symbol] ?? symbol).toLowerCase();
-  return list.find((asset) => asset.symbol.toLowerCase() === want) ?? null;
+  return near.find((asset) => asset.symbol.toLowerCase() === want) ?? null;
 }
 
 export async function quoteIntent(input: {
@@ -80,6 +86,8 @@ export async function quoteIntent(input: {
   to: string;
   amount: string;
   accountId: string;
+  refundTo?: string;
+  recipient?: string;
   swapType?: "EXACT_INPUT" | "EXACT_OUTPUT";
   slippageBps?: number;
   dry?: boolean;
@@ -87,6 +95,9 @@ export async function quoteIntent(input: {
   const origin = await resolveAsset(input.from);
   const destination = await resolveAsset(input.to);
   if (!origin || !destination) throw new Error("This pair is not listed on NEAR Intents.");
+  const refundTo = (input.refundTo || input.accountId).trim();
+  const recipient = (input.recipient || input.accountId).trim();
+  if (!refundTo || !recipient) throw new Error("A refund address and a receive address are required. Nothing was sent.");
   const units = parseUnits(input.amount, input.swapType === "EXACT_OUTPUT" ? destination.decimals : origin.decimals);
   if (!units) throw new Error("Enter an amount.");
   const response = await fetch(`${BASE}/v0/quote`, {
@@ -100,13 +111,13 @@ export async function quoteIntent(input: {
       depositType: "ORIGIN_CHAIN",
       destinationAsset: destination.assetId,
       amount: units,
-      refundTo: input.accountId,
+      refundTo,
       refundType: "ORIGIN_CHAIN",
-      recipient: input.accountId,
+      recipient,
       recipientType: "DESTINATION_CHAIN",
       deadline: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       referral: "asgard",
-      quoteWaitingTimeMs: input.dry ? 0 : 2000,
+      quoteWaitingTimeMs: input.dry ? 2000 : 4000,
     }),
   });
   if (!response.ok) throw new Error(await readError(response));
@@ -144,6 +155,8 @@ export async function executeIntent(input: {
   to: string;
   amount: string;
   accountId: string;
+  refundTo?: string;
+  recipient?: string;
   purpose: Purpose;
   swapType?: "EXACT_INPUT" | "EXACT_OUTPUT";
   slippageBps?: number;
@@ -160,6 +173,7 @@ export async function executeIntent(input: {
   if (input.maxPay != null && quote.amountInHuman > input.maxPay + 1e-8) {
     throw new Error(`That needs ${quote.amountInHuman} ${input.from}, more than you have parked.`);
   }
+  if (!quote.depositAddress) throw new Error("Quote is missing a deposit address. Nothing was sent.");
   sessionStorage.setItem(
     PENDING_KEY,
     JSON.stringify({
@@ -171,13 +185,21 @@ export async function executeIntent(input: {
       amountOutHuman: quote.amountOutHuman,
     }),
   );
-  const txHash = await sendIntentDeposit({
-    accountId: input.accountId,
-    contractId: origin.contractAddress ?? "",
-    depositAddress: quote.depositAddress ?? "",
-    amount: quote.amountIn,
-    wrap: origin.contractAddress === "wrap.near",
-  });
+  const txHash =
+    origin.blockchain === "near"
+      ? await sendIntentDeposit({
+          accountId: input.accountId,
+          contractId: origin.contractAddress ?? "",
+          depositAddress: quote.depositAddress,
+          amount: quote.amountIn,
+          wrap: origin.contractAddress === "wrap.near",
+        })
+      : await sendOriginDeposit({
+          blockchain: origin.blockchain,
+          contract: origin.contractAddress,
+          depositAddress: quote.depositAddress,
+          amount: quote.amountIn,
+        });
   const status = await finishDeposit(quote, txHash, input.purpose, input.from, input.to);
   return { ...quote, status };
 }
@@ -213,7 +235,13 @@ async function finishDeposit(quote: IntentQuote, txHash: string | null, purpose:
   if (accountId) await syncWallet(accountId);
   const value = quote.amountInUsd || quote.amountOutUsd;
   useDesk.getState().log(`${purpose} · NEAR Intents`, `${from} → ${to} · ${status}`, value);
-  if (status === "REFUNDED" || status === "FAILED") throw new Error(`NEAR Intents ${status.toLowerCase()} this swap.`);
+  if (status !== "SUCCESS") {
+    throw new Error(
+      status === "REFUNDED" || status === "FAILED"
+        ? `NEAR Intents ${status.toLowerCase()} this swap. Funds were not delivered.`
+        : `Bridge is ${status}. Do not send the deposit again. It refunds to your origin address if it cannot finish.`,
+    );
+  }
   return status;
 }
 
@@ -221,8 +249,8 @@ async function pollStatus(depositAddress: string, depositMemo?: string | null) {
   const url = new URL(`${BASE}/v0/status`);
   url.searchParams.set("depositAddress", depositAddress);
   if (depositMemo) url.searchParams.set("depositMemo", depositMemo);
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    await wait(attempt === 0 ? 1500 : 2000);
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    await wait(attempt === 0 ? 2000 : 3000);
     try {
       const response = await fetch(url);
       if (!response.ok) continue;
