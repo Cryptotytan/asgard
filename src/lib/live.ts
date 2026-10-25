@@ -189,8 +189,23 @@ function llamaCandidates(symbol: string) {
   return out;
 }
 
+function marketChartId(symbol: string) {
+  if (COINGECKO[symbol]) return COINGECKO[symbol];
+  const base = symbol.split(".")[0].toUpperCase();
+  const token = TOKENS.find((item) => item.symbol === symbol);
+  if (!token || symbol.includes(".")) return "";
+  if ((isCanonical(token) || isMajorAsset(symbol, token.chain)) && COINGECKO[base]) return COINGECKO[base];
+  return "";
+}
+
 function llamaId(symbol: string) {
-  return llamaCandidates(symbol)[0] ?? "";
+  return marketChartId(symbol) || llamaCandidates(symbol)[0] || "";
+}
+
+function priceAgrees(close: number, expect: number) {
+  if (!(expect > 0) || !(close > 0)) return true;
+  const ratio = close / expect;
+  return ratio > 0.55 && ratio < 1.8;
 }
 
 const PAGE = 500;
@@ -328,15 +343,27 @@ async function geckoGet(url: string) {
 
 const poolCache = new Map<string, string>();
 
-async function geckoPool(network: string, address: string) {
+async function geckoPool(network: string, address: string, expect = 0) {
   const key = `${network}:${address}`;
   const cached = poolCache.get(key);
   if (cached) return cached;
   const body = await geckoGet(`https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${encodeURIComponent(address)}/pools?page=1`);
-  const rows = (body as { data?: { attributes?: { address?: string } }[] } | null)?.data;
-  const pool = rows?.[0]?.attributes?.address ?? "";
-  if (pool) poolCache.set(key, pool);
-  return pool;
+  const rows = (body as { data?: { attributes?: { address?: string; base_token_price_usd?: string; reserve_in_usd?: string; volume_usd?: { h24?: string } | string } }[] } | null)?.data ?? [];
+  let best = "";
+  let bestVol = -1;
+  for (const row of rows) {
+    const attrs = row.attributes ?? {};
+    const pool = attrs.address ?? "";
+    const px = Number(attrs.base_token_price_usd);
+    if (!pool || !(px > 0) || !priceAgrees(px, expect)) continue;
+    const vol = Number(typeof attrs.volume_usd === "object" ? attrs.volume_usd?.h24 : attrs.volume_usd) || Number(attrs.reserve_in_usd) || 0;
+    if (vol >= bestVol) {
+      bestVol = vol;
+      best = pool;
+    }
+  }
+  if (best) poolCache.set(key, best);
+  return best;
 }
 
 async function geckoBars(network: string, pool: string, frame: string, before?: number, limit = 1000) {
@@ -354,16 +381,20 @@ async function loadGeckoBook(symbol: string, frame: string, book: Book) {
   const raw = token?.address ?? "";
   if (!network || !raw || raw.includes(":")) return false;
   const address = raw.startsWith("0x") ? raw.toLowerCase() : raw;
+  const expect = token?.price ?? 0;
   const hinted = token && token.chain !== "NEAR" ? knownPool(token.chain, raw) : "";
-  let pool = book.id.startsWith("gecko:") ? book.id.split(":").slice(2).join(":") : hinted || (await geckoPool(network, address));
+  let pool = book.id.startsWith("gecko:") ? book.id.split(":").slice(2).join(":") : hinted || (await geckoPool(network, address, expect));
   if (!pool) return false;
   let bars = await geckoBars(network, pool, frame, undefined, 120);
-  if (bars.length < 2 && hinted) {
-    pool = await geckoPool(network, address);
+  const close = bars[bars.length - 1]?.c ?? 0;
+  if (bars.length < 2 || !priceAgrees(close, expect)) {
+    poolCache.delete(`${network}:${address}`);
+    if (!hinted) return false;
+    pool = await geckoPool(network, address, expect);
     if (!pool) return false;
     bars = await geckoBars(network, pool, frame, undefined, 120);
+    if (bars.length < 2 || !priceAgrees(bars[bars.length - 1]?.c ?? 0, expect)) return false;
   }
-  if (bars.length < 2) return false;
   if (book.id && !book.id.startsWith("gecko:") && book.points.length > 1) return false;
   book.id = `gecko:${network}:${pool}`;
   book.bars = mergeBars(book.bars, bars);
@@ -410,7 +441,8 @@ async function fetchCandles(symbol: string, frame: string, key: string) {
     books.set(key, book);
   }
   if (!book.id) {
-    const primary = llamaCandidates(symbol)[0] ?? "";
+    const market = marketChartId(symbol);
+    const primary = market || llamaCandidates(symbol)[0] || "";
     const start = Math.max(ORIGIN, now - PAGE * plan.step);
     let shown = false;
     const show = () => {
@@ -422,8 +454,11 @@ async function fetchCandles(symbol: string, frame: string, key: string) {
     await Promise.all([
       (async () => {
         if (!primary) return;
-        const part = await llamaSeries(primary, start, plan.period, plan.search, 80);
+        const part = await llamaSeries(primary, start, plan.period, plan.search, market ? 180 : 80);
         if (!part || part.length < 2 || book.id.startsWith("gecko:")) return;
+        const last = part[part.length - 1]?.price ?? 0;
+        const expect = TOKENS.find((item) => item.symbol === symbol)?.price ?? 0;
+        if (!market && !priceAgrees(last, expect)) return;
         book.id = primary;
         book.from = start;
         book.points = mergePoints([book.points, part]);
@@ -431,6 +466,7 @@ async function fetchCandles(symbol: string, frame: string, key: string) {
         show();
       })(),
       (async () => {
+        if (market) return;
         const found = await loadGeckoBook(symbol, frame, book);
         if (found && !shown) show();
       })(),
