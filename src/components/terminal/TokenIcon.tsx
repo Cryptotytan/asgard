@@ -3,8 +3,8 @@ import { createPortal } from "react-dom";
 import { Check, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { knownLogo, lookupNearToken, searchNearTokens } from "@/lib/dex";
-import { chainIcon } from "@/lib/chains";
-import { CHAIN_ICON, CHAINS, fmt, glyph, px, TOKENS, type Token } from "@/lib/market";
+import { chainByLabel, chainIcon } from "@/lib/chains";
+import { CHAIN_ICON, CHAINS, fmt, glyph, px, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 
 if (typeof window !== "undefined") {
@@ -86,11 +86,19 @@ export function VerifiedMark({ className }: { className?: string }) {
 export function TokenPicker({
   open,
   balances,
+  walletKind,
+  walletName,
+  heldOnly,
+  loadingBalances,
   onClose,
   onPick,
 }: {
   open: boolean;
   balances?: Record<string, number>;
+  walletKind?: "near" | "evm" | "sol" | "btc" | null;
+  walletName?: string;
+  heldOnly?: boolean;
+  loadingBalances?: boolean;
   onClose: () => void;
   onPick: (symbol: string) => void;
 }) {
@@ -99,6 +107,9 @@ export function TokenPicker({
   const [looking, setLooking] = useState(false);
   const clock = useDesk((state) => state.clock);
   const needle = query.trim().toLowerCase();
+  useEffect(() => {
+    if (walletKind) setChain("All");
+  }, [walletKind]);
   const tabs = useMemo(() => {
     const present = new Set(TOKENS.filter((token) => token.listed && token.price > 0).map((token) => token.chain));
     const ordered = CHAINS.filter((id) => present.has(id));
@@ -109,11 +120,17 @@ export function TokenPicker({
     () =>
       TOKENS.filter((token) => {
         if (!token.listed || !Number.isFinite(token.price) || token.price <= 0) return false;
+        if (walletKind && chainByLabel(token.chain)?.kind !== walletKind) return false;
         if (chain !== "All" && token.chain !== chain) return false;
+        const held = balances?.[token.symbol] ?? 0;
+        if (walletKind && heldOnly && !needle && held <= 0) return false;
         if (!needle) return true;
         return `${token.symbol} ${token.name} ${token.address ?? ""}`.toLowerCase().includes(needle);
-      }).sort((a, b) => b.volN - a.volN || b.liqN - a.liqN),
-    [chain, clock, needle],
+      }).sort((a, b) => {
+        if (walletKind && balances) return (balances[b.symbol] ?? 0) * b.price - (balances[a.symbol] ?? 0) * a.price;
+        return b.volN - a.volN || b.liqN - a.liqN;
+      }),
+    [balances, chain, clock, heldOnly, needle, walletKind],
   );
   useEffect(() => {
     if (!open) {
@@ -213,21 +230,30 @@ export function TokenPicker({
                       {token.address && <span className="block truncate font-mono text-[10px] text-muted">{token.address}</span>}
                     </span>
                     <span className="shrink-0 text-right font-mono text-xs">
-                      <span className="block">{px(token.price)}</span>
-                      <span className="text-muted">{balances ? fmt(balances[token.symbol] ?? 0) : token.chain}</span>
+                      {balances && (balances[token.symbol] ?? 0) > 0 ? (
+                        <>
+                          <span className="block">{fmt(balances[token.symbol] ?? 0)}</span>
+                          <span className="text-muted">{usd((balances[token.symbol] ?? 0) * token.price)}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="block">{px(token.price)}</span>
+                          <span className="text-muted">{token.chain}</span>
+                        </>
+                      )}
                     </span>
                   </button>
                 </li>
               ))}
               {list.length === 0 && (
                 <li className="px-2 py-6 text-center text-sm text-muted">
-                  {looking
-                    ? `Loading ${chain === "All" ? "live" : chain} markets…`
+                  {looking || loadingBalances
+                    ? "Reading this wallet…"
                     : needle
                       ? "No token matches that name or contract."
-                      : chain === "Aurora" || chain === "Ethereum"
-                        ? `No ${chain} asset on NEAR right now.`
-                        : "Loading live NEAR markets…"}
+                      : walletKind
+                        ? `No swappable tokens in ${walletName ?? "this wallet"}.`
+                        : "No tokens on this chain."}
                 </li>
               )}
             </ul>

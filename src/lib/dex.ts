@@ -106,6 +106,7 @@ function publishTradable(map: Map<string, IntentAsset>) {
     }
     token.address = address;
     token.assetId = asset.assetId;
+    token.decimals = asset.decimals;
     token.chain = "NEAR";
     token.price = Number(asset.price);
     token.listed = true;
@@ -136,6 +137,7 @@ function publishForeign(assets: IntentAsset[]) {
       if (token.assetId && token.assetId !== asset.assetId) continue;
     }
     token.assetId = asset.assetId;
+    token.decimals = asset.decimals;
     token.chain = chain;
     token.address = asset.contractAddress ?? token.address;
     token.price = Number(asset.price);

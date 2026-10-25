@@ -13,7 +13,7 @@ import { canPerp, fmt, money, tokenBySymbol, TOKENS } from "@/lib/market";
 import { setWalletOpener, useDesk } from "@/lib/store";
 import { startLiveFeed } from "@/lib/live";
 import { visitToken } from "@/lib/watch";
-import { disconnectForeign, useForeign } from "@/lib/foreign-wallet";
+import { disconnectForeign, linkedWallets, useForeign } from "@/lib/foreign-wallet";
 
 const NAV = [
   ["markets", "Markets"],
@@ -43,9 +43,6 @@ export function Terminal() {
   const accountId = useDesk((s) => s.accountId);
   const nearYocto = useDesk((s) => s.nearYocto);
   const disconnect = useDesk((s) => s.disconnect);
-  const foreign = useForeign();
-  const headerAccount = accountId || foreign.evm || foreign.sol || foreign.btc;
-  const headerHint = accountId ? "NEAR" : foreign.evm ? "EVM" : foreign.sol ? "Solana" : foreign.btc ? "Bitcoin" : null;
   const balances = useDesk((s) => s.balances);
   const positions = useDesk((s) => s.positions);
   const tick = useDesk((s) => s.tick);
@@ -172,13 +169,13 @@ export function Terminal() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg">
-      <header className="shrink-0 overflow-x-hidden border-b border-line">
+      <header className="relative z-40 shrink-0 border-b border-line">
         <div className="flex items-center gap-2 px-3 py-2 md:hidden">
           <Link to="/" className="mr-auto flex items-center gap-2">
             <span className="mark" aria-hidden />
             <span className="text-base font-semibold tracking-tight">Asgard</span>
           </Link>
-          <WalletButton connected={Boolean(headerAccount)} account={headerAccount} hint={headerHint ?? (formatNear(nearYocto) ? `${formatNear(nearYocto)} NEAR` : null)} compact onClick={onWallet} />
+          <WalletButton compact onConnectNew={onWallet} />
         </div>
         <nav className="grid grid-cols-7 border-t border-line md:hidden">
           {NAV.map(([id, label]) => (
@@ -209,7 +206,7 @@ export function Terminal() {
               </button>
             ))}
           </nav>
-          <WalletButton connected={Boolean(headerAccount)} account={headerAccount} hint={headerHint ?? (formatNear(nearYocto) ? `${formatNear(nearYocto)} NEAR` : null)} compact onClick={onWallet} />
+          <WalletButton compact onConnectNew={onWallet} />
         </div>
         <div className="hidden items-center gap-5 px-6 py-3 lg:flex">
           <Link to="/" className="flex shrink-0 items-center gap-2.5">
@@ -243,7 +240,7 @@ export function Terminal() {
                 <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">Ctrl K</kbd>
               </label>
             )}
-            <WalletButton connected={Boolean(headerAccount)} account={headerAccount} hint={headerHint ?? (formatNear(nearYocto) ? `${formatNear(nearYocto)} NEAR` : null)} onClick={onWallet} />
+            <WalletButton onConnectNew={onWallet} />
           </div>
         </div>
         {view === "markets" && (
@@ -486,36 +483,81 @@ function formatNear(yocto: string | null) {
   }
 }
 
-function WalletButton({
-  connected,
-  account,
-  hint,
-  onClick,
-  compact = false,
-}: {
-  connected: boolean;
-  account: string | null;
-  hint: string | null;
-  onClick: () => void;
-  compact?: boolean;
-}) {
-  if (!connected) {
-    return (
-      <button type="button" onClick={onClick} className="flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-sm font-semibold text-primary-fg">
-        <Wallet className="size-4" />
-        {compact ? "Connect" : "Connect wallet"}
-      </button>
-    );
-  }
-  const name = account ?? "wallet";
-  const short = name.length > 14 ? `${name.slice(0, 4)}…${name.slice(-4)}` : name;
+function WalletButton({ compact = false, onConnectNew }: { compact?: boolean; onConnectNew: () => void }) {
+  const accountId = useDesk((state) => state.accountId);
+  const nearYocto = useDesk((state) => state.nearYocto);
+  const disconnect = useDesk((state) => state.disconnect);
+  const foreign = useForeign();
+  const rows = linkedWallets(accountId, foreign);
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    function onDown(event: MouseEvent) {
+      if (!box.current?.contains(event.target as Node)) setOpen(false);
+    }
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [open]);
+  const current = rows[0];
+  const nearText = formatNear(nearYocto);
+  const hint = current?.id === "near" ? (nearText ? `${nearText} NEAR` : "NEAR") : current?.label ?? null;
   return (
-    <button type="button" onClick={onClick} className={`flex h-10 min-w-0 items-center gap-2 overflow-hidden rounded-full border border-line bg-surface py-1 pl-1 pr-2.5 text-left ${compact ? "max-w-[46vw] shrink" : "max-w-56"}`}>
-      <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary font-mono text-xs font-bold text-primary-fg">{name.slice(0, 1).toUpperCase()}</span>
-      <span className="min-w-0 leading-none">
-        <span className="block truncate text-sm font-semibold">{short}</span>
-        <span className="mt-0.5 block truncate text-[10px] font-normal text-primary">{hint ?? "Connected"}</span>
-      </span>
-    </button>
+    <div ref={box} className="relative">
+      <button type="button" onClick={() => setOpen((value) => !value)} className={`flex h-10 min-w-0 items-center gap-2 overflow-hidden rounded-full text-left ${current ? `border border-line bg-surface py-1 pl-1 pr-2.5 ${compact ? "max-w-[46vw] shrink" : "max-w-56"}` : "bg-primary px-4 text-sm font-semibold text-primary-fg"}`}>
+        {current ? (
+          <>
+            <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary font-mono text-xs font-bold text-primary-fg">{current.address.slice(0, 1).toUpperCase()}</span>
+            <span className="min-w-0 leading-none">
+              <span className="block truncate text-sm font-semibold">{current.address.length > 14 ? `${current.address.slice(0, 4)}…${current.address.slice(-4)}` : current.address}</span>
+              <span className="mt-0.5 block truncate text-[10px] font-normal text-primary">{hint}</span>
+            </span>
+          </>
+        ) : (
+          <>
+            <Wallet className="size-4" />
+            {compact ? "Connect" : "Connect wallet"}
+          </>
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-12 z-50 w-[min(18rem,calc(100vw-1.5rem))] rounded-2xl border border-line bg-bg p-3 shadow-xl">
+          <p className="px-1 pb-2 text-xs text-muted">
+            {rows.length} {rows.length === 1 ? "wallet" : "wallets"} connected
+          </p>
+          <ul className="space-y-1">
+            {rows.map((row) => (
+              <li key={row.id} className="flex items-center gap-2 rounded-xl bg-surface px-2 py-2">
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[10px] uppercase tracking-wide text-muted">{row.label}</span>
+                  <span className="block truncate font-mono text-xs">{row.address}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (row.id === "near") disconnect();
+                    else disconnectForeign(row.id);
+                  }}
+                  className="shrink-0 rounded-lg px-2 py-1 text-xs text-danger"
+                >
+                  Disconnect
+                </button>
+              </li>
+            ))}
+          </ul>
+          {rows.length === 0 && <p className="px-1 pb-2 text-sm text-muted">No wallet connected yet.</p>}
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              onConnectNew();
+            }}
+            className="mt-2 h-10 w-full rounded-xl bg-primary text-sm font-semibold text-primary-fg"
+          >
+            Connect new wallet
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

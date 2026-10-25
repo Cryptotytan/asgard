@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDownUp, ChevronDown, ShieldAlert } from "lucide-react";
 import { TokenIcon, TokenPicker, VerifiedMark } from "@/components/terminal/TokenIcon";
-import { addressFor, connectBtc, connectEvm, connectSol, disconnectForeign, useForeign } from "@/lib/foreign-wallet";
+import { linkedWallets, useForeign, type LinkedWallet } from "@/lib/foreign-wallet";
 import { canSign, chainByLabel, validAddress } from "@/lib/chains";
 import { fmt, rankQuotes, scoreLabel, tokenBySymbol, tokenLabel, usd, type Quote } from "@/lib/market";
 import { executeIntent, quoteIntent, type IntentQuote } from "@/lib/intents";
 import { useDesk } from "@/lib/store";
+import { useHoldings } from "@/lib/wallet-holdings";
 
 export function SwapDesk({ focus }: { focus?: string }) {
   const connected = useDesk((s) => s.connected);
   const connect = useDesk((s) => s.connect);
-  const disconnect = useDesk((s) => s.disconnect);
   const balances = useDesk((s) => s.balances);
   const accountId = useDesk((s) => s.accountId);
   const chain = useDesk((s) => s.chain);
@@ -37,6 +37,8 @@ export function SwapDesk({ focus }: { focus?: string }) {
   const [refundEdit, setRefundEdit] = useState<string | null>(null);
   const [receiveEdit, setReceiveEdit] = useState<string | null>(null);
   const [menu, setMenu] = useState<"sell" | "buy" | null>(null);
+  const [sellWalletId, setSellWalletId] = useState<LinkedWallet["id"] | null>(null);
+  const [buyWalletId, setBuyWalletId] = useState<LinkedWallet["id"] | null>(null);
 
   function flipPair() {
     if (turnLock.current) return;
@@ -70,14 +72,17 @@ export function SwapDesk({ focus }: { focus?: string }) {
   const buy = tokenBySymbol(buyS);
   const amountN = Number(amount) || 0;
   const slipPct = 5;
-  const wallets = { near: accountId, evm: foreign.evm, sol: foreign.sol, btc: foreign.btc };
-  const refundTo = (refundEdit ?? addressFor(sell.chain, wallets)).trim();
-  const recipient = (receiveEdit ?? addressFor(buy.chain, wallets)).trim();
+  const wallets = linkedWallets(accountId, foreign);
+  const sellActive = wallets.find((wallet) => wallet.id === sellWalletId) ?? wallets.find((wallet) => wallet.id === chainByLabel(sell.chain)?.kind) ?? wallets[0] ?? null;
+  const buyActive = wallets.find((wallet) => wallet.id === buyWalletId) ?? wallets.find((wallet) => wallet.id === chainByLabel(buy.chain)?.kind) ?? wallets[0] ?? null;
+  const sellHold = useHoldings(sellActive);
+  const buyHold = useHoldings(buyActive);
+  const refundTo = (refundEdit ?? sellActive?.address ?? "").trim();
+  const recipient = (receiveEdit ?? buyActive?.address ?? "").trim();
   const refundOk = validAddress(sell.chain, refundTo);
   const receiveOk = validAddress(buy.chain, recipient);
   const originKind = chainByLabel(sell.chain)?.kind;
-  const originConnected =
-    originKind === "near" ? Boolean(accountId) : originKind === "evm" ? Boolean(foreign.evm) : originKind === "sol" ? Boolean(foreign.sol) : originKind === "btc" ? Boolean(foreign.btc) : false;
+  const originConnected = Boolean(sellActive) && sellActive?.id === originKind;
   const book = useMemo(() => rankQuotes(sell, buy, amountN, slipPct), [sell, buy, amountN]);
   const liveImpact = live && live.amountInUsd > 0 ? Math.max(0, (1 - live.amountOutUsd / live.amountInUsd) * 100) : 0;
   const liveFeeBps = live && live.amountInUsd > 0 ? Math.max(0, ((live.amountInUsd - live.amountOutUsd) / live.amountInUsd) * 10_000) : 0;
@@ -98,17 +103,23 @@ export function SwapDesk({ focus }: { focus?: string }) {
   const best = quotes[0] ?? null;
   const parked = Object.values(receipts).reduce((sum, receipt) => sum + (receipt.asset === sell.symbol ? receipt.amount : 0), 0);
   const margin = sell.symbol === "USDC" ? positions.reduce((sum, position) => sum + position.margin, 0) : 0;
-  const held = sell.chain === "NEAR" && connected ? Math.max(0, (chain[sell.symbol] ?? 0) - (vault[sell.symbol] ?? 0) - parked - margin) : balances[sell.symbol] ?? 0;
-  const short = sell.chain === "NEAR" && connected && amountN > held + 1e-8;
+  const walletAmt = sellHold.book[sell.symbol] ?? 0;
+  const held = sellActive?.id === "near" ? Math.max(0, walletAmt - (vault[sell.symbol] ?? 0) - parked - margin) : walletAmt;
+  const walletUsd = Object.entries(sellHold.book).reduce((sum, [symbol, amount]) => sum + amount * (tokenBySymbol(symbol).price || 0), 0);
+  const short = Boolean(sellActive) && sellActive?.id === originKind && amountN > held + 1e-8;
   const needsWallet = amountN > 0 && !originConnected;
   const risk = !sell.verified || !buy.verified;
 
   useEffect(() => {
-    setRefundEdit(null);
-  }, [sell.chain]);
+    if (!sellActive || chainByLabel(sell.chain)?.kind === sellActive.id) return;
+    const top = Object.entries(sellHold.book).sort((a, b) => b[1] * (tokenBySymbol(b[0]).price || 0) - a[1] * (tokenBySymbol(a[0]).price || 0))[0];
+    if (top) setSellS(top[0]);
+  }, [sellActive?.id, sellHold.book]);
   useEffect(() => {
-    setReceiveEdit(null);
-  }, [buy.chain]);
+    if (!buyActive || chainByLabel(buy.chain)?.kind === buyActive.id) return;
+    const top = Object.entries(buyHold.book).sort((a, b) => b[1] * (tokenBySymbol(b[0]).price || 0) - a[1] * (tokenBySymbol(a[0]).price || 0))[0];
+    if (top) setBuyS(top[0]);
+  }, [buyActive?.id, buyHold.book]);
 
   useEffect(() => {
     setAcked(false);
@@ -146,52 +157,29 @@ export function SwapDesk({ focus }: { focus?: string }) {
     setAmount(String(Number((spendable * pct).toPrecision(8))));
   }
 
-  async function connectSide(chain: string, side: "sell" | "buy") {
-    if (side === "sell") setRefundEdit(null);
-    else setReceiveEdit(null);
-    setMenu(null);
-    try {
-      const kind = chainByLabel(chain)?.kind;
-      if (kind === "near") connect();
-      else if (kind === "evm") await connectEvm();
-      else if (kind === "sol") await connectSol();
-      else if (kind === "btc") await connectBtc();
-      else setNote(`No browser wallet can sign ${chain}. Paste an address in Choose wallet.`);
-    } catch (error) {
-      setNote(error instanceof Error ? error.message : "Wallet did not connect.");
+  function chooseWallet(side: "sell" | "buy", id: LinkedWallet["id"]) {
+    if (side === "sell") {
+      setSellWalletId(id);
+      setRefundEdit(null);
+    } else {
+      setBuyWalletId(id);
+      setReceiveEdit(null);
     }
-  }
-
-  function clearSide(chain: string, side: "sell" | "buy") {
-    if (side === "sell") setRefundEdit("");
-    else setReceiveEdit("");
-    const kind = chainByLabel(chain)?.kind;
-    if (kind === "near") disconnect();
-    if (kind === "evm") disconnectForeign("evm");
-    if (kind === "sol") disconnectForeign("sol");
-    if (kind === "btc") disconnectForeign("btc");
     setMenu(null);
-  }
-
-  async function connectOrigin() {
-    try {
-      if (originKind === "near") connect();
-      else if (originKind === "evm") await connectEvm();
-      else if (originKind === "sol") await connectSol();
-      else if (originKind === "btc") await connectBtc();
-      else setNote(`No browser wallet can sign ${sell.chain}. Nothing was sent.`);
-    } catch (error) {
-      setNote(error instanceof Error ? error.message : "Wallet did not connect.");
-    }
   }
 
   async function submit() {
-    if (!canSign(sell.chain)) {
-      setNote(`No browser wallet can sign ${sell.chain}. Nothing was sent.`);
+    if (!sellActive) {
+      connect();
       return;
     }
     if (!originConnected) {
-      await connectOrigin();
+      setPicking("sell");
+      setNote("Pick a token this wallet holds.");
+      return;
+    }
+    if (!canSign(sell.chain)) {
+      setNote(`No browser wallet can sign ${sell.chain}. Nothing was sent.`);
       return;
     }
     if (!refundOk || !receiveOk || !best || amountN <= 0 || short || (risk && !acked) || settling) {
@@ -270,7 +258,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
         <h2 className="text-sm font-semibold tracking-tight sm:text-xl">Swap your assets</h2>
         <p className="mt-1 hidden text-sm text-muted sm:block">Pick the wallet on each side, then the amount. You sign on the chain you sell.</p>
         <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-muted sm:mt-3 sm:text-xs">
-          <span className="font-mono">Bal {fmt(held)}</span>
+          <span className="min-w-0 truncate font-mono">{sellHold.loading ? "Reading wallet…" : sellActive ? `Bal ${fmt(held)} · ${usd(held * sell.price)}` : "No wallet"}</span>
           <span className="flex gap-1">
             {[
               [0.25, "25%"],
@@ -292,14 +280,16 @@ export function SwapDesk({ focus }: { focus?: string }) {
           amount={amount}
           usdValue={amountN * sell.price}
           motion={turn}
-          address={refundTo}
+          address={sellActive?.address ?? refundTo}
+          wallets={wallets}
+          activeId={sellActive?.id ?? null}
           menuOpen={menu === "sell"}
           onAmount={setAmount}
           onPick={() => setPicking("sell")}
           onMenu={() => setMenu((current) => (current === "sell" ? null : "sell"))}
           onCloseMenu={() => setMenu(null)}
-          onConnect={() => void connectSide(sell.chain, "sell")}
-          onDisconnect={() => clearSide(sell.chain, "sell")}
+          onChoose={(id) => chooseWallet("sell", id)}
+          onConnect={() => connect()}
           onAddress={(value) => setRefundEdit(value)}
         />
         <div className="relative z-10 -my-2 flex justify-center sm:-my-3">
@@ -319,13 +309,15 @@ export function SwapDesk({ focus }: { focus?: string }) {
           usdValue={best && !fetching ? best.receive * buy.price : 0}
           motion={turn}
           readOnly
-          address={recipient}
+          address={buyActive?.address ?? recipient}
+          wallets={wallets}
+          activeId={buyActive?.id ?? null}
           menuOpen={menu === "buy"}
           onPick={() => setPicking("buy")}
           onMenu={() => setMenu((current) => (current === "buy" ? null : "buy"))}
           onCloseMenu={() => setMenu(null)}
-          onConnect={() => void connectSide(buy.chain, "buy")}
-          onDisconnect={() => clearSide(buy.chain, "buy")}
+          onChoose={(id) => chooseWallet("buy", id)}
+          onConnect={() => connect()}
           onAddress={(value) => setReceiveEdit(value)}
         />
         </div>
@@ -383,14 +375,18 @@ export function SwapDesk({ focus }: { focus?: string }) {
           onClick={() => void submit()}
           className="mt-2 h-10 w-full rounded-xl bg-primary font-semibold text-primary-fg disabled:opacity-40"
         >
-          {settling ? "Settling…" : fetching ? "Fetching quote…" : amountN <= 0 ? "Enter an amount" : needsWallet ? `Connect ${sell.chain}` : !canSign(sell.chain) ? `Can't sign ${sell.chain}` : short ? "Not enough balance" : best && best.impact > slipPct ? "Fee above 5%" : best ? `Bridge via ${best.venue.name}` : "No live quote"}
+          {settling ? "Settling…" : fetching ? "Fetching quote…" : amountN <= 0 ? "Enter an amount" : !sellActive ? "Connect wallet" : !originConnected ? "Choose a held token" : short ? "Not enough balance" : best && best.impact > slipPct ? "Fee above 5%" : best ? `Bridge via ${best.venue.name}` : "No live quote"}
         </button>
         {quoteError && !note && <p className="mt-2 font-mono text-xs text-danger">{quoteError}</p>}
         {note && <p className="mt-3 break-words font-mono text-xs text-primary">{note}</p>}
       </section>
       <TokenPicker
         open={picking !== null}
-        balances={balances}
+        balances={picking === "buy" ? buyHold.book : sellHold.book}
+        walletKind={picking === "buy" ? buyActive?.id : sellActive?.id}
+        walletName={picking === "buy" ? buyActive?.label : sellActive?.label}
+        heldOnly={picking === "sell"}
+        loadingBalances={picking === "buy" ? buyHold.loading : sellHold.loading}
         onClose={() => setPicking(null)}
         onPick={(symbol) => {
           if (picking === "sell") {
@@ -416,11 +412,13 @@ function SwapRow({
   readOnly,
   motion,
   address,
+  wallets,
+  activeId,
   menuOpen,
   onMenu,
   onCloseMenu,
+  onChoose,
   onConnect,
-  onDisconnect,
   onAddress,
 }: {
   label: string;
@@ -432,16 +430,16 @@ function SwapRow({
   readOnly?: boolean;
   motion?: "a" | "b" | null;
   address: string;
+  wallets: LinkedWallet[];
+  activeId: LinkedWallet["id"] | null;
   menuOpen: boolean;
   onMenu: () => void;
   onCloseMenu: () => void;
+  onChoose: (id: LinkedWallet["id"]) => void;
   onConnect: () => void;
-  onDisconnect: () => void;
   onAddress: (value: string) => void;
 }) {
   const role = label === "Buying" ? "is-buy" : "is-sell";
-  const kind = chainByLabel(token.chain)?.kind ?? "other";
-  const walletName = kind === "evm" ? "EVM" : kind === "near" ? "NEAR" : kind === "sol" ? "Solana" : kind === "btc" ? "Bitcoin" : token.chain;
   return (
     <div className={`swap-tile relative rounded-xl border border-line bg-bg p-1.5 sm:p-2.5 ${menuOpen ? "z-40" : ""} ${motion ? `is-${motion}` : ""} ${role}`}>
       <p className="text-[11px] text-muted sm:text-xs">{label}</p>
@@ -463,7 +461,7 @@ function SwapRow({
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <button type="button" onClick={onMenu} className="flex h-6 max-w-[9.5rem] items-center gap-1 rounded-full bg-surface-2 px-2 font-mono text-[10px] text-fg sm:h-7 sm:text-[11px]">
-            <span className="size-1.5 shrink-0 rounded-full bg-primary" />
+            <span className={`size-1.5 shrink-0 rounded-full ${address ? "bg-primary" : "bg-muted"}`} />
             <span className="truncate">{address ? shortAddr(address) : "Connect"}</span>
             <ChevronDown className="size-3 shrink-0 text-muted" />
           </button>
@@ -477,19 +475,26 @@ function SwapRow({
         </div>
       </div>
       {menuOpen && (
-        <div className={`absolute right-2 z-30 w-56 max-w-[calc(100%-1rem)] rounded-xl border border-line bg-bg p-2 shadow-xl ${label === "Buying" ? "bottom-12" : "top-12"}`}>
-          <p className="px-1 pb-1 text-[11px] text-muted">Choose wallet</p>
-          {address && (
-            <div className="flex items-center gap-2 rounded-lg px-1 py-1.5">
-              <span className="size-2 shrink-0 rounded-full bg-primary" />
-              <span className="min-w-0 flex-1 truncate font-mono text-xs">{address}</span>
-              <button type="button" aria-label="Disconnect" onClick={onDisconnect} className="text-xs text-muted">
-                ×
-              </button>
-            </div>
-          )}
+        <div className={`absolute right-2 z-30 w-60 max-w-[calc(100%-1rem)] rounded-xl border border-line bg-bg p-2 shadow-xl ${label === "Buying" ? "bottom-12" : "top-12"}`}>
+          <p className="px-1 pb-1 text-[11px] text-muted">
+            Choose wallet · {wallets.length} connected
+          </p>
+          <ul className="max-h-36 space-y-1 overflow-y-auto">
+            {wallets.map((wallet) => (
+              <li key={wallet.id}>
+                <button type="button" onClick={() => onChoose(wallet.id)} className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left ${wallet.id === activeId ? "bg-surface-2" : ""}`}>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[10px] uppercase tracking-wide text-muted">{wallet.label}</span>
+                    <span className="block truncate font-mono text-xs">{shortAddr(wallet.address)}</span>
+                  </span>
+                  {wallet.id === activeId && <span className="text-[10px] text-primary">Selected</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {wallets.length === 0 && <p className="px-1 py-1 text-xs text-muted">No wallet connected yet.</p>}
           <button type="button" onClick={onConnect} className="mt-1 h-9 w-full rounded-lg bg-primary text-sm font-semibold text-primary-fg">
-            {address ? "Connect new wallet" : `Connect ${walletName} wallet`}
+            Connect wallet
           </button>
           <label className="mt-2 block text-[10px] text-muted">
             Or paste a {token.chain} address

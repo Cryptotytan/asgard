@@ -47,6 +47,17 @@ export function useForeign() {
   return useSyncExternalStore(subscribe, foreignWallets, foreignWallets);
 }
 
+export type LinkedWallet = { id: "near" | "evm" | "sol" | "btc"; label: string; address: string };
+
+export function linkedWallets(near: string | null, foreign: ForeignWallets): LinkedWallet[] {
+  const rows: LinkedWallet[] = [];
+  if (near) rows.push({ id: "near", label: "NEAR", address: near });
+  if (foreign.evm) rows.push({ id: "evm", label: "EVM", address: foreign.evm });
+  if (foreign.sol) rows.push({ id: "sol", label: "Solana", address: foreign.sol });
+  if (foreign.btc) rows.push({ id: "btc", label: "Bitcoin", address: foreign.btc });
+  return rows;
+}
+
 function ethereum() {
   if (typeof window === "undefined") return null;
   const eth = (window as unknown as { ethereum?: Eip & { providers?: Eip[] } }).ethereum;
