@@ -267,7 +267,7 @@ function Book({
 function Gate({ onConnect }: { onConnect: () => void }) {
   return (
     <div>
-      <Empty title="Nothing here yet" body="Connect a wallet. Balances are read from that chain." />
+      <Empty title="Nothing here yet" body="Connect a wallet." />
       <div className="px-3 pb-5 text-center">
         <button type="button" onClick={onConnect} className="h-10 rounded-full bg-primary px-4 text-sm font-semibold text-primary-fg">
           Connect
