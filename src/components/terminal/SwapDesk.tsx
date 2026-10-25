@@ -254,9 +254,9 @@ export function SwapDesk({ focus }: { focus?: string }) {
         </div>
       </aside>
 
-      <section className="deck panel max-h-full min-w-0 overflow-x-hidden overflow-y-auto p-2.5 sm:p-4">
-        <h2 className="text-sm font-semibold tracking-tight sm:text-xl">Swap your assets</h2>
-        <p className="mt-1 hidden text-sm text-muted sm:block">Pick the wallet on each side, then the amount. You sign on the chain you sell.</p>
+      <section className="deck panel flex h-full max-h-full min-h-0 min-w-0 w-full flex-col justify-center overflow-hidden p-3 sm:p-4">
+        <h2 className="text-base font-semibold tracking-tight sm:text-xl">Swap your assets</h2>
+        <p className="mt-1 hidden text-sm text-muted lg:block">Pick a connected wallet on each side. You sign on the chain you sell.</p>
         <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-muted sm:mt-3 sm:text-xs">
           <span className="min-w-0 truncate font-mono">{sellHold.loading ? "Reading wallet…" : sellActive ? `Bal ${fmt(held)} · ${usd(held * sell.price)}` : "No wallet"}</span>
           <span className="flex gap-1">
@@ -290,7 +290,6 @@ export function SwapDesk({ focus }: { focus?: string }) {
           onCloseMenu={() => setMenu(null)}
           onChoose={(id) => chooseWallet("sell", id)}
           onConnect={() => connect()}
-          onAddress={(value) => setRefundEdit(value)}
         />
         <div className="relative z-10 -my-2 flex justify-center sm:-my-3">
           <button
@@ -318,26 +317,12 @@ export function SwapDesk({ focus }: { focus?: string }) {
           onCloseMenu={() => setMenu(null)}
           onChoose={(id) => chooseWallet("buy", id)}
           onConnect={() => connect()}
-          onAddress={(value) => setReceiveEdit(value)}
         />
         </div>
 
-        <p className="mt-1.5 truncate font-mono text-[11px] text-muted sm:hidden">
+        <p className="mt-2 truncate font-mono text-[11px] text-muted">
           {best && !fetching ? `1 ${tokenLabel(sell)} = ${fmt(best.receive / Math.max(amountN, 1e-9))} ${tokenLabel(buy)} · impact ${best.impact.toFixed(2)}%` : "Enter an amount to price the route"}
         </p>
-        <div className="mt-3 hidden gap-4 sm:grid sm:grid-cols-[minmax(0,1fr)_14rem]">
-          <div />
-          <dl className="space-y-1 text-xs">
-            <p className="font-semibold">Transaction details</p>
-            <Row k="Rate" v={best ? `1 ${tokenLabel(sell)} = ${fmt(best.receive / amountN)} ${tokenLabel(buy)}` : "—"} />
-            <Row k="Price impact" v={best ? `${best.impact.toFixed(2)}%` : "—"} />
-            <Row k="Network cost" v={best ? "Wallet gas" : "—"} />
-            <Row k="Max slippage" v="1%" />
-            <Row k="Refund" v={refundTo ? shortAddr(refundTo) : "—"} />
-            <Row k="Receive" v={recipient ? shortAddr(recipient) : "—"} />
-            <Row k="Settles in" v={live ? `${live.timeEstimate}s` : "—"} />
-          </dl>
-        </div>
 
         {risk && (
           <label className="mt-2 flex items-start gap-2 text-xs sm:text-sm">
@@ -419,7 +404,6 @@ function SwapRow({
   onCloseMenu,
   onChoose,
   onConnect,
-  onAddress,
 }: {
   label: string;
   token: ReturnType<typeof tokenBySymbol>;
@@ -437,7 +421,6 @@ function SwapRow({
   onCloseMenu: () => void;
   onChoose: (id: LinkedWallet["id"]) => void;
   onConnect: () => void;
-  onAddress: (value: string) => void;
 }) {
   const role = label === "Buying" ? "is-buy" : "is-sell";
   return (
@@ -460,14 +443,14 @@ function SwapRow({
           <p className="font-mono text-[11px] text-muted sm:text-xs">{usd(usdValue)}</p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <button type="button" onClick={onMenu} className="flex h-6 max-w-[9.5rem] items-center gap-1 rounded-full bg-surface-2 px-2 font-mono text-[10px] text-fg sm:h-7 sm:text-[11px]">
+          <button type="button" onClick={onMenu} className="flex h-8 max-w-full items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 font-mono text-xs text-fg">
             <span className={`size-1.5 shrink-0 rounded-full ${address ? "bg-primary" : "bg-muted"}`} />
             <span className="truncate">{address ? shortAddr(address) : "Connect"}</span>
-            <ChevronDown className="size-3 shrink-0 text-muted" />
+            <ChevronDown className="size-3.5 shrink-0 text-muted" />
           </button>
-          <button type="button" onClick={onPick} className="flex h-8 max-w-[9.5rem] items-center gap-1.5 rounded-full bg-surface-2 px-2 sm:h-10">
-            <TokenIcon token={token} />
-            <span className="min-w-0 text-left leading-none">
+          <button type="button" onClick={onPick} className="flex h-11 max-w-full items-center gap-2 rounded-2xl border border-line bg-surface py-1 pl-1 pr-2.5">
+            <TokenIcon token={token} className="size-8" />
+            <span className="min-w-0 text-left leading-tight">
               <span className="block truncate text-sm font-semibold">{tokenLabel(token)}</span>
               <span className="block truncate text-[10px] text-muted">{token.chain}</span>
             </span>
@@ -475,36 +458,30 @@ function SwapRow({
         </div>
       </div>
       {menuOpen && (
-        <div className={`absolute right-2 z-30 w-60 max-w-[calc(100%-1rem)] rounded-xl border border-line bg-bg p-2 shadow-xl ${label === "Buying" ? "bottom-12" : "top-12"}`}>
-          <p className="px-1 pb-1 text-[11px] text-muted">
-            Choose wallet · {wallets.length} connected
-          </p>
-          <ul className="max-h-36 space-y-1 overflow-y-auto">
+        <div className={`absolute right-0 z-30 w-64 max-w-[calc(100vw-2.5rem)] rounded-2xl border border-line bg-[#101412] p-2 shadow-2xl ${label === "Buying" ? "bottom-14" : "top-14"}`}>
+          <div className="flex items-center justify-between px-2 py-1.5">
+            <p className="text-sm font-semibold">Choose wallet</p>
+            <p className="text-[11px] text-muted">{wallets.length} connected</p>
+          </div>
+          <ul className="space-y-1">
             {wallets.map((wallet) => (
               <li key={wallet.id}>
-                <button type="button" onClick={() => onChoose(wallet.id)} className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left ${wallet.id === activeId ? "bg-surface-2" : ""}`}>
+                <button type="button" onClick={() => onChoose(wallet.id)} className={`flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left ${wallet.id === activeId ? "bg-surface-2 ring-1 ring-primary" : "hover:bg-surface"}`}>
+                  <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/15 text-[11px] font-bold text-primary">{wallet.label.slice(0, 1)}</span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[10px] uppercase tracking-wide text-muted">{wallet.label}</span>
-                    <span className="block truncate font-mono text-xs">{shortAddr(wallet.address)}</span>
+                    <span className="block text-xs font-semibold">{wallet.label}</span>
+                    <span className="block truncate font-mono text-[11px] text-muted">{shortAddr(wallet.address)}</span>
                   </span>
-                  {wallet.id === activeId && <span className="text-[10px] text-primary">Selected</span>}
+                  {wallet.id === activeId && <span className="text-[10px] font-semibold text-primary">Using</span>}
                 </button>
               </li>
             ))}
           </ul>
-          {wallets.length === 0 && <p className="px-1 py-1 text-xs text-muted">No wallet connected yet.</p>}
-          <button type="button" onClick={onConnect} className="mt-1 h-9 w-full rounded-lg bg-primary text-sm font-semibold text-primary-fg">
+          {wallets.length === 0 && <p className="px-2 py-2 text-xs text-muted">No wallet connected yet.</p>}
+          <button type="button" onClick={onConnect} className="mt-2 h-10 w-full rounded-xl bg-primary text-sm font-semibold text-primary-fg">
             Connect wallet
           </button>
-          <label className="mt-2 block text-[10px] text-muted">
-            Or paste a {token.chain} address
-            <input
-              value={address}
-              onChange={(event) => onAddress(event.target.value.trim())}
-              className="mt-1 h-8 w-full rounded-lg border border-line bg-surface px-2 font-mono text-xs text-fg outline-none"
-            />
-          </label>
-          <button type="button" onClick={onCloseMenu} className="mt-1 h-7 w-full text-[11px] text-muted">
+          <button type="button" onClick={onCloseMenu} className="mt-1 h-8 w-full text-[11px] text-muted">
             Close
           </button>
         </div>
@@ -522,15 +499,6 @@ function Pair({ k, v }: { k: string; v: string }) {
     <div>
       <dt className="text-muted">{k}</dt>
       <dd className="font-mono text-fg">{v}</dd>
-    </div>
-  );
-}
-
-function Row({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex justify-between gap-3 font-mono text-xs">
-      <dt className="text-muted">{k}</dt>
-      <dd className="text-right">{v}</dd>
     </div>
   );
 }

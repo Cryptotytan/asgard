@@ -80,16 +80,29 @@ export const CHAINS = ["NEAR", "Ethereum", "Solana", "Base", "Arbitrum", "Optimi
 export const CHAIN_ICON: Record<string, string> = {
   NEAR: "/tokens/near.svg",
   Ethereum: "/tokens/eth.png",
-  Solana: "https://assets.coingecko.com/coins/images/4128/small/solana.png",
-  Base: "https://assets.coingecko.com/coins/images/31164/small/base.png",
-  Arbitrum: "https://assets.coingecko.com/coins/images/16547/small/arb.jpg",
-  Optimism: "https://assets.coingecko.com/coins/images/25244/small/Optimism.png",
-  BNB: "https://assets.coingecko.com/coins/images/825/small/bnb-icon2_2x.png",
-  Polygon: "https://assets.coingecko.com/coins/images/4713/small/polygon.png",
-  Avalanche: "https://assets.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png",
-  Bitcoin: "https://assets.coingecko.com/coins/images/1/small/bitcoin.png",
-  Gnosis: "https://assets.coingecko.com/coins/images/11062/small/GNOSIS.png",
+  Solana: "/chains/solana.png",
+  Base: "/chains/base.png",
+  Arbitrum: "/chains/arbitrum.png",
+  Optimism: "/chains/optimism.png",
+  BNB: "/chains/bnb.png",
+  Polygon: "/chains/polygon.png",
+  Avalanche: "/chains/avalanche.png",
+  Bitcoin: "/chains/bitcoin.png",
+  Gnosis: "/chains/gnosis.png",
   Aurora: "/tokens/aurora.jpg",
+  Scroll: "/chains/scroll.png",
+  Berachain: "/chains/bera.webp",
+  "X Layer": "/chains/okb.png",
+  Tron: "/chains/tron.png",
+  TON: "/chains/ton.png",
+  Sui: "/chains/sui.png",
+  Aptos: "/chains/aptos.png",
+  Dogecoin: "/chains/doge.png",
+  XRP: "/chains/xrp.png",
+  Litecoin: "/chains/ltc.png",
+  "Bitcoin Cash": "/chains/bch.png",
+  Zcash: "/chains/zec.png",
+  Cardano: "/chains/cardano.png",
 };
 
 const clean: Safety = {
@@ -280,6 +293,62 @@ export function isCanonical(token: { symbol: string; address?: string }) {
   return Boolean(address && CANONICAL_ADDR.has(address));
 }
 
+const MAJOR_HOME: Record<string, "*" | readonly string[]> = {
+  ETH: ["Ethereum", "Base", "Arbitrum", "Optimism", "Scroll", "NEAR"],
+  WETH: ["Ethereum", "Base", "Arbitrum", "Optimism", "Scroll"],
+  SOL: ["Solana", "NEAR"],
+  BTC: ["Bitcoin", "NEAR"],
+  WBTC: ["Ethereum", "Arbitrum", "Base", "Polygon", "Optimism", "Avalanche", "BNB", "NEAR"],
+  CBBTC: "*",
+  BNB: ["BNB"],
+  WBNB: ["BNB"],
+  AVAX: ["Avalanche"],
+  POL: ["Polygon"],
+  MATIC: ["Polygon"],
+  ARB: ["Arbitrum"],
+  OP: ["Optimism"],
+  USDC: "*",
+  "USDC.E": "*",
+  USDT: "*",
+  "USDT.E": "*",
+  DAI: "*",
+  FRAX: "*",
+  LINK: "*",
+  UNI: ["Ethereum", "Arbitrum", "Base", "Polygon", "Optimism", "BNB", "Avalanche"],
+  AAVE: ["Ethereum", "Arbitrum", "Base", "Polygon", "Optimism", "Avalanche"],
+  STETH: ["Ethereum"],
+  WSTETH: ["Ethereum"],
+  TON: ["TON"],
+  SUI: ["Sui"],
+  APT: ["Aptos"],
+  DOGE: ["Dogecoin"],
+  XRP: ["XRP"],
+  LTC: ["Litecoin"],
+  BCH: ["Bitcoin Cash"],
+  ZEC: ["Zcash"],
+  ADA: ["Cardano"],
+  TRX: ["Tron"],
+  BERA: ["Berachain"],
+  OKB: ["X Layer"],
+  GNO: ["Gnosis"],
+  XDAI: ["Gnosis"],
+  AURORA: ["Aurora", "NEAR"],
+  NEAR: ["NEAR"],
+};
+
+export function isMajorAsset(symbol: string, chain: string) {
+  const base = symbol.split(".")[0].toUpperCase();
+  const home = MAJOR_HOME[base];
+  if (!home) return false;
+  return home === "*" || home.includes(chain);
+}
+
+export function sealMajors() {
+  for (const token of TOKENS) {
+    if (!token.verified && isMajorAsset(token.symbol, token.chain)) token.verified = true;
+  }
+}
+
 export function qualityScore(token: { liqN: number; volN: number; txnsN: number; ageH: number; mcapN?: number }): number | null {
   const liqN = token.liqN || 0;
   const volN = token.volN || 0;
@@ -332,7 +401,7 @@ export function scoreLabel(token: { liqN: number; volN: number; txnsN: number; a
 function iconRank(icon: string | undefined) {
   if (!icon || icon.startsWith("data:image/svg+xml;utf8,")) return 0;
   if (icon.includes("cdn.dexscreener.com/tokens/") || icon.includes("dd.dexscreener.com/ds-data/tokens/")) return 1;
-  if (icon.startsWith("/tokens/")) return 2;
+  if (icon.startsWith("/tokens/") || icon.startsWith("/chains/")) return 2;
   if (icon.startsWith("https://") || icon.startsWith("data:image/")) return 3;
   return 0;
 }

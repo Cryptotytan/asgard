@@ -1,4 +1,4 @@
-import { ensureToken, isCanonical, money, preferIcon, qualityScore, TOKENS, type WindowId } from "@/lib/market";
+import { ensureToken, isCanonical, isMajorAsset, money, preferIcon, qualityScore, TOKENS, type WindowId } from "@/lib/market";
 import { chainLabel, foreignIcon } from "@/lib/chains";
 import { loadIntentAssets, type IntentAsset } from "@/lib/intents";
 import { useDesk } from "@/lib/store";
@@ -41,6 +41,24 @@ const LOCAL: Record<string, string> = {
   BRRR: "/tokens/brrr.svg",
   HOT: "/tokens/hot.svg",
   LINEAR: "/tokens/linear.svg",
+  SOL: "/chains/solana.png",
+  BNB: "/chains/bnb.png",
+  BTC: "/chains/bitcoin.png",
+  AVAX: "/chains/avalanche.png",
+  POL: "/chains/polygon.png",
+  MATIC: "/chains/polygon.png",
+  ARB: "/chains/arbitrum.png",
+  OP: "/chains/optimism.png",
+  TON: "/chains/ton.png",
+  SUI: "/chains/sui.png",
+  APT: "/chains/aptos.png",
+  DOGE: "/chains/doge.png",
+  XRP: "/chains/xrp.png",
+  LTC: "/chains/ltc.png",
+  BCH: "/chains/bch.png",
+  ZEC: "/chains/zec.png",
+  ADA: "/chains/cardano.png",
+  TRX: "/chains/tron.png",
 };
 
 type DexPair = {
@@ -143,7 +161,7 @@ function publishForeign(assets: IntentAsset[]) {
     token.price = Number(asset.price);
     token.listed = true;
     token.rails = [chain];
-    token.verified = false;
+    token.verified = isMajorAsset(base, chain);
     token.notes = [`Crosschain on ${chain} via NEAR Intents`];
     const icon = knownLogo(base) || foreignIcon(asset.blockchain, asset.contractAddress);
     if (icon) token.icon = preferIcon(token.icon, icon);
@@ -179,7 +197,7 @@ let discover: string[] = [];
 
 function safeIcon(icon: unknown) {
   if (typeof icon !== "string" || icon.length > 80_000) return "";
-  if (icon.startsWith("https://") || icon.startsWith("/tokens/") || icon.startsWith("data:image/")) return icon;
+  if (icon.startsWith("https://") || icon.startsWith("/tokens/") || icon.startsWith("/chains/") || icon.startsWith("data:image/")) return icon;
   return "";
 }
 
@@ -316,6 +334,10 @@ export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (mar
   if (assets) {
     publishForeign(assets);
     void warmLogos(assets);
+    void paintForeignStats().then(() => {
+      useDesk.setState((state) => ({ clock: state.clock + 1 }));
+      onPaint?.({ ...marks });
+    });
     onPaint?.({ ...marks });
   }
   marketsSynced = true;
@@ -370,6 +392,110 @@ export async function searchNearTokens(query: string) {
   useDesk.setState((state) => ({ clock: state.clock + 1 }));
   const needle = clean.toLowerCase();
   return TOKENS.filter((token) => token.listed && `${token.symbol} ${token.name} ${token.address ?? ""}`.toLowerCase().includes(needle));
+}
+
+const DEX_SLUG: Record<string, string> = {
+  Ethereum: "ethereum",
+  Solana: "solana",
+  Base: "base",
+  Arbitrum: "arbitrum",
+  Optimism: "optimism",
+  BNB: "bsc",
+  Polygon: "polygon",
+  Avalanche: "avalanche",
+  Gnosis: "gnosis",
+  Aurora: "aurora",
+  Scroll: "scroll",
+  Berachain: "berachain",
+  Tron: "tron",
+  TON: "ton",
+  Sui: "sui",
+  Aptos: "aptos",
+  "X Layer": "xlayer",
+};
+
+const NATIVE_PAIR: Record<string, string> = {
+  "Ethereum|ETH": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+  "Base|ETH": "0x4200000000000000000000000000000000000006",
+  "Arbitrum|ETH": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+  "Optimism|ETH": "0x4200000000000000000000000000000000000006",
+  "Scroll|ETH": "0x5300000000000000000000000000000000000004",
+  "BNB|BNB": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+  "Polygon|POL": "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",
+  "Polygon|MATIC": "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",
+  "Avalanche|AVAX": "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7",
+  "Solana|SOL": "So11111111111111111111111111111111111111112",
+};
+
+async function paintForeignStats() {
+  const groups = new Map<string, { symbol: string; address: string }[]>();
+  for (const token of TOKENS) {
+    if (!token.listed || token.chain === "NEAR") continue;
+    const slug = DEX_SLUG[token.chain];
+    if (!slug) continue;
+    const base = token.symbol.split(".")[0].toUpperCase();
+    const raw = token.address ?? "";
+    const address = raw && !raw.includes(":") && !raw.endsWith(".near") ? raw : NATIVE_PAIR[`${token.chain}|${base}`];
+    if (!address) continue;
+    const list = groups.get(slug) ?? [];
+    list.push({ symbol: token.symbol, address });
+    groups.set(slug, list);
+  }
+  await Promise.all(
+    [...groups.entries()].map(async ([slug, rows]) => {
+      for (let index = 0; index < rows.length; index += 30) {
+        const chunk = rows.slice(index, index + 30);
+        const pairs = await getJson<DexPair[]>(`https://api.dexscreener.com/tokens/v1/${slug}/${chunk.map((row) => row.address).join(",")}`).catch(() => null);
+        if (!Array.isArray(pairs)) continue;
+        const best = new Map<string, DexPair>();
+        for (const pair of pairs) {
+          const id = pair.baseToken?.address?.toLowerCase();
+          if (!id) continue;
+          const prev = best.get(id);
+          if (!prev || num(pair.liquidity?.usd) >= num(prev.liquidity?.usd)) best.set(id, pair);
+        }
+        for (const row of chunk) {
+          const pair = best.get(row.address.toLowerCase());
+          const token = TOKENS.find((item) => item.symbol === row.symbol);
+          if (pair && token) applyLiveStats(token, pair);
+        }
+      }
+    }),
+  );
+}
+
+function applyLiveStats(token: (typeof TOKENS)[number], pair: DexPair) {
+  const liq = num(pair.liquidity?.usd);
+  const vol = windows(pair.volume);
+  const change = windows(pair.priceChange);
+  const tx = pair.txns?.h24;
+  const buys = Math.max(0, Math.round(num(tx?.buys)));
+  const sells = Math.max(0, Math.round(num(tx?.sells)));
+  const mcapN = num(pair.marketCap) || num(pair.fdv);
+  if (liq > 0) {
+    token.liqN = liq;
+    token.liquidity = money(liq);
+  }
+  if (vol.h24 > 0) {
+    token.volBy = vol;
+    token.volN = vol.h24;
+    token.volume = money(vol.h24);
+  }
+  token.windows = change;
+  token.change = change.h24;
+  token.txnsN = buys + sells;
+  token.buys = buys;
+  token.sells = sells;
+  token.txns = token.txnsN > 0 ? token.txnsN.toLocaleString("en-US") : "—";
+  if (pair.pairCreatedAt) token.ageH = Math.max(0.05, (Date.now() - pair.pairCreatedAt) / 3_600_000);
+  if (mcapN > 0) {
+    token.mcapN = mcapN;
+    token.mcap = money(mcapN);
+    token.fdv = num(pair.fdv) > 0 ? money(num(pair.fdv)) : token.mcap;
+  }
+  token.score = qualityScore(token) ?? token.score;
+  const image = safeIcon(pair.info?.imageUrl);
+  if (image) token.icon = preferIcon(token.icon, image);
 }
 
 function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {

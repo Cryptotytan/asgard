@@ -9,7 +9,7 @@ import { TokenTrade } from "@/components/terminal/TokenTrade";
 import { TrackerDesk } from "@/components/terminal/TrackerDesk";
 import { VaultDesk } from "@/components/terminal/VaultDesk";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
-import { canPerp, fmt, money, tokenBySymbol, TOKENS } from "@/lib/market";
+import { canPerp, fmt, money, sealMajors, tokenBySymbol, TOKENS } from "@/lib/market";
 import { setWalletOpener, useDesk } from "@/lib/store";
 import { startLiveFeed } from "@/lib/live";
 import { visitToken } from "@/lib/watch";
@@ -88,6 +88,7 @@ export function Terminal() {
   const walletUsd = Object.entries(balances).reduce((sum, [name, amount]) => sum + amount * (marks[name] ?? TOKENS.find((token) => token.symbol === name)?.price ?? 0), 0);
   const fit = view === "vault";
   const lock = view === "swap" || view === "lend";
+  sealMajors();
 
   function openToken(next: string) {
     setSymbol(next);
@@ -521,16 +522,18 @@ function WalletButton({ compact = false, onConnectNew }: { compact?: boolean; on
         )}
       </button>
       {open && (
-        <div className="absolute right-0 top-12 z-50 w-[min(18rem,calc(100vw-1.5rem))] rounded-2xl border border-line bg-bg p-3 shadow-xl">
-          <p className="px-1 pb-2 text-xs text-muted">
-            {rows.length} {rows.length === 1 ? "wallet" : "wallets"} connected
-          </p>
+        <div className="absolute right-0 top-12 z-50 w-[min(20rem,calc(100vw-1.25rem))] rounded-2xl border border-line bg-[#101412] p-2 shadow-2xl">
+          <div className="flex items-center justify-between px-2 py-1.5">
+            <p className="text-sm font-semibold">Wallets</p>
+            <p className="text-[11px] text-muted">{rows.length} connected</p>
+          </div>
           <ul className="space-y-1">
             {rows.map((row) => (
               <li key={row.id} className="flex items-center gap-2 rounded-xl bg-surface px-2 py-2">
+                <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/15 text-[11px] font-bold text-primary">{row.label.slice(0, 1)}</span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-[10px] uppercase tracking-wide text-muted">{row.label}</span>
-                  <span className="block truncate font-mono text-xs">{row.address}</span>
+                  <span className="block text-xs font-semibold">{row.label}</span>
+                  <span className="block truncate font-mono text-[11px] text-muted">{row.address}</span>
                 </span>
                 <button
                   type="button"
@@ -538,14 +541,14 @@ function WalletButton({ compact = false, onConnectNew }: { compact?: boolean; on
                     if (row.id === "near") disconnect();
                     else disconnectForeign(row.id);
                   }}
-                  className="shrink-0 rounded-lg px-2 py-1 text-xs text-danger"
+                  className="h-7 shrink-0 rounded-full border border-danger/40 px-2 text-[11px] text-danger"
                 >
                   Disconnect
                 </button>
               </li>
             ))}
           </ul>
-          {rows.length === 0 && <p className="px-1 pb-2 text-sm text-muted">No wallet connected yet.</p>}
+          {rows.length === 0 && <p className="px-2 py-2 text-sm text-muted">No wallet connected yet.</p>}
           <button
             type="button"
             onClick={() => {

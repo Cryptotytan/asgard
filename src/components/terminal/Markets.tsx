@@ -69,13 +69,13 @@ export function Markets({
           ))}
         </div>
         <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center">
-          <div className="grid flex-1 grid-cols-4 rounded-lg bg-surface p-0.5 sm:flex sm:flex-none">
+          <div className="inline-flex w-fit max-w-full rounded-full bg-surface p-1">
             {WINDOWS.map((item) => (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => setWin(item.id)}
-                className={`h-8 rounded-md px-1 text-xs sm:px-2.5 ${win === item.id ? "bg-surface-2 text-fg" : "text-muted"}`}
+                className={`h-8 min-w-11 rounded-full px-3 text-xs font-semibold ${win === item.id ? "bg-bg text-fg shadow-[inset_0_0_0_1px_var(--color-line)]" : "text-muted"}`}
               >
                 {item.label}
               </button>
@@ -285,8 +285,13 @@ function MobileRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowProp
         </span>
       </button>
       <div className="mt-2 flex items-center justify-between gap-2">
-        <p className="text-xs text-muted">
-          Liq {token.liqN > 0 ? money(token.liqN) : "—"} · Vol {volume > 0 ? money(volume) : "—"}
+        <p className="min-w-0 text-[11px] leading-4 text-muted">
+          <span className="block truncate">
+            {ageLabel(token.ageH)} · {token.txnsN > 0 ? `${compactCount(token.txnsN)} txns` : "— txns"}
+          </span>
+          <span className="block truncate">
+            Liq {token.liqN > 0 ? money(token.liqN) : "—"} · Vol {volume > 0 ? money(volume) : "—"}
+          </span>
         </p>
         <div className="flex items-center gap-1">
           <button type="button" aria-label={starred ? "Unstar" : "Star"} onClick={() => toggleStar(token.symbol)} className="grid size-9 place-items-center text-muted">
