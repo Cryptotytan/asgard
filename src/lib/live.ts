@@ -237,10 +237,10 @@ function enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
 }
 
 async function llamaSeries(id: string, start: number, period: string, search: number, span = PAGE) {
-  const response = await fetch(
-    `${LLAMA}/chart/${id}?start=${Math.floor(start)}&span=${span}&period=${period}&searchWidth=${search}`,
-  );
-  if (response.status === 429 || response.status >= 500) return null;
+  const response = await fetch(`${LLAMA}/chart/${id}?start=${Math.floor(start)}&span=${span}&period=${period}&searchWidth=${search}`, {
+    signal: AbortSignal.timeout(8000),
+  }).catch(() => null);
+  if (!response || response.status === 429 || response.status >= 500) return null;
   if (!response.ok) return [] as Point[];
   const body = (await response.json()) as { coins?: Record<string, { prices?: Point[] }> };
   const coin = body.coins?.[id] ?? Object.values(body.coins ?? {})[0];
@@ -296,7 +296,7 @@ export async function loadCandles(symbol: string, frame = "5m") {
   const key = `${symbol}:${frame}`;
   const cached = candles.get(key);
   const stamp = candleAt.get(key) ?? 0;
-  if (cached && cached.length > 1 && Date.now() - stamp < 20_000) return cached;
+  if (cached && cached.length > 1 && Date.now() - stamp < 180_000) return cached;
   const pending = historyFlight.get(key);
   if (pending) return pending;
   const job = enqueue(key, () => fetchCandles(symbol, frame, key)).finally(() => historyFlight.delete(key));
@@ -336,7 +336,7 @@ function mergeBars(left: Candle[] = [], right: Candle[] = []) {
 }
 
 async function geckoGet(url: string) {
-  const response = await fetch(url, { headers: { accept: "application/json" } }).catch(() => null);
+  const response = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) }).catch(() => null);
   if (!response || response.status === 429 || response.status >= 500 || !response.ok) return null;
   return response.json() as Promise<Record<string, unknown>>;
 }
@@ -382,17 +382,17 @@ async function loadGeckoBook(symbol: string, frame: string, book: Book) {
   if (!network || !raw || raw.includes(":")) return false;
   const address = raw.startsWith("0x") ? raw.toLowerCase() : raw;
   const expect = token?.price ?? 0;
-  const hinted = token && token.chain !== "NEAR" ? knownPool(token.chain, raw) : "";
+  const hinted = token ? knownPool(token.chain, raw) : "";
   let pool = book.id.startsWith("gecko:") ? book.id.split(":").slice(2).join(":") : hinted || (await geckoPool(network, address, expect));
   if (!pool) return false;
-  let bars = await geckoBars(network, pool, frame, undefined, 120);
+  let bars = await geckoBars(network, pool, frame, undefined, 40);
   const close = bars[bars.length - 1]?.c ?? 0;
   if (bars.length < 2 || !priceAgrees(close, expect)) {
     poolCache.delete(`${network}:${address}`);
     if (!hinted) return false;
     pool = await geckoPool(network, address, expect);
     if (!pool) return false;
-    bars = await geckoBars(network, pool, frame, undefined, 120);
+    bars = await geckoBars(network, pool, frame, undefined, 40);
     if (bars.length < 2 || !priceAgrees(bars[bars.length - 1]?.c ?? 0, expect)) return false;
   }
   if (book.id && !book.id.startsWith("gecko:") && book.points.length > 1) return false;
@@ -454,7 +454,7 @@ async function fetchCandles(symbol: string, frame: string, key: string) {
     await Promise.all([
       (async () => {
         if (!primary) return;
-        const part = await llamaSeries(primary, start, plan.period, plan.search, market ? 180 : 80);
+        const part = await llamaSeries(primary, start, plan.period, plan.search, 16);
         if (!part || part.length < 2 || book.id.startsWith("gecko:")) return;
         const last = part[part.length - 1]?.price ?? 0;
         const expect = TOKENS.find((item) => item.symbol === symbol)?.price ?? 0;
@@ -473,7 +473,7 @@ async function fetchCandles(symbol: string, frame: string, key: string) {
     ]);
     if (!shown && primary) {
       for (const id of llamaCandidates(symbol).slice(1, 3)) {
-        const part = await llamaSeries(id, start, plan.period, plan.search, 80);
+        const part = await llamaSeries(id, start, plan.period, plan.search, 16);
         if (!part || part.length < 2) continue;
         book.id = id;
         book.from = start;

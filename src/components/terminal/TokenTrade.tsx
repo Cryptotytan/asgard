@@ -19,7 +19,7 @@ import {
   type Token,
 } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
-import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, watchCandles, type HolderBand, type HolderRow } from "@/lib/live";
+import { candleMeta, liveCandles, livePrints, loadCandles, loadHolders, loadOlderCandles, loadPrints, watchCandles, type HolderBand, type HolderRow } from "@/lib/live";
 import { searchTokens } from "@/lib/dex";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 
@@ -291,6 +291,7 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
                     setQuery("");
                   }}
                   className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-surface-2"
+                  onPointerDown={() => void loadCandles(item.symbol, "1D")}
                 >
                   <TokenIcon token={item} />
                   <span className="min-w-0 flex-1">
