@@ -401,9 +401,10 @@ export function scoreLabel(token: { liqN: number; volN: number; txnsN: number; a
 
 function iconRank(icon: string | undefined) {
   if (!icon || icon.startsWith("data:image/svg+xml;utf8,")) return 0;
-  if (icon.includes("cdn.dexscreener.com/tokens/")) return 1;
-  if (icon.startsWith("https://") || icon.startsWith("data:image/")) return 3;
-  if (icon.startsWith("/tokens/") || icon.startsWith("/chains/")) return 4;
+  if (icon.includes("cdn.dexscreener.com/tokens/") || icon.includes("dd.dexscreener.com/ds-data/tokens/")) return 1;
+  if (icon.startsWith("data:image/")) return 2;
+  if (icon.startsWith("/tokens/") || icon.startsWith("/chains/")) return 3;
+  if (icon.startsWith("https://")) return 5;
   return 0;
 }
 

@@ -21,13 +21,14 @@ export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "s
   const seen = useRef(token.symbol + token.icon + (token.chain ?? ""));
   const [turn, setTurn] = useState<"a" | "b" | null>(null);
   const [step, setStep] = useState(0);
+  const key = `${token.chain ?? ""}:${token.address ?? token.symbol}`;
   const sources = useMemo(() => {
-    const key = `${token.chain ?? ""}:${token.address ?? token.symbol}`;
+    const remote = token.icon?.startsWith("https://") ? token.icon : "";
     const local = knownLogo(token.symbol) || knownLogo(token.symbol.split(".")[0] ?? token.symbol);
     const extra = logoFallback(token);
-    const list = [iconCache.get(key), local, token.icon, extra].filter((src): src is string => Boolean(src && !src.startsWith("data:image/svg+xml;utf8,")));
+    const list = [iconCache.get(key), remote, local, token.icon, extra].filter((src): src is string => Boolean(src && !src.startsWith("data:image/svg+xml;utf8,")));
     return [...new Set(list)];
-  }, [token.address, token.chain, token.icon, token.symbol]);
+  }, [key, token.icon, token.symbol]);
   useEffect(() => {
     setStep(0);
     if (seen.current === token.symbol + token.icon) return;
@@ -44,7 +45,7 @@ export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "s
         height={24}
         decoding="async"
         loading="eager"
-        onLoad={() => iconCache.set(`${token.chain ?? ""}:${token.symbol}`, src)}
+        onLoad={() => iconCache.set(key, src)}
         onError={() => setStep((current) => current + 1)}
         className={cn("size-6 shrink-0 rounded-full bg-surface-2 object-cover", className)}
       />

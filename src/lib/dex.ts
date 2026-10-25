@@ -508,6 +508,7 @@ const DEX_LABEL_SLUG: Record<string, string> = {
   Monad: "monad",
   Plasma: "plasma",
   Abstract: "abstract",
+  NEAR: "near",
 };
 
 const SLUG_LABEL: Record<string, string> = Object.fromEntries(Object.entries(DEX_LABEL_SLUG).map(([label, slug]) => [slug, label]));
@@ -608,7 +609,7 @@ function ingestForeignPairs(pairs: DexPair[], icons: Map<string, string>, loose 
 
 async function pullDexMarkets() {
   dropOtherChains();
-  const feeds = await Promise.all(
+  const [top, latest, profiles] = await Promise.all(
     [
       getJson<{ chainId?: string; tokenAddress?: string; icon?: string }[]>("https://api.dexscreener.com/token-boosts/top/v1"),
       getJson<{ chainId?: string; tokenAddress?: string; icon?: string }[]>("https://api.dexscreener.com/token-boosts/latest/v1"),
@@ -617,15 +618,26 @@ async function pullDexMarkets() {
   );
   const icons = new Map<string, string>();
   const bySlug = new Map<string, string[]>();
-  for (const row of feeds.flatMap((rows) => rows ?? [])) {
+  if (top) {
+    boostRank.clear();
+    let place = 0;
+    for (const row of top) {
+      const chain = SLUG_LABEL[row.chainId ?? ""];
+      if (!chain || !row.tokenAddress) continue;
+      const key = boostKey(chain, row.tokenAddress);
+      if (!boostRank.has(key)) boostRank.set(key, 400 - place);
+      place += 1;
+    }
+  }
+  for (const row of [top, latest, profiles].flatMap((rows) => rows ?? [])) {
     const slug = row.chainId ?? "";
     const address = row.tokenAddress ?? "";
-    if (!SLUG_LABEL[slug] || slug === "near" || !address) continue;
-    const id = slug === "solana" ? address : address.toLowerCase();
-    const key = `${slug}:${id}`;
-    if (row.icon) icons.set(key, row.icon);
+    const chain = SLUG_LABEL[slug];
+    if (!chain || !address) continue;
+    const id = slug === "solana" || slug === "near" || slug === "sui" || slug === "aptos" || slug === "ton" ? address : address.toLowerCase();
+    if (row.icon) icons.set(`${slug}:${id}`, row.icon);
     const list = bySlug.get(slug) ?? [];
-    if (list.length < 36 && !list.some((item) => item.toLowerCase() === address.toLowerCase())) list.push(address);
+    if (list.length < 30 && !list.some((item) => item.toLowerCase() === address.toLowerCase())) list.push(address);
     bySlug.set(slug, list);
   }
   const queries = ["bonk", "wif", "pepe", "brett", "mog", "popcat", "fartcoin", "pnut", "spx", "floki"];
@@ -640,6 +652,13 @@ async function pullDexMarkets() {
       }
     }),
   );
+  for (const token of TOKENS) {
+    if (!token.listed || !token.address) continue;
+    const slug = DEX_SLUG[token.chain];
+    if (!slug) continue;
+    const id = slug === "solana" || slug === "near" || slug === "sui" || slug === "aptos" || slug === "ton" ? token.address : token.address.toLowerCase();
+    paintIcon(token, icons.get(`${slug}:${id}`));
+  }
   useDesk.setState((state) => ({ clock: state.clock + 1 }));
 }
 

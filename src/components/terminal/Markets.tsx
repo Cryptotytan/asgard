@@ -14,7 +14,7 @@ import {
   type Token,
   type WindowId,
 } from "@/lib/market";
-import { marketsSynced } from "@/lib/dex";
+import { marketsSynced, trendScore } from "@/lib/dex";
 import { chainIcon } from "@/lib/chains";
 import { hideToken, toggleStar, useWatch, visitToken } from "@/lib/watch";
 import { useDesk } from "@/lib/store";
@@ -62,12 +62,8 @@ export function Markets({
       return [...list].sort((a, b) => rank(b) - rank(a) || (a.ageH > 0 ? a.ageH : Number.POSITIVE_INFINITY) - (b.ageH > 0 ? b.ageH : Number.POSITIVE_INFINITY));
     }
     if (tab === "All") return [...list].sort((a, b) => rank(b) - rank(a) || b.mcapN - a.mcapN || b.liqN - a.liqN);
-    const volumeOf = (token: Token) => {
-      const windowVol = token.volBy?.[win] ?? 0;
-      return windowVol > 0 ? windowVol : token.volN || 0;
-    };
-    return [...list].sort((a, b) => rank(b) - rank(a) || volumeOf(b) - volumeOf(a) || b.txnsN - a.txnsN || b.liqN - a.liqN);
-  }, [chain, clock, query, tab, verifiedOnly, watch.hidden, watch.recents, win]);
+    return [...list].sort((a, b) => rank(b) - rank(a) || trendScore(b) - trendScore(a) || b.liqN - a.liqN);
+  }, [chain, clock, query, tab, verifiedOnly, watch.hidden, watch.recents]);
 
   useEffect(() => {
     if (!chainOpen) return;
@@ -201,7 +197,16 @@ export function Markets({
             ))}
           </div>
           <div className="hidden overflow-x-auto md:block">
-            <table className="market-table w-full text-left text-sm">
+            <table className="market-table w-full table-fixed text-left text-sm">
+              <colgroup>
+                <col className="w-[28%]" />
+                <col className="w-[16%]" />
+                <col className="w-[18%]" />
+                <col className="w-[12%]" />
+                <col className="w-[12%]" />
+                <col className="w-[8%]" />
+                <col className="w-[6%]" />
+              </colgroup>
               <thead className="text-xs uppercase tracking-wide text-muted">
                 <tr className="border-b border-line">
                   <th className="px-4 py-3 font-medium">Token</th>
@@ -270,7 +275,7 @@ function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowPro
           </div>
         </div>
       </td>
-      <td className="px-3 py-3 font-mono">
+      <td className="px-3 py-3 font-mono whitespace-nowrap">
         <p>{px(token.price)}</p>
         <p className={`text-xs ${!Number.isFinite(token.price) ? "text-muted" : change >= 0 ? "text-primary" : "text-danger"}`}>
           {token.mcapN > 0 ? `${money(token.mcapN)} · ` : ""}
@@ -293,9 +298,9 @@ function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowPro
           <p className="font-mono text-xs text-muted">—</p>
         )}
       </td>
-      <td className="px-3 py-3 font-mono">{token.liqN > 0 ? money(token.liqN) : "—"}</td>
-      <td className="px-3 py-3 font-mono">{volume > 0 ? money(volume) : "—"}</td>
-      <td className="px-3 py-3 font-mono">
+      <td className="px-3 py-3 font-mono whitespace-nowrap">{token.liqN > 0 ? money(token.liqN) : "—"}</td>
+      <td className="px-3 py-3 font-mono whitespace-nowrap">{volume > 0 ? money(volume) : "—"}</td>
+      <td className="px-3 py-3 font-mono whitespace-nowrap">
         <p>{token.txnsN > 0 ? token.txnsN.toLocaleString("en-US") : "—"}</p>
       </td>
       <td className="px-4 py-3 text-right">
