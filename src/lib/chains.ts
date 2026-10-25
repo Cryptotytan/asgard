@@ -23,16 +23,6 @@ export const CHAINS_META: ChainMeta[] = [
   { id: "bera", label: "Berachain", kind: "evm", chainId: 80094, rpc: "https://rpc.berachain.com", icon: "/chains/bera.png" },
   { id: "xlayer", label: "X Layer", kind: "evm", chainId: 196, rpc: "https://rpc.xlayer.tech", icon: "/chains/xlayer.jpg" },
   { id: "sol", label: "Solana", kind: "sol", icon: "/chains/solana.png" },
-  { id: "btc", label: "Bitcoin", kind: "btc", icon: "/chains/bitcoin.png" },
-  { id: "tron", label: "Tron", kind: "other", icon: "/chains/tron.png" },
-  { id: "sui", label: "Sui", kind: "other", icon: "/chains/sui.png" },
-  { id: "aptos", label: "Aptos", kind: "other", icon: "/chains/aptos.png" },
-  { id: "doge", label: "Dogecoin", kind: "other", icon: "/chains/doge.png" },
-  { id: "xrp", label: "XRP", kind: "other", icon: "/chains/xrp.png" },
-  { id: "ltc", label: "Litecoin", kind: "other", icon: "/chains/ltc.png" },
-  { id: "bch", label: "Bitcoin Cash", kind: "other", icon: "/chains/bch.png" },
-  { id: "zec", label: "Zcash", kind: "other", icon: "/chains/zec.png" },
-  { id: "cardano", label: "Cardano", kind: "other", icon: "/chains/cardano.png" },
   { id: "aurora", label: "Aurora", kind: "evm", chainId: 1313161554, rpc: "https://mainnet.aurora.dev", icon: "/tokens/aurora.jpg" },
 ];
 

@@ -21,7 +21,7 @@ import {
 } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
 import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, watchCandles, type HolderRow } from "@/lib/live";
-import { searchNearTokens } from "@/lib/dex";
+import { searchTokens } from "@/lib/dex";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 
 const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"] as const;
@@ -239,7 +239,7 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
     let cancel = false;
     setSearching(true);
     const timer = window.setTimeout(() => {
-      void searchNearTokens(needle)
+      void searchTokens(needle)
         .catch(() => undefined)
         .finally(() => {
           if (!cancel) setSearching(false);
@@ -316,7 +316,7 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
             ))}
             {list.length === 0 && (
               <li className="px-2 py-6 text-center text-sm text-muted">
-                {searching ? "Searching the NEAR book…" : query.trim() ? "No NEAR token matches that name or contract." : "Loading live NEAR markets…"}
+                {searching ? "Looking up that token…" : query.trim() ? "No token matches that name or contract." : "Loading live markets…"}
               </li>
             )}
           </ul>

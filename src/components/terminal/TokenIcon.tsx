@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { knownLogo, lookupNearToken, searchNearTokens } from "@/lib/dex";
+import { knownLogo, logoFallback, lookupNearToken, searchTokens } from "@/lib/dex";
 import { chainIcon } from "@/lib/chains";
 import { CHAIN_ICON, CHAINS, displayName, fmt, glyph, px, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
@@ -22,12 +22,12 @@ export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "s
   const [turn, setTurn] = useState<"a" | "b" | null>(null);
   const [step, setStep] = useState(0);
   const sources = useMemo(() => {
-    const key = `${token.chain ?? ""}:${token.symbol}`;
-    const local = knownLogo(token.symbol) || knownLogo((token.symbol.split(".")[0] ?? token.symbol));
-    const own = token.icon && !token.icon.includes("dexscreener.com") ? token.icon : "";
-    const list = [iconCache.get(key), local, own, token.icon].filter((src): src is string => Boolean(src && !src.startsWith("data:image/svg+xml;utf8,")));
+    const key = `${token.chain ?? ""}:${token.address ?? token.symbol}`;
+    const local = knownLogo(token.symbol) || knownLogo(token.symbol.split(".")[0] ?? token.symbol);
+    const extra = logoFallback(token);
+    const list = [iconCache.get(key), local, token.icon, extra].filter((src): src is string => Boolean(src && !src.startsWith("data:image/svg+xml;utf8,")));
     return [...new Set(list)];
-  }, [token.chain, token.icon, token.symbol]);
+  }, [token.address, token.chain, token.icon, token.symbol]);
   useEffect(() => {
     setStep(0);
     if (seen.current === token.symbol + token.icon) return;
@@ -116,7 +116,7 @@ export function TokenPicker({
     let cancel = false;
     const timer = window.setTimeout(() => {
       setLooking(true);
-      void searchNearTokens(raw)
+      void searchTokens(raw)
         .catch(() => lookupNearToken(raw).then(() => undefined))
         .catch(() => undefined)
         .finally(() => {
@@ -172,7 +172,7 @@ export function TokenPicker({
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Name or symbol"
+                placeholder="Name, symbol, or contract address"
                 className="min-w-0 flex-1 bg-transparent text-sm outline-none"
               />
             </label>

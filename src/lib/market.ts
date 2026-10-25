@@ -75,7 +75,7 @@ export const WINDOWS: { id: WindowId; label: string }[] = [
   { id: "h24", label: "24H" },
 ];
 
-export const CHAINS = ["NEAR", "Ethereum", "Solana", "Base", "Arbitrum", "Optimism", "BNB", "Polygon", "Avalanche", "Bitcoin", "Gnosis", "Aurora"] as const;
+export const CHAINS = ["NEAR", "Ethereum", "Solana", "Base", "Arbitrum", "Optimism", "BNB", "Polygon", "Avalanche", "Gnosis", "Aurora", "Scroll", "Berachain", "X Layer"] as const;
 
 export const CHAIN_ICON: Record<string, string> = {
   NEAR: "/tokens/near.svg",
@@ -87,21 +87,11 @@ export const CHAIN_ICON: Record<string, string> = {
   BNB: "/chains/bnb.png",
   Polygon: "/chains/polygon.png",
   Avalanche: "/chains/avalanche.png",
-  Bitcoin: "/chains/bitcoin.png",
   Gnosis: "/chains/gnosis.png",
   Aurora: "/tokens/aurora.jpg",
   Scroll: "/chains/scroll.png",
   Berachain: "/chains/bera.png",
   "X Layer": "/chains/xlayer.jpg",
-  Tron: "/chains/tron.png",
-  Sui: "/chains/sui.png",
-  Aptos: "/chains/aptos.png",
-  Dogecoin: "/chains/doge.png",
-  XRP: "/chains/xrp.png",
-  Litecoin: "/chains/ltc.png",
-  "Bitcoin Cash": "/chains/bch.png",
-  Zcash: "/chains/zec.png",
-  Cardano: "/chains/cardano.png",
 };
 
 const clean: Safety = {
@@ -296,7 +286,7 @@ const MAJOR_HOME: Record<string, "*" | readonly string[]> = {
   ETH: ["Ethereum", "Base", "Arbitrum", "Optimism", "Scroll", "NEAR"],
   WETH: ["Ethereum", "Base", "Arbitrum", "Optimism", "Scroll"],
   SOL: ["Solana", "NEAR"],
-  BTC: ["Bitcoin", "NEAR"],
+  BTC: ["NEAR"],
   WBTC: ["Ethereum", "Arbitrum", "Base", "Polygon", "Optimism", "Avalanche", "BNB", "NEAR"],
   CBBTC: "*",
   BNB: ["BNB"],
@@ -317,15 +307,6 @@ const MAJOR_HOME: Record<string, "*" | readonly string[]> = {
   AAVE: ["Ethereum", "Arbitrum", "Base", "Polygon", "Optimism", "Avalanche"],
   STETH: ["Ethereum"],
   WSTETH: ["Ethereum"],
-  SUI: ["Sui"],
-  APT: ["Aptos"],
-  DOGE: ["Dogecoin"],
-  XRP: ["XRP"],
-  LTC: ["Litecoin"],
-  BCH: ["Bitcoin Cash"],
-  ZEC: ["Zcash"],
-  ADA: ["Cardano"],
-  TRX: ["Tron"],
   BERA: ["Berachain"],
   OKB: ["X Layer"],
   GNO: ["Gnosis"],
@@ -398,10 +379,16 @@ export function scoreLabel(token: { liqN: number; volN: number; txnsN: number; a
 
 function iconRank(icon: string | undefined) {
   if (!icon || icon.startsWith("data:image/svg+xml;utf8,")) return 0;
-  if (icon.includes("cdn.dexscreener.com/tokens/") || icon.includes("dd.dexscreener.com/ds-data/tokens/")) return 1;
-  if (icon.startsWith("/tokens/") || icon.startsWith("/chains/")) return 2;
+  if (icon.includes("cdn.dexscreener.com/tokens/")) return 1;
   if (icon.startsWith("https://") || icon.startsWith("data:image/")) return 3;
+  if (icon.startsWith("/tokens/") || icon.startsWith("/chains/")) return 4;
   return 0;
+}
+
+function sameTokenAddress(left?: string, right?: string) {
+  if (!left || !right) return false;
+  if (left.startsWith("0x") || left.startsWith("0X") || right.startsWith("0x") || right.startsWith("0X")) return left.toLowerCase() === right.toLowerCase();
+  return left === right;
 }
 
 export function preferIcon(current: string, incoming?: string) {
@@ -411,9 +398,10 @@ export function preferIcon(current: string, incoming?: string) {
 }
 
 export function ensureToken(input: { symbol: string; name: string; price: number; chain?: string; icon?: string; address?: string }) {
+  const chain = input.chain ?? "NEAR";
   const found =
-    (input.address ? TOKENS.find((token) => token.address === input.address) : undefined) ??
-    TOKENS.find((token) => token.symbol.toUpperCase() === input.symbol.toUpperCase());
+    (input.address ? TOKENS.find((token) => token.chain === chain && sameTokenAddress(token.address, input.address)) : undefined) ??
+    TOKENS.find((token) => token.chain === chain && token.symbol.toUpperCase() === input.symbol.toUpperCase());
   if (found) {
     if (input.address) found.address = input.address;
     if (input.icon) found.icon = preferIcon(found.icon, input.icon);

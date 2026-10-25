@@ -1,5 +1,5 @@
 import { ensureToken, isCanonical, isMajorAsset, money, preferIcon, qualityScore, TOKENS, type WindowId } from "@/lib/market";
-import { chainById, foreignIcon } from "@/lib/chains";
+import { chainById, chainByLabel } from "@/lib/chains";
 import { loadIntentAssets, type IntentAsset } from "@/lib/intents";
 import { useDesk } from "@/lib/store";
 
@@ -184,20 +184,18 @@ function publishTradable(map: Map<string, IntentAsset>) {
 }
 
 function publishForeign(assets: IntentAsset[]) {
-  for (const token of TOKENS) {
-    if (token.chain === "TON") token.listed = false;
-  }
+  dropOtherChains();
   for (const asset of assets) {
-    if (asset.blockchain === "near" || asset.blockchain === "ton" || !(Number(asset.price) > 0)) continue;
+    if (asset.blockchain === "near" || !(Number(asset.price) > 0)) continue;
     const meta = chainById(asset.blockchain);
-    if (!meta) continue;
+    if (!meta || (meta.kind !== "evm" && meta.kind !== "sol")) continue;
     const chain = meta.label;
     const base = asset.symbol.replace(/\s/g, "") || chain;
     let token = TOKENS.find((item) => item.assetId === asset.assetId);
     if (!token) {
       const taken = TOKENS.some((item) => item.symbol.toUpperCase() === base.toUpperCase());
       const symbol = taken ? `${base}.${chain}` : base;
-      const icon = knownLogo(base) || foreignIcon(asset.blockchain, asset.contractAddress) || undefined;
+      const icon = knownLogo(base) || undefined;
       token = ensureToken({
         symbol,
         name: `${base} on ${chain}`,
@@ -218,7 +216,7 @@ function publishForeign(assets: IntentAsset[]) {
     token.verified = isMajorAsset(base, chain);
     token.notes = [`Crosschain on ${chain} via NEAR Intents`];
     if (asset.coingeckoId) geckoBySymbol.set(token.symbol, asset.coingeckoId);
-    const icon = knownLogo(base) || foreignIcon(asset.blockchain, asset.contractAddress);
+    const icon = knownLogo(base) || undefined;
     if (icon) token.icon = preferIcon(token.icon, icon);
   }
 }
@@ -287,13 +285,21 @@ export function knownLogo(symbol: string) {
 }
 
 export function iconFor(address: string | undefined, symbol: string, dexImage?: string) {
-  const local = knownLogo(symbol);
+  const local = knownLogo(symbol.split(".")[0] ?? symbol) || knownLogo(symbol);
   if (local) return local;
+  const dex = safeIcon(dexImage);
+  if (dex && !dex.includes("cdn.dexscreener.com/tokens/")) return dex;
   const listed = address ? safeIcon(iconBook?.get(address)) : "";
   if (listed) return listed;
-  const dex = safeIcon(dexImage);
-  if (dex) return dex;
-  return address ? `https://cdn.dexscreener.com/tokens/near/${address}.png` : "";
+  return "";
+}
+
+export function logoFallback(token: { chain?: string; address?: string }) {
+  const slug = token.chain === "NEAR" ? "near" : DEX_LABEL_SLUG[token.chain ?? ""];
+  const address = token.address ?? "";
+  if (!slug || !address || address.includes(":") || address.includes(" ")) return "";
+  const id = slug === "solana" || slug === "near" ? address : address.toLowerCase();
+  return `https://dd.dexscreener.com/ds-data/tokens/${slug}/${id}.png`;
 }
 
 export function applyIconBook(book?: Map<string, string>) {
@@ -419,6 +425,7 @@ export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (mar
   if (assets) {
     publishForeign(assets);
     void warmLogos(assets);
+    void pullDexMarkets();
     void paintForeignStats().then(() => {
       useDesk.setState((state) => ({ clock: state.clock + 1 }));
       onPaint?.({ ...marks });
@@ -479,7 +486,7 @@ export async function searchNearTokens(query: string) {
   return TOKENS.filter((token) => token.listed && `${token.symbol} ${token.name} ${token.address ?? ""}`.toLowerCase().includes(needle));
 }
 
-const DEX_SLUG: Record<string, string> = {
+const DEX_LABEL_SLUG: Record<string, string> = {
   Ethereum: "ethereum",
   Solana: "solana",
   Base: "base",
@@ -492,11 +499,138 @@ const DEX_SLUG: Record<string, string> = {
   Aurora: "aurora",
   Scroll: "scroll",
   Berachain: "berachain",
-  Tron: "tron",
-  Sui: "sui",
-  Aptos: "aptos",
   "X Layer": "xlayer",
 };
+
+const SLUG_LABEL: Record<string, string> = Object.fromEntries(Object.entries(DEX_LABEL_SLUG).map(([label, slug]) => [slug, label]));
+
+const DEX_SLUG = DEX_LABEL_SLUG;
+
+function dropOtherChains() {
+  for (const token of TOKENS) {
+    const meta = chainByLabel(token.chain);
+    if (!meta || (meta.kind !== "near" && meta.kind !== "evm" && meta.kind !== "sol")) token.listed = false;
+  }
+}
+
+function addressKind(value: string) {
+  const raw = value.trim();
+  if (/^0x[a-fA-F0-9]{40}$/.test(raw)) return "evm" as const;
+  if (/^[a-f0-9]{64}$/.test(raw) || /\.near$/i.test(raw) || (raw.includes(".") && /^[a-z0-9._-]+$/i.test(raw))) return "near" as const;
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw)) return "sol" as const;
+  return null;
+}
+
+function symbolFor(base: string, chain: string, address: string) {
+  const clean = base.replace(/\s/g, "").replace(/^\$/, "") || "TOKEN";
+  const same = TOKENS.find((token) => token.chain === chain && sameAddr(token.address, address));
+  if (same) return same.symbol;
+  const taken = TOKENS.some((token) => token.symbol.toUpperCase() === clean.toUpperCase());
+  return taken ? `${clean}.${chain}` : clean;
+}
+
+function ingestForeignPairs(pairs: DexPair[], icons: Map<string, string>, loose = false) {
+  const best = new Map<string, DexPair>();
+  for (const pair of pairs) {
+    const slug = pair.chainId ?? "";
+    const chain = SLUG_LABEL[slug];
+    const address = pair.baseToken?.address;
+    if (!chain || !address || chain === "NEAR") continue;
+    const price = num(pair.priceUsd);
+    const liq = num(pair.liquidity?.usd);
+    const vol = num(pair.volume?.h24);
+    if (!(price > 0) || (!loose && liq < 1000 && vol < 1000)) continue;
+    const key = `${chain}:${slug === "solana" ? address : address.toLowerCase()}`;
+    const prev = best.get(key);
+    if (!prev || liq + vol >= num(prev.liquidity?.usd) + num(prev.volume?.h24)) best.set(key, pair);
+  }
+  for (const [key, pair] of best) {
+    const chain = key.slice(0, key.indexOf(":"));
+    const address = pair.baseToken?.address ?? "";
+    const base = pair.baseToken?.symbol?.replace(/\s/g, "").replace(/^\$/, "") || "TOKEN";
+    const symbol = symbolFor(base, chain, address);
+    const slug = pair.chainId ?? "";
+    const iconKey = `${slug}:${slug === "solana" ? address : address.toLowerCase()}`;
+    const image = safeIcon(pair.info?.imageUrl) || safeIcon(icons.get(iconKey));
+    const token = ensureToken({
+      symbol,
+      name: pair.baseToken?.name || base,
+      price: num(pair.priceUsd),
+      chain,
+      icon: knownLogo(base) || image || undefined,
+      address,
+    });
+    if (token.chain !== chain) continue;
+    token.address = address;
+    token.chain = chain;
+    token.listed = true;
+    token.price = num(pair.priceUsd);
+    token.verified = isMajorAsset(base, chain);
+    if (!token.assetId) {
+      token.kind = token.verified ? "defi" : "meme";
+      token.rails = [chain];
+      token.notes = token.verified ? ["Widely traded"] : ["Live DexScreener market"];
+    }
+    if (image) token.icon = preferIcon(token.icon, image);
+    applyLiveStats(token, pair, false);
+  }
+}
+
+async function pullDexMarkets() {
+  dropOtherChains();
+  const feeds = await Promise.all(
+    [
+      getJson<{ chainId?: string; tokenAddress?: string; icon?: string }[]>("https://api.dexscreener.com/token-boosts/top/v1"),
+      getJson<{ chainId?: string; tokenAddress?: string; icon?: string }[]>("https://api.dexscreener.com/token-boosts/latest/v1"),
+      getJson<{ chainId?: string; tokenAddress?: string; icon?: string }[]>("https://api.dexscreener.com/token-profiles/latest/v1"),
+    ].map((task) => task.catch(() => null)),
+  );
+  const icons = new Map<string, string>();
+  const bySlug = new Map<string, string[]>();
+  for (const row of feeds.flatMap((rows) => rows ?? [])) {
+    const slug = row.chainId ?? "";
+    const address = row.tokenAddress ?? "";
+    if (!SLUG_LABEL[slug] || slug === "near" || !address) continue;
+    const id = slug === "solana" ? address : address.toLowerCase();
+    const key = `${slug}:${id}`;
+    if (row.icon) icons.set(key, row.icon);
+    const list = bySlug.get(slug) ?? [];
+    if (list.length < 36 && !list.some((item) => item.toLowerCase() === address.toLowerCase())) list.push(address);
+    bySlug.set(slug, list);
+  }
+  const queries = ["bonk", "wif", "pepe", "brett", "mog", "popcat", "fartcoin", "pnut", "spx", "floki"];
+  const searches = await Promise.all(queries.map((q) => getJson<{ pairs?: DexPair[] }>(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(q)}`).catch(() => null)));
+  ingestForeignPairs(searches.flatMap((body) => body?.pairs ?? []), icons);
+  await Promise.all(
+    [...bySlug.entries()].map(async ([slug, addresses]) => {
+      for (let index = 0; index < addresses.length; index += 30) {
+        const chunk = addresses.slice(index, index + 30);
+        const pairs = await getJson<DexPair[]>(`https://api.dexscreener.com/tokens/v1/${slug}/${chunk.join(",")}`).catch(() => null);
+        if (Array.isArray(pairs)) ingestForeignPairs(pairs, icons);
+      }
+    }),
+  );
+  useDesk.setState((state) => ({ clock: state.clock + 1 }));
+}
+
+export async function searchTokens(query: string) {
+  const clean = query.trim();
+  if (clean.length < 2) return [];
+  const kind = addressKind(clean);
+  if (kind === "near") return searchNearTokens(clean);
+  if (kind === "evm" || kind === "sol") {
+    const body = await getJson<{ pairs?: DexPair[] }>(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(clean)}`).catch(() => null);
+    const pairs = (body?.pairs ?? []).filter((pair) => {
+      const address = pair.baseToken?.address ?? "";
+      const match = kind === "evm" ? address.toLowerCase() === clean.toLowerCase() : address === clean;
+      return match && Boolean(pair.chainId && SLUG_LABEL[pair.chainId]);
+    });
+    if (pairs.length) ingestForeignPairs(pairs, new Map(), true);
+    useDesk.setState((state) => ({ clock: state.clock + 1 }));
+    return TOKENS.filter((token) => token.listed && token.price > 0 && (kind === "evm" ? token.address?.toLowerCase() === clean.toLowerCase() : token.address === clean));
+  }
+  return searchNearTokens(clean);
+}
 
 const NATIVE_PAIR: Record<string, string> = {
   "Ethereum|ETH": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",

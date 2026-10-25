@@ -376,10 +376,9 @@ function WalletSheet({
     { kind: "nightly", name: "Nightly", note: "Extension", logo: "/wallets/nightly.png" },
     { kind: "sender", name: "Sender", note: "Extension", logo: "/wallets/sender.png" },
   ];
-  const chains: { kind: "evm" | "sol" | "btc"; name: string; note: string; logo: string; address: string | null }[] = [
+  const chains: { kind: "evm" | "sol"; name: string; note: string; logo: string; address: string | null }[] = [
     { kind: "evm", name: "MetaMask", note: "EVM", logo: "/wallets/metamask.svg", address: foreign.evm },
     { kind: "sol", name: "Phantom", note: "Solana", logo: "/wallets/phantom.svg", address: foreign.sol },
-    { kind: "btc", name: "UniSat", note: "Bitcoin", logo: "/wallets/unisat.png", address: foreign.btc },
   ];
   return (
     <div className="fixed inset-0 z-[80] grid place-items-end bg-black/75 p-3 sm:place-items-center" onClick={onClose}>
@@ -393,7 +392,7 @@ function WalletSheet({
             ×
           </button>
         </div>
-        <p className="shrink-0 px-5 pb-3 text-sm text-[#8d938c]">NEAR signs NEAR deposits. EVM, Solana, and Bitcoin sign the chain you sell from.</p>
+        <p className="shrink-0 px-5 pb-3 text-sm text-[#8d938c]">NEAR signs NEAR deposits. EVM and Solana sign the chain you sell from.</p>
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
           {nearAccount && (
             <div className="mb-2 flex items-center gap-3 rounded-2xl border border-[#243028] bg-[#121815] px-3 py-3">
