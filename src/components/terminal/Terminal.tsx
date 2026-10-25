@@ -376,9 +376,9 @@ function WalletSheet({
     { kind: "nightly", name: "Nightly", note: "Extension", logo: "/wallets/nightly.png" },
     { kind: "sender", name: "Sender", note: "Extension", logo: "/wallets/sender.png" },
   ];
-  const chains: { kind: "evm" | "sol"; name: string; note: string; logo: string; address: string | null }[] = [
-    { kind: "evm", name: "MetaMask", note: "EVM", logo: "/wallets/metamask.svg", address: foreign.evm },
-    { kind: "sol", name: "Phantom", note: "Solana", logo: "/wallets/phantom.svg", address: foreign.sol },
+  const chains: { kind: "evm" | "sol"; name: string; logos: string[]; address: string | null }[] = [
+    { kind: "evm", name: "EVM", logos: ["/wallets/metamask.svg", "/wallets/zerion.svg", "/wallets/rabby.svg"], address: foreign.evm },
+    { kind: "sol", name: "Solana", logos: ["/wallets/phantom.svg", "/wallets/solflare.svg", "/wallets/backpack.svg"], address: foreign.sol },
   ];
   return (
     <div className="fixed inset-0 z-[80] grid place-items-end bg-black/75 p-3 sm:place-items-center" onClick={onClose}>
@@ -427,14 +427,17 @@ function WalletSheet({
           <ul>
             {chains.map((chain) => (
               <li key={chain.kind} className="flex items-center gap-3 rounded-2xl px-2 py-2">
-                <img src={chain.logo} alt="" className="size-10 shrink-0 rounded-full bg-[#171b18] object-cover" />
+                <span className="flex w-[4.5rem] shrink-0 -space-x-2">
+                  {chain.logos.map((logo) => (
+                    <img key={logo} src={logo} alt="" className="size-8 rounded-full bg-[#171b18] object-cover ring-2 ring-[#0c0f0d]" />
+                  ))}
+                </span>
                 <button type="button" onClick={() => onForeign(chain.kind)} className="min-w-0 flex-1 text-left">
                   <span className="flex items-center gap-1.5 text-[15px] font-semibold">
                     {chain.name}
-                    <ChainBadge chain={chain.kind === "sol" ? "Solana" : "Ethereum"} className="size-4" />
                     {chain.address && <span className="size-1.5 rounded-full bg-[#00ec97]" />}
                   </span>
-                  <span className="mt-0.5 block truncate font-mono text-[11px] text-[#8d938c]">{chain.address ? midAddress(chain.address) : chain.note}</span>
+                  <span className="mt-0.5 block truncate font-mono text-[11px] text-[#8d938c]">{chain.address ? midAddress(chain.address) : "Browser wallet"}</span>
                 </button>
                 {chain.address ? (
                   <button type="button" aria-label={`Disconnect ${chain.name}`} onClick={() => disconnectForeign(chain.kind)} className="grid size-9 shrink-0 place-items-center rounded-full text-[#ff5d73] hover:bg-[#ff5d73]/10">
