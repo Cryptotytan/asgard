@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Star, X } from "lucide-react";
+import { Star, X } from "lucide-react";
 import { TokenIcon, VerifiedMark } from "@/components/terminal/TokenIcon";
 import {
   ageLabel,
@@ -110,13 +110,12 @@ export function Markets({
             <div ref={chainMenu} className="relative shrink-0 lg:hidden">
               <button
                 type="button"
+                aria-label={chain === "All" ? "All chains" : chain}
                 aria-expanded={chainOpen}
                 onClick={() => setChainOpen((value) => !value)}
-                className="flex h-8 items-center gap-1.5 rounded-full bg-surface px-2.5 text-xs font-semibold"
+                className="grid size-8 place-items-center rounded-full bg-surface"
               >
-                <ChainLogo id={chain} />
-                <span className="max-w-20 truncate">{chain === "All" ? "Chains" : chain}</span>
-                <ChevronDown className={`size-3.5 text-muted ${chainOpen ? "rotate-180" : ""}`} />
+                <ChainLogo id={chain} className="size-5" />
               </button>
               {chainOpen && (
                 <ul className="absolute right-0 top-10 z-30 max-h-72 w-52 overflow-y-auto rounded-xl border border-line bg-surface py-1 shadow-2xl">
@@ -149,16 +148,17 @@ export function Markets({
             </button>
           </div>
           <div className="hidden min-w-0 items-center gap-2 lg:flex">
-            <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-0.5">
+            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto pb-0.5">
               {chainOptions.filter((id) => id !== "All").map((item) => (
                 <button
                   key={item}
                   type="button"
+                  aria-label={item}
+                  title={item}
                   onClick={() => setChain(chain === item ? "All" : item)}
-                  className={`flex h-9 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold ${chain === item ? "bg-surface-2 text-fg ring-1 ring-primary" : "bg-surface text-muted"}`}
+                  className={`grid size-9 shrink-0 place-items-center rounded-full ${chain === item ? "ring-2 ring-primary" : "opacity-80"}`}
                 >
-                  <ChainLogo id={item} />
-                  {item}
+                  <ChainLogo id={item} className="size-6" />
                 </button>
               ))}
             </div>
@@ -252,9 +252,8 @@ function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowPro
             </p>
             <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
               <span>{ageLabel(token.ageH)}</span>
-              <span className="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-fg">
-                <img src={CHAIN_ICON[token.chain] || chainIcon(token.chain)} alt="" className="size-3.5 rounded-full bg-bg object-cover" />
-                {token.chain}
+              <span className="inline-flex items-center rounded bg-surface-2 p-0.5">
+                <img src={CHAIN_ICON[token.chain] || chainIcon(token.chain)} alt={token.chain} className="size-3.5 rounded-full bg-bg object-cover" />
               </span>
               <IconButton
                 label={starred ? "Unstar" : "Star"}
@@ -318,12 +317,12 @@ function completeStats(token: Token) {
   return token.ageH > 0 && token.price > 0 && token.liqN > 0 && volume && token.txnsN > 0;
 }
 
-function ChainLogo({ id }: { id: string }) {
+function ChainLogo({ id, className = "size-4" }: { id: string; className?: string }) {
   const [failed, setFailed] = useState(false);
   const icon = id === "All" ? "" : CHAIN_ICON[id] || chainIcon(id);
-  if (id === "All") return <span className="size-4 shrink-0 rounded-full border border-line bg-surface-2" />;
-  if (!icon || failed) return <span className="grid size-4 shrink-0 place-items-center rounded-full bg-surface-2 text-[9px] font-semibold">{id.slice(0, 1)}</span>;
-  return <img src={icon} alt="" onError={() => setFailed(true)} className="size-4 shrink-0 rounded-full bg-bg object-cover" />;
+  if (id === "All") return <span className={`${className} shrink-0 rounded-full border border-line bg-surface-2`} />;
+  if (!icon || failed) return <span className={`grid ${className} shrink-0 place-items-center rounded-full bg-surface-2 text-[9px] font-semibold`}>{id.slice(0, 1)}</span>;
+  return <img src={icon} alt="" onError={() => setFailed(true)} className={`${className} shrink-0 rounded-full bg-bg object-cover`} />;
 }
 
 function MobileRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowProps) {
@@ -340,8 +339,7 @@ function MobileRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowProp
           </span>
           <span className="block truncate text-xs text-muted">{token.tag}</span>
           <span className="mt-0.5 flex items-center gap-1 text-xs text-muted">
-            {ageLabel(token.ageH)} · <img src={CHAIN_ICON[token.chain] || chainIcon(token.chain)} alt="" className="size-3.5 rounded-full bg-bg object-cover" />
-            {token.chain}
+            {ageLabel(token.ageH)} · <img src={CHAIN_ICON[token.chain] || chainIcon(token.chain)} alt={token.chain} className="size-3.5 rounded-full bg-bg object-cover" />
           </span>
         </span>
         <span className="text-right font-mono">
