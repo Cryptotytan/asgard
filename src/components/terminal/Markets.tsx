@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Star, X } from "lucide-react";
+import { ChevronDown, Star, X } from "lucide-react";
 import { TokenIcon, VerifiedMark } from "@/components/terminal/TokenIcon";
 import {
   ageLabel,
@@ -110,12 +110,14 @@ export function Markets({
             <div ref={chainMenu} className="relative shrink-0 lg:hidden">
               <button
                 type="button"
-                aria-label={chain === "All" ? "All chains" : chain}
+                aria-label={chain === "All" ? "Chains" : chain}
                 aria-expanded={chainOpen}
                 onClick={() => setChainOpen((value) => !value)}
-                className="grid size-8 place-items-center rounded-full bg-surface"
+                className="flex h-8 items-center gap-1.5 rounded-full bg-surface px-2.5 text-xs font-semibold"
               >
-                <ChainLogo id={chain} className="size-5" />
+                {chain !== "All" && <ChainLogo id={chain} className="size-4" />}
+                <span className="max-w-24 truncate">{chain === "All" ? "Chains" : chain}</span>
+                <ChevronDown className={`size-3.5 shrink-0 text-muted ${chainOpen ? "rotate-180" : ""}`} />
               </button>
               {chainOpen && (
                 <ul className="absolute right-0 top-10 z-30 max-h-72 w-52 overflow-y-auto rounded-xl border border-line bg-surface py-1 shadow-2xl">
@@ -129,8 +131,8 @@ export function Markets({
                         }}
                         className={`flex h-10 w-full items-center gap-2 px-3 text-left text-sm ${chain === id ? "bg-bg text-fg" : "text-muted"}`}
                       >
-                        <ChainLogo id={id} />
-                        <span className="truncate">{id === "All" ? "All chains" : id}</span>
+                        {id !== "All" && <ChainLogo id={id} />}
+                        <span className="truncate">{id === "All" ? "Chains" : id}</span>
                       </button>
                     </li>
                   ))}
