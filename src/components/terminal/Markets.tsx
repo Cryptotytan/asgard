@@ -103,7 +103,7 @@ export function Markets({
                 </button>
               ))}
             </div>
-            <div ref={chainMenu} className="relative shrink-0 lg:hidden">
+            <div ref={chainMenu} className="relative shrink-0">
               <button
                 type="button"
                 aria-label={chain === "All" ? "Chains" : chain}
@@ -112,7 +112,7 @@ export function Markets({
                 className="flex h-8 items-center gap-1.5 rounded-full bg-surface px-2.5 text-xs font-semibold"
               >
                 {chain !== "All" && <ChainLogo id={chain} className="size-4" />}
-                <span className="max-w-24 truncate">{chain === "All" ? "Chains" : chain}</span>
+                <span className="max-w-28 truncate">{chain === "All" ? "Chains" : chain}</span>
                 <ChevronDown className={`size-3.5 shrink-0 text-muted ${chainOpen ? "rotate-180" : ""}`} />
               </button>
               {chainOpen && (
@@ -134,31 +134,6 @@ export function Markets({
                   ))}
                 </ul>
               )}
-            </div>
-            <button
-              type="button"
-              aria-pressed={verifiedOnly}
-              onClick={() => setVerifiedOnly((value) => !value)}
-              className={`grid size-8 shrink-0 place-items-center rounded-lg border lg:hidden ${verifiedOnly ? "border-primary bg-primary/15" : "border-line text-muted"}`}
-              title="Verified only"
-            >
-              <VerifiedMark className={verifiedOnly ? "" : "bg-muted text-bg shadow-none"} />
-            </button>
-          </div>
-          <div className="hidden min-w-0 items-center gap-2 lg:flex">
-            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto pb-0.5">
-              {chainOptions.filter((id) => id !== "All").map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  aria-label={item}
-                  title={item}
-                  onClick={() => setChain(chain === item ? "All" : item)}
-                  className={`grid size-9 shrink-0 place-items-center rounded-full ${chain === item ? "ring-2 ring-primary" : "opacity-80"}`}
-                >
-                  <ChainLogo id={item} className="size-6" />
-                </button>
-              ))}
             </div>
             <button
               type="button"
