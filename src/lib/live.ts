@@ -1,5 +1,5 @@
 import { ensureToken, isCanonical, LEND_MARKETS, money, qualityScore, TOKENS, type Candle, type Print } from "@/lib/market";
-import { iconFor, loadIconBook, syncNearMarkets, applyIconBook } from "@/lib/dex";
+import { iconFor, geckoIdFor, loadIconBook, syncNearMarkets, applyIconBook } from "@/lib/dex";
 import { useDesk } from "@/lib/store";
 
 const LLAMA = "https://coins.llama.fi";
@@ -7,14 +7,56 @@ const RHEA = "https://lendingsdk.rhea.finance/list_token_data";
 
 const COINGECKO: Record<string, string> = {
   NEAR: "coingecko:near",
+  WNEAR: "coingecko:near",
   ETH: "coingecko:ethereum",
+  WETH: "coingecko:weth",
+  BTC: "coingecko:bitcoin",
   WBTC: "coingecko:wrapped-bitcoin",
   USDC: "coingecko:usd-coin",
   USDT: "coingecko:tether",
+  SOL: "coingecko:solana",
+  BNB: "coingecko:binancecoin",
+  AVAX: "coingecko:avalanche-2",
+  POL: "coingecko:polygon-ecosystem-token",
+  MATIC: "coingecko:matic-network",
+  ARB: "coingecko:arbitrum",
+  OP: "coingecko:optimism",
+  DOGE: "coingecko:dogecoin",
+  XRP: "coingecko:ripple",
+  ADA: "coingecko:cardano",
+  LTC: "coingecko:litecoin",
+  BCH: "coingecko:bitcoin-cash",
+  TRX: "coingecko:tron",
+  TON: "coingecko:the-open-network",
+  SUI: "coingecko:sui",
+  APT: "coingecko:aptos",
+  LINK: "coingecko:chainlink",
+  UNI: "coingecko:uniswap",
+  AAVE: "coingecko:aave",
+  DAI: "coingecko:dai",
   AURORA: "coingecko:aurora-near",
   STNEAR: "coingecko:staked-near",
   SWEAT: "coingecko:sweatcoin",
   RHEA: "coingecko:rhea-2",
+};
+
+const LLAMA_CHAIN: Record<string, string> = {
+  NEAR: "near",
+  Ethereum: "ethereum",
+  BNB: "bsc",
+  Polygon: "polygon",
+  Avalanche: "avax",
+  Arbitrum: "arbitrum",
+  Optimism: "optimism",
+  Base: "base",
+  Gnosis: "gnosis",
+  Scroll: "scroll",
+  Aurora: "aurora",
+  Solana: "solana",
+  Tron: "tron",
+  TON: "ton",
+  Sui: "sui",
+  Aptos: "aptos",
 };
 
 const ALIAS: Record<string, string> = {
@@ -94,16 +136,31 @@ async function nearCap() {
   return nearMcap;
 }
 
-function llamaId(symbol: string) {
-  if (COINGECKO[symbol]) return COINGECKO[symbol];
+function llamaCandidates(symbol: string) {
+  const out: string[] = [];
+  const push = (id: string) => {
+    if (id && !out.includes(id)) out.push(id);
+  };
+  const base = symbol.split(".")[0].toUpperCase();
+  push(COINGECKO[symbol] ?? "");
+  push(COINGECKO[base] ?? "");
+  const gecko = geckoIdFor(symbol) || geckoIdFor(base);
+  if (gecko) push(gecko.startsWith("coingecko:") ? gecko : `coingecko:${gecko}`);
   const token = TOKENS.find((item) => item.symbol === symbol);
-  if (token?.address) return `near:${token.address}`;
-  const contract = CONTRACTS[symbol];
-  return contract ? `near:${contract}` : "";
+  const prefix = token ? LLAMA_CHAIN[token.chain] : "";
+  const raw = token?.address ?? "";
+  if (prefix && raw && !raw.includes(":")) push(`${prefix}:${raw.startsWith("0x") ? raw.toLowerCase() : raw}`);
+  const contract = CONTRACTS[symbol] ?? CONTRACTS[base];
+  if (contract) push(`near:${contract}`);
+  return out;
+}
+
+function llamaId(symbol: string) {
+  return llamaCandidates(symbol)[0] ?? "";
 }
 
 const PAGE = 500;
-type Book = { points: Point[]; from: number; exhausted: boolean };
+type Book = { points: Point[]; from: number; exhausted: boolean; id: string };
 const books = new Map<string, Book>();
 const tails = new Map<string, Promise<unknown>>();
 const firstSeen = new Map<string, number>();
@@ -199,31 +256,30 @@ export async function loadCandles(symbol: string, frame = "5m") {
 }
 
 async function fetchCandles(symbol: string, frame: string, key: string) {
-  const id = llamaId(symbol);
-  if (!id) return candles.get(key) ?? [];
   const plan = historyPlan(frame);
   const now = Math.floor(Date.now() / 1000);
   let book = books.get(key);
   if (!book) {
-    book = { points: [], from: now, exhausted: false };
+    book = { points: [], from: now, exhausted: false, id: "" };
     books.set(key, book);
   }
-  const pages = book.points.length > 1 ? 1 : 2;
-  const parts: Point[][] = [];
-  let cursor = now;
-  let reached = book.from;
-  for (let i = 0; i < pages; i++) {
-    const start = Math.max(ORIGIN, cursor - PAGE * plan.step);
-    const part = await llamaSeries(id, start, plan.period, plan.search);
-    if (part == null) break;
-    parts.push(part);
-    cursor = start;
-    reached = start;
-    if (start <= ORIGIN) break;
+  if (!book.id) {
+    for (const id of llamaCandidates(symbol)) {
+      const start = Math.max(ORIGIN, now - PAGE * plan.step);
+      const part = await llamaSeries(id, start, plan.period, plan.search);
+      if (!part || part.length < 2) continue;
+      book.id = id;
+      book.from = start;
+      book.points = mergePoints([book.points, part]);
+      break;
+    }
+    if (!book.id || book.points.length < 2) return candles.get(key) ?? [];
+    return publishBook(key, book);
   }
-  if (!parts.length) return candles.get(key) ?? [];
-  if (book.points.length === 0) book.from = reached;
-  book.points = mergePoints([book.points, ...parts]);
+  const start = Math.max(ORIGIN, now - PAGE * plan.step);
+  const part = await llamaSeries(book.id, start, plan.period, plan.search);
+  if (!part || !part.length) return candles.get(key) ?? [];
+  book.points = mergePoints([book.points, part]);
   if (book.points.length < 2) return candles.get(key) ?? [];
   return publishBook(key, book);
 }
@@ -239,11 +295,11 @@ export function loadOlderCandles(symbol: string, frame = "5m") {
 }
 
 async function olderCandles(symbol: string, frame: string, key: string) {
-  const id = llamaId(symbol);
-  if (!id) return false;
   if (!books.get(key)) await fetchCandles(symbol, frame, key);
   const book = books.get(key);
   if (!book || book.exhausted) return false;
+  const id = book.id || llamaId(symbol);
+  if (!id) return false;
   const plan = historyPlan(frame);
   const born = await earliest(id);
   if (born == null) return false;

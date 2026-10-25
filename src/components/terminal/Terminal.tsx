@@ -376,10 +376,10 @@ function WalletSheet({
     { kind: "nightly", name: "Nightly", note: "Extension", logo: "/wallets/nightly.png" },
     { kind: "sender", name: "Sender", note: "Extension", logo: "/wallets/sender.png" },
   ];
-  const chains: { kind: "evm" | "sol" | "btc"; name: string; note: string; mark: string; address: string | null }[] = [
-    { kind: "evm", name: "EVM wallet", note: "MetaMask, Rabby", mark: "E", address: foreign.evm },
-    { kind: "sol", name: "Solana", note: "Phantom", mark: "S", address: foreign.sol },
-    { kind: "btc", name: "Bitcoin", note: "UniSat", mark: "B", address: foreign.btc },
+  const chains: { kind: "evm" | "sol" | "btc"; name: string; note: string; logo: string; address: string | null }[] = [
+    { kind: "evm", name: "MetaMask", note: "EVM", logo: "/wallets/metamask.svg", address: foreign.evm },
+    { kind: "sol", name: "Phantom", note: "Solana", logo: "/wallets/phantom.svg", address: foreign.sol },
+    { kind: "btc", name: "UniSat", note: "Bitcoin", logo: "/wallets/unisat.png", address: foreign.btc },
   ];
   return (
     <div className="fixed inset-0 z-[80] grid place-items-end bg-black/75 p-3 sm:place-items-center" onClick={onClose}>
@@ -425,7 +425,7 @@ function WalletSheet({
           <ul>
             {chains.map((chain) => (
               <li key={chain.kind} className="flex items-center gap-3 rounded-2xl px-2 py-2">
-                <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#171b18] text-sm font-bold">{chain.mark}</span>
+                <img src={chain.logo} alt="" className="size-10 shrink-0 rounded-full bg-[#171b18] object-cover" />
                 <button type="button" onClick={() => onForeign(chain.kind)} className="min-w-0 flex-1 text-left">
                   <span className="block truncate text-[15px] font-semibold">{chain.name}</span>
                   <span className="block truncate font-mono text-[11px] text-[#8d938c]">{chain.address ? `${chain.address.slice(0, 6)}…${chain.address.slice(-4)}` : chain.note}</span>

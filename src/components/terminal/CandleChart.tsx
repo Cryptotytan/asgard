@@ -82,30 +82,31 @@ export function CandleChart({
     setYScale(1);
     setYShift(0);
     setHover(null);
-  } else if (firstT !== trackedFirst) {
-    if (firstT != null && trackedFirst != null && firstT < trackedFirst) {
-      let added = 0;
-      while (added < all.length && (all[added]?.t ?? 0) < trackedFirst) added++;
-      if (drag.current) {
-        drag.current.right += added;
-        drag.current.first = firstT;
-      }
-      if (right != null) {
-        viewRight = right + added;
-        setRight(viewRight);
-      }
-    }
-    setTrackedFirst(firstT);
   }
 
   const wanted = clamp(viewSpan ?? defaultSpan(frame), MIN_SPAN, MAX_SPAN);
   lenRef.current = all.length;
   seriesRef.current = all;
   spanRef.current = wanted;
-  rightRef.current = viewRight;
+  if (!drag.current) rightRef.current = viewRight;
   endedRef.current = historyEnded;
   yScaleRef.current = yScale;
   yShiftRef.current = yShift;
+
+  useEffect(() => {
+    const firstT = all[0]?.t ?? null;
+    if (firstT == null || trackedFirst == null || firstT >= trackedFirst || rightRef.current == null) {
+      if (firstT !== trackedFirst) setTrackedFirst(firstT);
+      return;
+    }
+    let added = 0;
+    while (added < all.length && (all[added]?.t ?? 0) < trackedFirst) added++;
+    if (added > 0 && rightRef.current != null) {
+      rightRef.current += added;
+      setRight(rightRef.current);
+    }
+    setTrackedFirst(firstT);
+  }, [all, trackedFirst]);
 
   function limits(spanNext: number, len: number) {
     const liveEdge = len + RIGHT_GAP;
@@ -293,9 +294,12 @@ export function CandleChart({
       } else {
         const dx = event.clientX - drag.current.x;
         const dy = event.clientY - drag.current.y;
+        drag.current.x = event.clientX;
         const rect = event.currentTarget.getBoundingClientRect();
         const shift = (-dx / Math.max(rect.width, 1)) * spanRef.current;
-        commit(spanRef.current, drag.current.right + shift, false);
+        const len = lenRef.current;
+        const edge = rightRef.current == null ? len + RIGHT_GAP : rightRef.current;
+        commit(spanRef.current, edge + shift, false);
         if (Math.abs(dy) > 8) {
           const shiftY = drag.current.yShift + dy / Math.max(rect.height, 1) / Math.max(yScaleRef.current, 0.4);
           setYShift(shiftY);

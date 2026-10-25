@@ -653,10 +653,6 @@ function Ticket({
       return;
     }
     if (viewMode === "perp") {
-      if (token.symbol !== "NEAR" && token.symbol !== "ETH") {
-        onFlash("Perps are listed on NEAR and ETH.");
-        return;
-      }
       const limit = perpType === "limit" ? Number(limitPrice) || token.price : undefined;
       const ok = useDesk.getState().openPerp(`${token.symbol}-PERP`, token.symbol, perpSide, qty, lev, {
         tp: Number(tp) || undefined,

@@ -195,7 +195,7 @@ export function TokenPicker({
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Name, symbol, or NEAR contract"
+                placeholder="Name, symbol, or contract address"
                 className="min-w-0 flex-1 bg-transparent text-sm outline-none"
               />
             </label>
@@ -220,7 +220,6 @@ export function TokenPicker({
                         <img src={CHAIN_ICON[token.chain]} alt="" className="size-3.5 shrink-0 rounded-full object-cover" />
                         {token.name} · {token.chain}
                       </span>
-                      {token.address && <span className="block truncate font-mono text-[10px] text-muted">{token.address}</span>}
                     </span>
                     <span className="shrink-0 text-right font-mono text-xs">
                       {balances && (balances[token.symbol] ?? 0) > 0 ? (

@@ -219,6 +219,10 @@ let iconAt = 0;
 let discover: string[] = [];
 const geckoBySymbol = new Map<string, string>();
 
+export function geckoIdFor(symbol: string) {
+  return geckoBySymbol.get(symbol) ?? geckoBySymbol.get(symbol.split(".")[0]) ?? "";
+}
+
 function safeIcon(icon: unknown) {
   if (typeof icon !== "string" || icon.length > 80_000) return "";
   if (icon.startsWith("https://") || icon.startsWith("/tokens/") || icon.startsWith("/chains/") || icon.startsWith("data:image/")) return icon;

@@ -50,7 +50,11 @@ export function Markets({
     }
     if (tab === "Newest") return [...list].sort((a, b) => (a.ageH > 0 ? a.ageH : Number.POSITIVE_INFINITY) - (b.ageH > 0 ? b.ageH : Number.POSITIVE_INFINITY));
     if (tab === "All") return [...list].sort((a, b) => b.mcapN - a.mcapN || b.liqN - a.liqN);
-    return [...list].sort((a, b) => (b.volBy?.[win] ?? b.volN) - (a.volBy?.[win] ?? a.volN) || Math.abs(b.windows[win]) - Math.abs(a.windows[win]));
+    const volumeOf = (token: Token) => {
+      const windowVol = token.volBy?.[win] ?? 0;
+      return windowVol > 0 ? windowVol : token.volN || 0;
+    };
+    return [...list].sort((a, b) => volumeOf(b) - volumeOf(a) || b.txnsN - a.txnsN || b.liqN - a.liqN);
   }, [chain, clock, query, tab, verifiedOnly, watch.hidden, watch.recents, win]);
 
   return (

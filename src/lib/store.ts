@@ -283,7 +283,6 @@ export const useDesk = create<Desk>((set, get) => ({
 
   openPerp: (market, base, side, notional, leverage, extra) => {
     if (notional <= 0 || leverage < 1) return false;
-    if (base !== "NEAR" && base !== "ETH") return false;
     const state = get();
     const mark = priceOf(base, state.marks);
     const limit = extra?.limit;

@@ -466,7 +466,8 @@ export const MARKETS = [
 ] as const;
 
 export function canPerp(symbol: string) {
-  return MARKETS.some((market) => market.base === symbol);
+  const token = TOKENS.find((item) => item.symbol === symbol);
+  return Boolean(token && token.listed && Number.isFinite(token.price) && token.price > 0);
 }
 
 export const LEND_MARKETS: { symbol: string; supplyApy: number; borrowApy: number }[] = [];
