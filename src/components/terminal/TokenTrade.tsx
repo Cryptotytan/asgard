@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Search, ShieldAlert } from "lucide-react";
 import { CandleChart, type ChartHover } from "@/components/terminal/CandleChart";
 import { SecurityGate } from "@/components/terminal/SecurityGate";
@@ -176,27 +176,20 @@ export function TokenTrade({
           <Ticket token={token} mode={mode} quickUsd={quickUsd} scanning={scanning} onMode={onMode} onFlash={onFlash} />
         </div>
         <section className="book-hinge order-3 border-t border-line lg:col-start-1 lg:row-start-2 lg:self-stretch lg:border-r lg:border-t-0">
-          <div className="grid grid-cols-5 border-b border-line bg-bg">
+          <div className="scroll-x flex gap-1 border-b border-line bg-bg px-2 py-1.5 sm:px-3">
             {BOOKS.map((item) => (
               <button
                 key={item}
                 type="button"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => setBook(item)}
-                className={`h-7 min-w-0 truncate px-0.5 text-[10px] sm:h-10 sm:text-sm ${book === item ? "text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}
+                className={`h-8 shrink-0 rounded-full px-3 text-xs font-semibold sm:flex-1 sm:text-sm ${book === item ? "bg-surface-2 text-fg shadow-[inset_0_0_0_1px_var(--color-line)]" : "text-muted"}`}
               >
-                {item === "Holders" ? (
-                  <>
-                    <span className="sm:hidden">Hold</span>
-                    <span className="hidden sm:inline">Holders</span>
-                  </>
-                ) : (
-                  item
-                )}
+                {item}
               </button>
             ))}
           </div>
-          <div key={book} className="book-page px-2 pb-1 sm:px-4 sm:pb-3 lg:min-h-[26rem]">
+          <div key={book} className="book-page px-3 pb-3 pt-1 sm:px-4 lg:min-h-[26rem]">
             {book === "Trades" && <Trades prints={prints} symbol={token.symbol} />}
             {book === "Positions" && <Positions symbol={token.symbol} mark={token.price} />}
             {book === "Orders" && <Orders symbol={token.symbol} />}
@@ -325,6 +318,19 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
   );
 }
 
+function BookNote({ children }: { children: ReactNode }) {
+  return <p className="px-2 py-10 text-center text-sm text-muted">{children}</p>;
+}
+
+function SidePill({ label }: { label: string }) {
+  const buy = label === "Buy" || label === "buy" || label === "long";
+  return (
+    <span className={`inline-grid h-6 min-w-12 place-items-center rounded-full px-2 text-[10px] font-semibold uppercase ${buy ? "bg-primary/15 text-primary" : "bg-danger/15 text-danger"}`}>
+      {label}
+    </span>
+  );
+}
+
 function SessionHistory() {
   const activity = useDesk((s) => s.activity);
   const newest = activity[0]?.id ?? "";
@@ -336,18 +342,16 @@ function SessionHistory() {
     const timer = window.setTimeout(() => setLanded(""), 480);
     return () => window.clearTimeout(timer);
   }, [newest]);
-  if (activity.length === 0) {
-    return <p className="py-6 text-sm text-muted">Fills from this session show up here with their value.</p>;
-  }
+  if (activity.length === 0) return <BookNote>Fills from this session show up here with their value.</BookNote>;
   return (
-    <ul className="divide-y divide-line">
+    <ul className="space-y-2 py-2">
       {activity.map((item) => (
-        <li key={item.id} className={`flex items-center justify-between gap-3 py-2 text-sm ${landed === item.id ? "stamp" : ""}`}>
-          <span className="min-w-0">
-            <span className="block font-semibold">{item.title}</span>
+        <li key={item.id} className={`flex items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2.5 ${landed === item.id ? "stamp" : ""}`}>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">{item.title}</span>
             <span className="block truncate text-xs text-muted">{item.detail}</span>
           </span>
-          <span className={`shrink-0 font-mono text-xs ${item.value < 0 ? "text-danger" : ""}`}>{usd(item.value)}</span>
+          <span className={`shrink-0 rounded-full bg-bg px-2 py-1 font-mono text-xs ${item.value < 0 ? "text-danger" : "text-fg"}`}>{usd(item.value)}</span>
         </li>
       ))}
     </ul>
@@ -355,59 +359,27 @@ function SessionHistory() {
 }
 
 function Trades({ prints, symbol }: { prints: Print[]; symbol: string }) {
-  if (prints.length === 0) {
-    return <p className="py-6 text-sm text-muted">No recent trades published for {symbol} yet.</p>;
-  }
-  const mobile = prints.slice(0, 4);
+  if (prints.length === 0) return <BookNote>No recent trades published for {symbol} yet.</BookNote>;
   return (
-    <div>
-      <ul className="sm:hidden">
-        <li className="grid grid-cols-[2rem_2.4rem_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_3rem] gap-1 py-0.5 text-[10px] uppercase text-muted">
-          <span>Time</span>
-          <span>Type</span>
-          <span>Amount</span>
-          <span>Total</span>
-          <span>Price</span>
-          <span className="text-right">Trader</span>
+    <ul className="divide-y divide-line">
+      {prints.map((row, index) => (
+        <li key={`${row.trader}-${row.age}-${index}`} className="flex items-center gap-3 py-2.5">
+          <SidePill label={row.side} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-mono text-xs">
+              {fmt(row.amount)} <span className="text-muted">{symbol}</span>
+            </span>
+            <span className="block truncate text-[11px] text-muted">{row.trader}</span>
+          </span>
+          <span className="shrink-0 text-right">
+            <span className="block font-mono text-xs">{row.usd >= 0.01 ? usd(row.usd) : px(row.usd)}</span>
+            <span className="block font-mono text-[11px] text-muted">
+              {row.age} · {fmt(row.price)}
+            </span>
+          </span>
         </li>
-        {mobile.map((row, index) => (
-          <li key={`${row.trader}-${row.age}-${index}`} className="grid grid-cols-[2rem_2.4rem_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_3rem] gap-1 border-t border-line py-1 font-mono text-[10px]">
-            <span className="text-muted">{row.age}</span>
-            <span className={row.side === "Buy" ? "text-primary" : "text-danger"}>{row.side}</span>
-            <span className="truncate">{fmt(row.amount)}</span>
-            <span className="truncate">{row.usd >= 0.01 ? usd(row.usd) : px(row.usd)}</span>
-            <span className="truncate">{fmt(row.price)}</span>
-            <span className="truncate text-right text-muted">{row.trader}</span>
-          </li>
-        ))}
-      </ul>
-      <div className="hidden overflow-auto sm:block">
-        <table className="w-full text-left font-mono text-xs">
-          <thead className="text-muted">
-            <tr>
-              <th className="py-2 font-normal">Time</th>
-              <th className="font-normal">Type</th>
-              <th className="font-normal">Amount {symbol}</th>
-              <th className="font-normal">Total USD</th>
-              <th className="font-normal">Price</th>
-              <th className="font-normal">Trader</th>
-            </tr>
-          </thead>
-          <tbody>
-            {prints.map((row, index) => (
-              <tr key={`${row.trader}-${row.age}-${index}`} className="border-t border-line">
-                <td className="py-2 text-muted">{row.age}</td>
-                <td className={row.side === "Buy" ? "text-primary" : "text-danger"}>{row.side}</td>
-                <td>{fmt(row.amount)}</td>
-                <td>{row.usd >= 0.01 ? usd(row.usd) : px(row.usd)}</td>
-                <td>{fmt(row.price)}</td>
-                <td className="text-muted">{row.trader}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+      ))}
+    </ul>
   );
 }
 
@@ -419,21 +391,20 @@ function Positions({ symbol, mark }: { symbol: string; mark: number }) {
   const held = balances[symbol] ?? 0;
   const perps = positions.filter((position) => position.base === symbol);
   return (
-    <div className="space-y-3 py-3 text-sm">
-      <p className="font-mono">
-        Holding {fmt(held)} {symbol} · {usd(held * mark)}
-      </p>
+    <div className="space-y-2 py-2">
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-3 py-3">
+        <span>
+          <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted">Spot</span>
+          <span className="mt-0.5 block font-mono text-sm">
+            {fmt(held)} {symbol}
+          </span>
+        </span>
+        <span className="font-mono text-sm">{usd(held * mark)}</span>
+      </div>
       {perps.length === 0 ? (
-        <p className="text-muted">No open perp on {symbol}.</p>
+        <BookNote>No open perp on {symbol}.</BookNote>
       ) : (
-        perps.map((position) => (
-          <PnlCard
-            key={position.id}
-            position={position}
-            mark={marks[position.base] ?? position.entry}
-            onClose={() => closePerp(position.id)}
-          />
-        ))
+        perps.map((position) => <PnlCard key={position.id} position={position} mark={marks[position.base] ?? position.entry} onClose={() => closePerp(position.id)} />)
       )}
     </div>
   );
@@ -443,15 +414,19 @@ function Orders({ symbol }: { symbol: string }) {
   const orders = useDesk((s) => s.orders);
   const cancelOrder = useDesk((s) => s.cancelOrder);
   const list = orders.filter((order) => order.symbol === symbol);
-  if (list.length === 0) return <p className="py-6 text-sm text-muted">No open orders. Limits rest here until the market reaches them.</p>;
+  if (list.length === 0) return <BookNote>No open orders. Limits rest here until the market reaches them.</BookNote>;
   return (
-    <ul className="py-2">
+    <ul className="space-y-2 py-2">
       {list.map((order) => (
-        <li key={order.id} className="flex items-center justify-between gap-2 border-t border-line py-2 font-mono text-xs">
-          <span>
-            {order.kind} {order.side} {fmt(order.amount)} @ {fmt(order.limit)}
+        <li key={order.id} className="flex items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2.5">
+          <SidePill label={order.side} />
+          <span className="min-w-0 flex-1 font-mono text-xs">
+            <span className="block capitalize">{order.kind}</span>
+            <span className="block truncate text-muted">
+              {fmt(order.amount)} @ {fmt(order.limit)}
+            </span>
           </span>
-          <button type="button" className="h-10 rounded-lg border border-line px-3" onClick={() => cancelOrder(order.id)}>
+          <button type="button" className="h-8 shrink-0 rounded-full border border-line px-3 text-xs text-danger" onClick={() => cancelOrder(order.id)}>
             Cancel
           </button>
         </li>
@@ -492,54 +467,67 @@ function Holders({ token }: { token: Token }) {
       cancel = true;
     };
   }, [token.address, token.symbol]);
-  if (!rows) return <p className="py-6 text-sm text-muted">Reading holders…</p>;
-  if (miss) return <p className="py-6 text-sm text-muted">No holder list has been published for this token.</p>;
+  if (!rows) return <BookNote>Reading holders…</BookNote>;
+  if (miss) return <BookNote>No holder list has been published for this token.</BookNote>;
+  const tones = ["var(--color-primary)", "color-mix(in srgb, var(--color-primary) 62%, white)", "var(--color-muted)", "var(--color-line)"];
   return (
     <div className="py-2">
-      <p className="mb-2 text-xs text-muted">
-        {count != null ? `${count.toLocaleString("en-US")} holders. ` : ""}
-        {top10 == null || top10 > 100
-          ? rows.length
-            ? "Top accounts. Indexed balances exceed the published supply, so a concentration total is not shown."
-            : "Holder distribution is published without individual accounts."
-          : `Top 10 hold ${top10.toFixed(1)}% of supply.`}
-      </p>
+      <div className="mb-3 grid grid-cols-2 gap-2">
+        <div className="rounded-xl border border-line bg-surface px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">Holders</p>
+          <p className="mt-0.5 font-mono text-sm">{count == null ? "—" : count.toLocaleString("en-US")}</p>
+        </div>
+        <div className="rounded-xl border border-line bg-surface px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">Top 10</p>
+          <p className="mt-0.5 font-mono text-sm">{top10 == null || top10 > 100 ? "—" : `${top10.toFixed(1)}%`}</p>
+        </div>
+      </div>
       {bands.length > 0 && (
-        <ul className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {bands.map((band) => (
-            <li key={band.label} className="rounded-lg border border-line px-2 py-1.5">
-              <p className="text-[10px] uppercase text-muted">{band.label}</p>
-              <p className="font-mono text-sm">{band.pct.toFixed(1)}%</p>
-            </li>
-          ))}
-        </ul>
+        <>
+          <div className="mb-2 flex h-2 overflow-hidden rounded-full bg-surface-2">
+            {bands.map((band, index) => (
+              <span key={band.label} className="h-full" style={{ width: `${Math.max(band.pct, 0)}%`, background: tones[index % tones.length] }} />
+            ))}
+          </div>
+          <ul className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {bands.map((band, index) => (
+              <li key={band.label} className="rounded-lg border border-line px-2 py-1.5">
+                <p className="flex items-center gap-1.5 text-[10px] uppercase text-muted">
+                  <span className="size-1.5 rounded-full" style={{ background: tones[index % tones.length] }} />
+                  {band.label}
+                </p>
+                <p className="font-mono text-sm">{band.pct.toFixed(1)}%</p>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
       {rows.length > 0 && (
-      <table className="w-full table-fixed border-collapse text-xs">
-        <colgroup>
-          <col />
-          <col className="w-[9.5rem]" />
-          <col className="w-[4.75rem]" />
-        </colgroup>
-        <thead>
-          <tr className="text-[10px] uppercase tracking-wide text-muted">
-            <th className="border-b border-line py-1.5 pr-3 text-left font-normal">Account</th>
-            <th className="border-b border-line py-1.5 text-right font-normal">Balance</th>
-            <th className="border-b border-line py-1.5 text-right font-normal">Share</th>
-          </tr>
-        </thead>
-        <tbody className="font-mono tabular-nums">
-          {rows.map((row) => (
-            <tr key={row.account} className="border-t border-line">
-              <td className="truncate py-2 pr-3 text-left" title={row.account}>
-                {row.account}
-              </td>
-              <td className="whitespace-nowrap py-2 text-right">{fmt(row.amount)}</td>
-              <td className="whitespace-nowrap py-2 text-right text-muted">{row.share == null ? "—" : `${row.share.toFixed(2)}%`}</td>
+        <table className="w-full table-fixed border-collapse text-xs">
+          <colgroup>
+            <col />
+            <col className="w-[7.5rem] sm:w-[9.5rem]" />
+            <col className="w-[4.25rem]" />
+          </colgroup>
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wide text-muted">
+              <th className="border-b border-line py-1.5 pr-3 text-left font-normal">Account</th>
+              <th className="border-b border-line py-1.5 text-right font-normal">Balance</th>
+              <th className="border-b border-line py-1.5 text-right font-normal">Share</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="font-mono tabular-nums">
+            {rows.map((row) => (
+              <tr key={row.account} className="border-t border-line">
+                <td className="truncate py-2 pr-3 text-left" title={row.account}>
+                  {row.account}
+                </td>
+                <td className="whitespace-nowrap py-2 text-right">{fmt(row.amount)}</td>
+                <td className="whitespace-nowrap py-2 text-right text-muted">{row.share == null ? "—" : `${row.share.toFixed(2)}%`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   );
