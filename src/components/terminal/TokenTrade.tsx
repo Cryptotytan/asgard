@@ -6,6 +6,8 @@ import { TokenIcon, VerifiedMark } from "@/components/terminal/TokenIcon";
 import { PnlCard } from "@/components/terminal/PnlCard";
 import {
   canPerp,
+  CHAIN_ICON,
+  displayName,
   fmt,
   isHoneypot,
   scoreLabel,
@@ -20,7 +22,7 @@ import {
 import { useDesk, type Side } from "@/lib/store";
 import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, watchCandles, type HolderRow } from "@/lib/live";
 import { searchNearTokens } from "@/lib/dex";
-import { executeIntent, quoteIntent, type IntentQuote } from "@/lib/intents";
+import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 
 const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"] as const;
 const BOOKS = ["Trades", "Positions", "Orders", "Holders", "History"] as const;
@@ -264,19 +266,13 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
         <TokenIcon token={token} className="size-9 rounded-lg sm:size-10" />
         <span className="min-w-0">
           <span className="flex items-center gap-1.5 font-semibold">
-            <span className="truncate">{token.name}</span>
-            <span className="font-normal text-muted">{token.symbol}</span>
-            {scanning ? (
-              <span className="text-xs font-normal text-muted">Scanning…</span>
-            ) : token.verified ? (
-              <VerifiedMark />
-            ) : (
-              <ShieldAlert className="size-4 text-danger" aria-label="Not verified" />
-            )}
-            <ChevronDown className={`size-4 text-muted transition ${open ? "rotate-180" : ""}`} />
+            <span className="truncate">{displayName(token)}</span>
+            {token.verified && <VerifiedMark />}
+            <ChevronDown className={`size-4 text-muted ${open ? "rotate-180" : ""}`} />
           </span>
-          <span className="block truncate text-xs text-muted">
-            {token.tag} · {token.chain}
+          <span className="flex items-center gap-1 truncate text-xs text-muted">
+            <img src={CHAIN_ICON[token.chain]} alt="" className="size-3.5 rounded-full object-cover" />
+            {token.chain}
           </span>
         </span>
       </button>
@@ -288,7 +284,7 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
               autoFocus
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Name, symbol, or NEAR contract"
+              placeholder="Name or symbol"
               className="min-w-0 flex-1 bg-transparent text-sm outline-none"
             />
           </label>
@@ -307,13 +303,14 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
                   <TokenIcon token={item} />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-1 font-semibold">
-                      {item.symbol}
+                      {displayName(item)}
                       {item.verified && <VerifiedMark />}
                     </span>
-                    <span className="block truncate text-xs text-muted">{item.name}</span>
-                    {item.address && <span className="block truncate font-mono text-[10px] text-muted">{item.address}</span>}
+                    <span className="flex items-center gap-1 truncate text-xs text-muted">
+                      <img src={CHAIN_ICON[item.chain]} alt="" className="size-3.5 shrink-0 rounded-full object-cover" />
+                      {item.chain}
+                    </span>
                   </span>
-                  <span className="font-mono text-xs text-muted">{item.mcap}</span>
                 </button>
               </li>
             ))}
@@ -572,7 +569,7 @@ function Ticket({
   const [acked, setAcked] = useState(false);
   const [gate, setGate] = useState(false);
   const [fills, setFills] = useState({ bought: 0, sold: 0 });
-  const [live, setLive] = useState<IntentQuote | null>(null);
+  const [routes, setRoutes] = useState<LiveRoute[]>([]);
   const [quoting, setQuoting] = useState(false);
 
   useEffect(() => {
@@ -587,39 +584,28 @@ function Ticket({
   const receiveToken = side === "buy" ? token : tokenBySymbol("USDC");
   const slipPct = slip === "Auto" ? 1 : Number(slip.replace("%", ""));
   useEffect(() => {
-    setLive(null);
+    setRoutes([]);
     if (!connected || !accountId || qty <= 0 || pay.symbol === receiveToken.symbol) return;
     setQuoting(true);
     const timer = window.setTimeout(() => {
-      void quoteIntent({
-        from: pay.symbol,
-        to: receiveToken.symbol,
+      void quoteRoutes({
+        from: pay,
+        to: receiveToken,
         amount: String(qty),
         accountId,
-        dry: true,
+        refundTo: accountId,
+        recipient: accountId,
         slippageBps: Math.round(slipPct * 100),
+        purpose: "Spot",
       })
-        .then((quote) => setLive(quote))
-        .catch(() => setLive(null))
+        .then((next) => setRoutes(next))
+        .catch(() => setRoutes([]))
         .finally(() => setQuoting(false));
     }, 400);
     return () => window.clearTimeout(timer);
   }, [accountId, connected, pay.symbol, qty, receiveToken.symbol, slipPct]);
-  const quotes = useMemo(() => {
-    if (!live) return [];
-    const impact = live.amountInUsd > 0 ? Math.max(0, (1 - live.amountOutUsd / live.amountInUsd) * 100) : 0;
-    const feeBps = live.amountInUsd > 0 ? Math.max(0, ((live.amountInUsd - live.amountOutUsd) / live.amountInUsd) * 10_000) : 0;
-    return [
-      {
-        venue: { id: "intents", name: "NEAR Intents", kind: "Bridge" as const, feeBps, impactBps: Math.round(impact * 100), depthUsd: 0, eta: `${live.timeEstimate}s` },
-        feeBps,
-        impact,
-        receive: live.amountOutHuman,
-        score: 0,
-      },
-    ];
-  }, [live]);
-  const quoteKey = quotes.map((quote) => `${quote.venue.id}:${quote.receive.toFixed(2)}`).join("|");
+  const quotes = routes;
+  const quoteKey = quotes.map((quote) => `${quote.id}:${quote.receive.toFixed(2)}`).join("|");
   useEffect(() => {
     if (!routesOpen) return;
     setDeck((value) => value + 1);
@@ -687,19 +673,12 @@ function Ticket({
       onFlash("No route inside your slippage.");
       return;
     }
-    onFlash(`Confirm the deposit. ${picked.venue.name} has the lowest fee and impact inside your slippage.`);
-    void executeIntent({
-      from: pay.symbol,
-      to: receiveToken.symbol,
-      amount: String(qty),
-      accountId,
-      purpose: "Spot",
-      slippageBps: slipPct * 100,
-      maxImpactPct: slipPct,
-    })
+    onFlash(`Confirm the deposit. ${picked.name} has the lowest fee inside your slippage.`);
+    void picked
+      .execute()
       .then((result) => {
         setFills((prev) => (side === "buy" ? { ...prev, bought: prev.bought + qty } : { ...prev, sold: prev.sold + qty * token.price }));
-        onFlash(`${side === "buy" ? "Bought" : "Sold"} ${token.symbol} via ${picked.venue.name} · ${fmt(result.amountOutHuman)} ${receiveToken.symbol} · ${result.status}`);
+        onFlash(`${side === "buy" ? "Bought" : "Sold"} ${token.symbol} via ${picked.name} · ${fmt(result.amountOutHuman)} ${receiveToken.symbol} · ${result.status}`);
       })
       .catch((error: unknown) => onFlash(error instanceof Error ? error.message : "The route rejected the trade."));
   }
@@ -938,9 +917,9 @@ function Ticket({
           {picked ? (
             <div className="mt-2 rounded-xl border border-line p-3 text-xs">
               <p className="text-muted">Cheapest fee, then lowest impact, inside slippage</p>
-              <p className="mt-1 font-semibold">{picked.venue.name}</p>
+              <p className="mt-1 font-semibold">{picked.name}</p>
               <p className="mt-1 font-mono text-muted">
-                Fee {(picked.feeBps / 100).toFixed(2)}% · impact {picked.impact.toFixed(2)}% · {picked.venue.eta}
+                Fee {(picked.feeBps / 100).toFixed(2)}% · impact {picked.impact.toFixed(2)}% · {picked.eta}
               </p>
               <p className="mt-1 font-mono">
                 You receive {fmt(receive)} {receiveToken.symbol}
@@ -952,13 +931,13 @@ function Ticket({
                 <ul className="route-deck mt-2 space-y-1">
                   {quotes.map((quote, index) => (
                     <li
-                      key={`${deck}-${quote.venue.id}`}
+                      key={`${deck}-${quote.id}`}
                       className={`route-card ${index === 0 ? "is-best" : ""}`}
                       style={{ animationDelay: `${index * 45}ms` }}
                     >
                       <div className={`flex w-full items-center justify-between rounded-lg px-2 py-2 text-left ${index === 0 ? "bg-surface-2" : ""}`}>
                         <span>
-                          {quote.venue.name}
+                          {quote.name}
                           <span className="mt-0.5 block text-muted">
                             {quote.feeBps === minFee ? "Lowest fee" : `${(quote.feeBps / 100).toFixed(2)}% fee`}
                             {" · "}
@@ -973,7 +952,7 @@ function Ticket({
               )}
             </div>
           ) : (
-            <p className="mt-2 text-xs text-muted">{connected ? (quoting ? "Fetching the NEAR Intents quote…" : "No live Intents quote for this size.") : "Connect a wallet for a live Intents quote."}</p>
+            <p className="mt-2 text-xs text-muted">{connected ? (quoting ? "Comparing live routes…" : "No live route for this size.") : "Connect a wallet for a live route."}</p>
           )}
         </div>
       )}

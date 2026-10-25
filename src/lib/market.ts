@@ -483,6 +483,19 @@ export function tokenLabel(token: { symbol: string; chain: string }) {
   return token.symbol.endsWith(suffix) ? token.symbol.slice(0, -suffix.length) : token.symbol;
 }
 
+export function displayName(token: { symbol: string; name: string; chain: string }) {
+  const cut = (value: string) => {
+    let next = value.trim();
+    const tail = /\.(near|sweat|tkn|tknx|omft|meme-cooking|nearlytrade|justhoot)$/i;
+    while (tail.test(next)) next = next.replace(tail, "");
+    return next;
+  };
+  const symbol = cut(tokenLabel(token));
+  let name = cut((token.name || symbol).replace(new RegExp(`\\s+on\\s+${token.chain}$`, "i"), ""));
+  if (!name || name.length > 32) name = symbol;
+  return name || symbol;
+}
+
 export function isHoneypot(token: Token) {
   return token.safety.sellTax >= 90;
 }

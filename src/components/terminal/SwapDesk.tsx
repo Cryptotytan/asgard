@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowDownUp, ChevronDown, ShieldAlert } from "lucide-react";
 import { TokenIcon, TokenPicker, VerifiedMark } from "@/components/terminal/TokenIcon";
 import { linkedWallets, useForeign, WALLET_MARK, type LinkedWallet } from "@/lib/foreign-wallet";
 import { canSign, chainByLabel, validAddress } from "@/lib/chains";
-import { fmt, rankQuotes, scoreLabel, tokenBySymbol, tokenLabel, usd, type Quote } from "@/lib/market";
-import { executeIntent, quoteIntent, type IntentQuote } from "@/lib/intents";
+import { fmt, scoreLabel, tokenBySymbol, tokenLabel, usd } from "@/lib/market";
+import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 import { useDesk } from "@/lib/store";
 import { useHoldings } from "@/lib/wallet-holdings";
 
@@ -27,7 +27,8 @@ export function SwapDesk({ focus }: { focus?: string }) {
   const [routesOpen, setRoutesOpen] = useState(false);
   const [deck, setDeck] = useState(0);
   const [note, setNote] = useState("");
-  const [live, setLive] = useState<IntentQuote | null>(null);
+  const [routes, setRoutes] = useState<LiveRoute[]>([]);
+  const [pickedId, setPickedId] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState("");
   const [settling, setSettling] = useState(false);
   const [flipped, setFlipped] = useState(false);
@@ -83,24 +84,8 @@ export function SwapDesk({ focus }: { focus?: string }) {
   const receiveOk = validAddress(buy.chain, recipient);
   const originKind = chainByLabel(sell.chain)?.kind;
   const originConnected = Boolean(sellActive) && sellActive?.id === originKind;
-  const book = useMemo(() => rankQuotes(sell, buy, amountN, slipPct), [sell, buy, amountN]);
-  const liveImpact = live && live.amountInUsd > 0 ? Math.max(0, (1 - live.amountOutUsd / live.amountInUsd) * 100) : 0;
-  const liveFeeBps = live && live.amountInUsd > 0 ? Math.max(0, ((live.amountInUsd - live.amountOutUsd) / live.amountInUsd) * 10_000) : 0;
-  const quotes = useMemo(() => {
-    if (!live) return book;
-    const venue = book.find((quote) => quote.venue.id === "intents")?.venue ?? {
-      id: "intents",
-      name: "NEAR Intents",
-      kind: "Bridge" as const,
-      feeBps: liveFeeBps,
-      impactBps: Math.round(liveImpact * 100),
-      depthUsd: 0,
-      eta: `${live.timeEstimate}s`,
-    };
-    const row: Quote = { venue, feeBps: liveFeeBps, impact: liveImpact, receive: live.amountOutHuman, score: liveFeeBps / 100 + liveImpact };
-    return [row];
-  }, [book, live, liveImpact, liveFeeBps]);
-  const best = quotes[0] ?? null;
+  const book = routes;
+  const best = book.find((route) => route.id === pickedId) ?? book[0] ?? null;
   const parked = Object.values(receipts).reduce((sum, receipt) => sum + (receipt.asset === sell.symbol ? receipt.amount : 0), 0);
   const margin = sell.symbol === "USDC" ? positions.reduce((sum, position) => sum + position.margin, 0) : 0;
   const walletAmt = sellHold.book[sell.symbol] ?? 0;
@@ -127,7 +112,8 @@ export function SwapDesk({ focus }: { focus?: string }) {
 
   useEffect(() => {
     setAcked(false);
-    setLive(null);
+    setRoutes([]);
+    setPickedId(null);
     setQuoteError("");
     if (amountN <= 0 || sell.symbol === buy.symbol) return;
     if (!refundOk || !receiveOk) {
@@ -136,14 +122,16 @@ export function SwapDesk({ focus }: { focus?: string }) {
     }
     setFetching(true);
     const timer = window.setTimeout(() => {
-      void quoteIntent({ from: sell.symbol, to: buy.symbol, amount, accountId: accountId || refundTo, refundTo, recipient, dry: true })
-        .then((quote) => {
-          setLive(quote);
-          setQuoteError("");
+      void quoteRoutes({ from: sell, to: buy, amount, accountId: accountId || refundTo, refundTo, recipient, slippageBps: 100 })
+        .then((next) => {
+          setRoutes(next);
+          setPickedId(next[0]?.id ?? null);
+          setQuoteError(next.length ? "" : "No live route between these chains.");
         })
         .catch((error: unknown) => {
-          setLive(null);
-          setQuoteError(error instanceof Error ? error.message : "No NEAR Intents quote.");
+          setRoutes([]);
+          setPickedId(null);
+          setQuoteError(error instanceof Error ? error.message : "No live route.");
         })
         .finally(() => setFetching(false));
     }, 400);
@@ -193,17 +181,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
     setSettling(true);
     setNote("Confirm the deposit in the origin wallet. A failed bridge refunds to your origin address.");
     try {
-      const result = await executeIntent({
-        from: sell.symbol,
-        to: buy.symbol,
-        amount,
-        accountId: accountId || refundTo,
-        refundTo,
-        recipient,
-        purpose: "Swap",
-        slippageBps: 100,
-        maxImpactPct: slipPct,
-      });
+      const result = await best.execute();
       setAmount("");
       setNote(`Settled ${fmt(result.amountOutHuman)} ${tokenLabel(buy)} on ${buy.chain}.`);
     } catch (error) {
@@ -337,22 +315,29 @@ export function SwapDesk({ focus }: { focus?: string }) {
 
         <div className="mt-1.5 flex items-center justify-between gap-3">
           <button type="button" onClick={() => setRoutesOpen((open) => !open)} className="truncate text-xs text-primary sm:text-sm">
-            {best ? `Best route · ${best.venue.name}` : "Best route"}
+            {best ? `Best route · ${best.name}` : "Best route"}
           </button>
-          <span className="shrink-0 text-[11px] text-muted">{best ? best.venue.kind : quoteError ? "Unavailable" : ""}</span>
+          <span className="shrink-0 text-[11px] text-muted">{best ? best.kind : quoteError ? "Unavailable" : ""}</span>
         </div>
         {routesOpen && (
           <ul className="route-deck mt-1 max-h-16 min-h-0 overflow-auto rounded-xl bg-bg sm:mt-2 sm:max-h-48">
-            {quotes.length === 0 && <li className="px-3 py-2 text-sm text-muted">{connected ? "No live NEAR Intents quote for this size." : "Connect a wallet to price this on NEAR Intents."}</li>}
-            {quotes.map((quote, index) => (
-              <li key={`${deck}-${quote.venue.id}`} className={`route-card flex items-center justify-between gap-3 px-3 py-1.5 text-sm sm:py-2 ${index === 0 ? "is-best" : ""}`} style={{ animationDelay: `${index * 45}ms` }}>
-                <span className={index === 0 ? "" : "text-muted"}>
-                  {quote.venue.name}
-                  {index === 0 && <span className="ml-2 text-xs text-primary">Best</span>}
-                </span>
-                <span className="font-mono text-xs text-muted">
-                  {(quote.feeBps / 100).toFixed(2)}% · {quote.impact.toFixed(2)}% impact
-                </span>
+            {book.length === 0 && <li className="px-3 py-2 text-sm text-muted">{quoteError || "No live route for this pair."}</li>}
+            {book.map((route, index) => (
+              <li key={`${deck}-${route.id}`}>
+                <button
+                  type="button"
+                  onClick={() => setPickedId(route.id)}
+                  className={`route-card flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-sm sm:py-2 ${route.id === best?.id ? "is-best" : ""}`}
+                  style={{ animationDelay: `${index * 45}ms` }}
+                >
+                  <span className={route.id === best?.id ? "" : "text-muted"}>
+                    {route.name}
+                    {index === 0 && <span className="ml-2 text-xs text-primary">Cheapest</span>}
+                  </span>
+                  <span className="font-mono text-xs text-muted">
+                    {(route.feeBps / 100).toFixed(2)}% · {route.kind}
+                  </span>
+                </button>
               </li>
             ))}
           </ul>
@@ -364,7 +349,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
           onClick={() => void submit()}
           className="mt-2 h-10 w-full rounded-xl bg-primary font-semibold text-primary-fg disabled:opacity-40"
         >
-          {settling ? "Settling…" : fetching ? "Fetching quote…" : amountN <= 0 ? "Enter an amount" : !sellActive ? "Connect wallet" : !originConnected ? `Connect a ${sell.chain} wallet` : short ? "Not enough balance" : best && best.impact > slipPct ? "Fee above 5%" : best ? `Bridge via ${best.venue.name}` : "No live quote"}
+          {settling ? "Settling…" : fetching ? "Fetching routes…" : amountN <= 0 ? "Enter an amount" : !sellActive ? "Connect wallet" : !originConnected ? `Connect a ${sell.chain} wallet` : short ? "Not enough balance" : best && best.impact > slipPct ? "Fee above 5%" : best ? `${best.kind} via ${best.name}` : "No live route"}
         </button>
         {quoteError && !note && <p className="mt-2 font-mono text-xs text-danger">{quoteError}</p>}
         {note && <p className="mt-3 break-words font-mono text-xs text-primary">{note}</p>}

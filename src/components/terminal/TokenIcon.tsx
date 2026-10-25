@@ -4,16 +4,13 @@ import { Check, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { knownLogo, lookupNearToken, searchNearTokens } from "@/lib/dex";
 import { chainIcon } from "@/lib/chains";
-import { CHAIN_ICON, CHAINS, fmt, glyph, px, TOKENS, usd, type Token } from "@/lib/market";
+import { CHAIN_ICON, CHAINS, displayName, fmt, glyph, px, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 
+const iconCache = new Map<string, string>();
+
 if (typeof window !== "undefined") {
-  for (const token of TOKENS) {
-    const img = new Image();
-    img.decoding = "async";
-    img.src = token.icon;
-  }
-  for (const src of Object.values(CHAIN_ICON)) {
+  for (const src of new Set([...Object.values(CHAIN_ICON), ...TOKENS.map((token) => token.icon).filter((src) => src.startsWith("/"))])) {
     const img = new Image();
     img.decoding = "async";
     img.src = src;
@@ -25,33 +22,12 @@ export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "s
   const [turn, setTurn] = useState<"a" | "b" | null>(null);
   const [step, setStep] = useState(0);
   const sources = useMemo(() => {
-    const slug =
-      token.chain === "Ethereum"
-        ? "ethereum"
-        : token.chain === "Solana"
-          ? "solana"
-          : token.chain === "Base"
-            ? "base"
-            : token.chain === "Arbitrum"
-              ? "arbitrum"
-              : token.chain === "Optimism"
-                ? "optimism"
-                : token.chain === "BNB"
-                  ? "bsc"
-                  : token.chain === "Polygon"
-                    ? "polygon"
-                    : token.chain === "Avalanche"
-                      ? "avalanche"
-                      : token.chain === "Aurora"
-                        ? "aurora"
-                        : "near";
-    const list = slug === "near" ? [knownLogo(token.symbol), token.icon] : [token.icon, knownLogo(token.symbol.split(".")[0] ?? token.symbol)];
-    if (token.address) {
-      list.push(`https://cdn.dexscreener.com/tokens/${slug}/${token.address}.png`);
-      list.push(`https://dd.dexscreener.com/ds-data/tokens/${slug}/${token.address}.png`);
-    }
-    return [...new Set(list.filter((src) => src && !src.startsWith("data:image/svg+xml;utf8,")))];
-  }, [token.address, token.chain, token.icon, token.symbol]);
+    const key = `${token.chain ?? ""}:${token.symbol}`;
+    const local = knownLogo(token.symbol) || knownLogo((token.symbol.split(".")[0] ?? token.symbol));
+    const own = token.icon && !token.icon.includes("dexscreener.com") ? token.icon : "";
+    const list = [iconCache.get(key), local, own, token.icon].filter((src): src is string => Boolean(src && !src.startsWith("data:image/svg+xml;utf8,")));
+    return [...new Set(list)];
+  }, [token.chain, token.icon, token.symbol]);
   useEffect(() => {
     setStep(0);
     if (seen.current === token.symbol + token.icon) return;
@@ -67,7 +43,8 @@ export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "s
         width={24}
         height={24}
         decoding="async"
-        loading="lazy"
+        loading="eager"
+        onLoad={() => iconCache.set(`${token.chain ?? ""}:${token.symbol}`, src)}
         onError={() => setStep((current) => current + 1)}
         className={cn("size-6 shrink-0 rounded-full bg-surface-2 object-cover", className)}
       />
@@ -195,7 +172,7 @@ export function TokenPicker({
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Name, symbol, or contract address"
+                placeholder="Name or symbol"
                 className="min-w-0 flex-1 bg-transparent text-sm outline-none"
               />
             </label>
@@ -213,12 +190,12 @@ export function TokenPicker({
                     <TokenIcon token={token} className="size-8" />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-1 font-semibold">
-                        {token.symbol.endsWith(`.${token.chain}`) ? token.symbol.slice(0, -(token.chain.length + 1)) : token.symbol}
+                        {displayName(token)}
                         {token.verified && <VerifiedMark />}
                       </span>
                       <span className="flex items-center gap-1 truncate text-xs text-muted">
                         <img src={CHAIN_ICON[token.chain]} alt="" className="size-3.5 shrink-0 rounded-full object-cover" />
-                        {token.name} · {token.chain}
+                        {token.chain}
                       </span>
                     </span>
                     <span className="shrink-0 text-right font-mono text-xs">

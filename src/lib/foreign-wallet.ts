@@ -181,6 +181,41 @@ async function sendEvm(meta: ChainMeta, token: string | null, to: string, amount
   return hash;
 }
 
+export async function sendEvmCall(chainLabel: string, tx: { to: string; data?: string; value?: string }) {
+  const meta = chainByLabel(chainLabel);
+  if (!meta || meta.kind !== "evm") throw new Error(`No EVM wallet can sign ${chainLabel}. Nothing was sent.`);
+  const provider = ethereum();
+  if (!provider) throw new Error("Install MetaMask or Rabby. Nothing was sent.");
+  const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
+  const from = accounts[0];
+  if (!from) throw new Error("The EVM wallet has no account. Nothing was sent.");
+  emit({ evm: from });
+  await switchEvm(provider, meta);
+  const value = !tx.value || tx.value === "0" || tx.value === "0x0" ? "0x0" : tx.value.startsWith("0x") ? tx.value : `0x${BigInt(tx.value).toString(16)}`;
+  const hash = (await provider.request({
+    method: "eth_sendTransaction",
+    params: [{ from, to: tx.to, data: tx.data ?? "0x", value }],
+  })) as string;
+  if (!hash) throw new Error("The wallet did not return a transaction. Nothing else was sent.");
+  return hash;
+}
+
+export async function sendSolanaSerialized(raw: string) {
+  const wallet = solana();
+  if (!wallet) throw new Error("Install Phantom. Nothing was sent.");
+  const connected = wallet.publicKey ? wallet : await wallet.connect().then(() => solana());
+  const owner = connected?.publicKey?.toString();
+  if (!owner || !connected) throw new Error("The Solana wallet has no account. Nothing was sent.");
+  emit({ sol: owner });
+  const web3 = await import("@solana/web3.js");
+  const bytes = Uint8Array.from(atob(raw), (char) => char.charCodeAt(0));
+  const tx = web3.VersionedTransaction.deserialize(bytes);
+  const sent = await connected.signAndSendTransaction(tx);
+  const signature = typeof sent === "string" ? sent : sent.signature;
+  if (!signature) throw new Error("The wallet did not return a signature. Nothing else was sent.");
+  return signature;
+}
+
 async function sendSol(token: string | null, to: string, amount: string) {
   const wallet = solana();
   if (!wallet) throw new Error("Install Phantom. Nothing was sent.");
