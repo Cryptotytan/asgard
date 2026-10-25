@@ -77,7 +77,55 @@ type DexPair = {
   info?: { imageUrl?: string };
 };
 
+const MEME_SEEDS = ["meme-cooking", "nearlytrade", "justhoot", "shitzu", "blackdragon", "tkn.near", "neko", "launchpad", "marmaj"];
+const memeHits = new Set<string>();
+
 export let marketsSynced = false;
+
+function memeHost(address: string) {
+  return /meme-cooking\.near|nearlytrade\.near|justhoot\.near|\.tkn\.near|tknx\.near|0xshitzu\.near/.test(address.toLowerCase());
+}
+
+function blockedMeme(address: string) {
+  const id = address.toLowerCase();
+  if (!id || id === "wrap.near" || id.endsWith("factory.bridge.near") || id.endsWith("omft.near")) return true;
+  return isCanonical({ symbol: ADDRESS_SYMBOL[address] ?? ADDRESS_SYMBOL[id] ?? "", address });
+}
+
+function isNearMeme(address: string) {
+  if (blockedMeme(address)) return false;
+  return memeHits.has(address.toLowerCase()) || memeHost(address);
+}
+
+async function pullNearMemes(take: (pair: DexPair) => void, seen: Set<string>) {
+  const searches = await Promise.all(
+    MEME_SEEDS.map((q) => getJson<{ pairs?: DexPair[] }>(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(q)}`).catch(() => null)),
+  );
+  for (const body of searches) {
+    for (const pair of body?.pairs ?? []) {
+      if (pair.chainId && pair.chainId !== "near") continue;
+      const address = pair.baseToken?.address;
+      if (!address || blockedMeme(address)) continue;
+      memeHits.add(address.toLowerCase());
+      take(pair);
+    }
+  }
+  const known = iconBook ? [...iconBook.keys()] : Object.keys((await getJson<Record<string, unknown>>(REF).catch(() => null)) ?? {});
+  const extra = known.filter((address) => memeHost(address) && !seen.has(address)).slice(0, 180);
+  for (const address of extra) memeHits.add(address.toLowerCase());
+  const chunks: string[] = [];
+  for (let i = 0; i < extra.length; i += 30) chunks.push(extra.slice(i, i + 30).join(","));
+  for (let i = 0; i < chunks.length; i += 4) {
+    const batch = await Promise.all(chunks.slice(i, i + 4).map((chunk) => getJson<DexPair[]>(`${TOKENS_API}/${chunk}`).catch(() => null)));
+    for (const rows of batch) {
+      for (const pair of Array.isArray(rows) ? rows : []) {
+        const address = pair.baseToken?.address;
+        if (!address || !isNearMeme(address)) continue;
+        take(pair);
+      }
+    }
+  }
+}
 
 let iconBook: Map<string, string> | null = null;
 let tradableGate: Map<string, IntentAsset> | null = null;
@@ -101,6 +149,7 @@ function publishTradable(map: Map<string, IntentAsset>) {
   const allowed = new Set(map.keys());
   for (const token of TOKENS) {
     if (token.chain !== "NEAR") continue;
+    if (token.kind === "meme" && token.liqN > 0 && (token.volN > 0 || token.txnsN > 0)) continue;
     const address = token.address?.toLowerCase();
     if (!address || !allowed.has(address)) token.listed = false;
   }
@@ -358,6 +407,10 @@ export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (mar
     if (gate) publishTradable(gate);
     onPaint?.({ ...marks });
   }
+  await pullNearMemes(take, seen);
+  paintDex(best, marks);
+  if (gate) publishTradable(gate);
+  onPaint?.({ ...marks });
   const assets = await loadIntentAssets().catch(() => null);
   if (assets) {
     publishForeign(assets);
@@ -565,6 +618,7 @@ function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
     if (liq <= 0 && vol.h24 <= 0) continue;
     const symbolName = ADDRESS_SYMBOL[address] ?? base.symbol.replace(/\s/g, "").replace(/^\$/, "");
     if (!symbolName) continue;
+    const meme = isNearMeme(address);
     const holder = owned.get(symbolName);
     const symbol = holder && holder !== address ? `${symbolName}.${address.slice(0, 6)}` : symbolName;
     const taken = owned.get(symbol);
@@ -604,10 +658,11 @@ function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
     token.sells = sells;
     token.txns = token.txnsN > 0 ? token.txnsN.toLocaleString("en-US") : "—";
     token.ageH = pair.pairCreatedAt ? Math.max(0.05, (Date.now() - pair.pairCreatedAt) / 3_600_000) : token.ageH;
-    token.listed = canTrade(address);
+    if (meme) token.kind = "meme";
+    token.listed = canTrade(address) || (meme && liq > 0 && (vol.h24 > 0 || buys + sells > 0));
     token.verified = isCanonical({ symbol, address });
     token.score = qualityScore(token) ?? 0;
-    token.notes = token.verified ? ["Widely used NEAR asset"] : [pair.dexId || "NEAR market"];
+    token.notes = token.verified ? ["Widely used NEAR asset"] : meme ? ["NEAR meme"] : [pair.dexId || "NEAR market"];
     owned.set(symbol, address);
     marks[symbol] = price;
   }
