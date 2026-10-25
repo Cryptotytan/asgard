@@ -1,4 +1,4 @@
-import { ensureToken, isCanonical, LEND_MARKETS, money, qualityScore, TOKENS, type Candle, type Print } from "@/lib/market";
+import { ensureToken, isCanonical, isMajorAsset, LEND_MARKETS, money, qualityScore, TOKENS, type Candle, type Print } from "@/lib/market";
 import { iconFor, geckoIdFor, loadIconBook, syncNearMarkets, applyIconBook } from "@/lib/dex";
 import { useDesk } from "@/lib/store";
 
@@ -55,6 +55,38 @@ const LLAMA_CHAIN: Record<string, string> = {
   Tron: "tron",
   Sui: "sui",
   Aptos: "aptos",
+  TON: "ton",
+  Starknet: "starknet",
+  Berachain: "berachain",
+  Monad: "monad",
+  Abstract: "abstract",
+  Hyperliquid: "hyperliquid",
+};
+
+const GECKO_NET: Record<string, string> = {
+  NEAR: "near",
+  Ethereum: "eth",
+  Solana: "solana",
+  Base: "base",
+  Arbitrum: "arbitrum",
+  Optimism: "optimism",
+  BNB: "bsc",
+  Polygon: "polygon_pos",
+  Avalanche: "avax",
+  Gnosis: "gnosis",
+  Scroll: "scroll",
+  Aurora: "aurora",
+  Berachain: "berachain",
+  "X Layer": "x-layer",
+  Tron: "tron",
+  TON: "ton",
+  Sui: "sui",
+  Aptos: "aptos",
+  Starknet: "starknet",
+  Monad: "monad",
+  Abstract: "abstract",
+  Hyperliquid: "hyperevm",
+  Plasma: "plasma",
 };
 
 const ALIAS: Record<string, string> = {
@@ -140,16 +172,20 @@ function llamaCandidates(symbol: string) {
     if (id && !out.includes(id)) out.push(id);
   };
   const base = symbol.split(".")[0].toUpperCase();
-  push(COINGECKO[symbol] ?? "");
-  push(COINGECKO[base] ?? "");
-  const gecko = geckoIdFor(symbol) || geckoIdFor(base);
-  if (gecko) push(gecko.startsWith("coingecko:") ? gecko : `coingecko:${gecko}`);
   const token = TOKENS.find((item) => item.symbol === symbol);
   const prefix = token ? LLAMA_CHAIN[token.chain] : "";
   const raw = token?.address ?? "";
-  if (prefix && raw && !raw.includes(":")) push(`${prefix}:${raw.startsWith("0x") ? raw.toLowerCase() : raw}`);
+  const own = prefix && raw && !raw.includes(":") ? `${prefix}:${raw.startsWith("0x") ? raw.toLowerCase() : raw}` : "";
+  const major = Boolean(token && (isCanonical(token) || isMajorAsset(base, token.chain)));
+  if (own) push(own);
+  if (!token || major) {
+    push(COINGECKO[symbol] ?? "");
+    push(COINGECKO[base] ?? "");
+  }
+  const gecko = geckoIdFor(symbol) || geckoIdFor(base);
+  if (gecko) push(gecko.startsWith("coingecko:") ? gecko : `coingecko:${gecko}`);
   const contract = CONTRACTS[symbol] ?? CONTRACTS[base];
-  if (contract) push(`near:${contract}`);
+  if (contract && (!token || token.chain === "NEAR")) push(`near:${contract}`);
   return out;
 }
 
@@ -158,7 +194,7 @@ function llamaId(symbol: string) {
 }
 
 const PAGE = 500;
-type Book = { points: Point[]; from: number; exhausted: boolean; id: string };
+type Book = { points: Point[]; bars?: Candle[]; from: number; exhausted: boolean; id: string };
 const books = new Map<string, Book>();
 const tails = new Map<string, Promise<unknown>>();
 const firstSeen = new Map<string, number>();
@@ -226,7 +262,7 @@ function mergePoints(parts: Point[][]) {
 }
 
 function publishBook(key: string, book: Book) {
-  const next = book.points.length > 1 ? toCandles(book.points) : [];
+  const next = book.bars && book.bars.length > 1 ? book.bars : book.points.length > 1 ? toCandles(book.points) : [];
   candles.set(key, next);
   candleAt.set(key, Date.now());
   useDesk.setState((state) => ({ clock: state.clock + 1 }));
@@ -253,6 +289,75 @@ export async function loadCandles(symbol: string, frame = "5m") {
   return job;
 }
 
+function geckoFrame(frame: string) {
+  if (frame === "1m") return { tf: "minute", aggregate: 1 };
+  if (frame === "5m") return { tf: "minute", aggregate: 5 };
+  if (frame === "15m") return { tf: "minute", aggregate: 15 };
+  if (frame === "1H") return { tf: "hour", aggregate: 1 };
+  if (frame === "4H") return { tf: "hour", aggregate: 4 };
+  return { tf: "day", aggregate: 1 };
+}
+
+function readBars(rows: unknown): Candle[] {
+  if (!Array.isArray(rows)) return [];
+  const bars: Candle[] = [];
+  for (const row of rows) {
+    if (!Array.isArray(row) || row.length < 5) continue;
+    const t = Number(row[0]);
+    const o = Number(row[1]);
+    const h = Number(row[2]);
+    const l = Number(row[3]);
+    const c = Number(row[4]);
+    if (t > 0 && o > 0 && h > 0 && l > 0 && c > 0) bars.push({ t, o, h, l, c });
+  }
+  bars.sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
+  return bars;
+}
+
+function mergeBars(left: Candle[] = [], right: Candle[] = []) {
+  const map = new Map<number, Candle>();
+  for (const bar of [...left, ...right]) if (bar.t && bar.c > 0) map.set(bar.t, bar);
+  return [...map.values()].sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
+}
+
+async function geckoGet(url: string) {
+  const response = await fetch(url, { headers: { accept: "application/json" } }).catch(() => null);
+  if (!response || response.status === 429 || response.status >= 500 || !response.ok) return null;
+  return response.json() as Promise<Record<string, unknown>>;
+}
+
+async function geckoPool(network: string, address: string) {
+  const body = await geckoGet(`https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${encodeURIComponent(address)}/pools?page=1`);
+  const rows = (body as { data?: { attributes?: { address?: string } }[] } | null)?.data;
+  return rows?.[0]?.attributes?.address ?? "";
+}
+
+async function geckoBars(network: string, pool: string, frame: string, before?: number) {
+  const plan = geckoFrame(frame);
+  const query = new URLSearchParams({ aggregate: String(plan.aggregate), limit: "1000", currency: "usd" });
+  if (before && before > 0) query.set("before_timestamp", String(Math.floor(before)));
+  const body = await geckoGet(`https://api.geckoterminal.com/api/v2/networks/${network}/pools/${pool}/ohlcv/${plan.tf}?${query}`);
+  const rows = (body as { data?: { attributes?: { ohlcv_list?: unknown } } } | null)?.data?.attributes?.ohlcv_list;
+  return readBars(rows);
+}
+
+async function loadGeckoBook(symbol: string, frame: string, book: Book) {
+  const token = TOKENS.find((item) => item.symbol === symbol);
+  const network = token ? GECKO_NET[token.chain] : "";
+  const raw = token?.address ?? "";
+  if (!network || !raw || raw.includes(":")) return false;
+  const address = raw.startsWith("0x") ? raw.toLowerCase() : raw;
+  const pool = book.id.startsWith("gecko:") ? book.id.split(":").slice(2).join(":") : await geckoPool(network, address);
+  if (!pool) return false;
+  const bars = await geckoBars(network, pool, frame);
+  if (bars.length < 2) return false;
+  book.id = `gecko:${network}:${pool}`;
+  book.bars = mergeBars(book.bars, bars);
+  book.points = book.bars.map((bar) => ({ timestamp: bar.t ?? 0, price: bar.c }));
+  book.from = book.bars[0]?.t ?? book.from;
+  return book.bars.length > 1;
+}
+
 async function fetchCandles(symbol: string, frame: string, key: string) {
   const plan = historyPlan(frame);
   const now = Math.floor(Date.now() / 1000);
@@ -271,7 +376,22 @@ async function fetchCandles(symbol: string, frame: string, key: string) {
       book.points = mergePoints([book.points, part]);
       break;
     }
-    if (!book.id || book.points.length < 2) return candles.get(key) ?? [];
+    if (!book.id || book.points.length < 2) {
+      const found = await loadGeckoBook(symbol, frame, book);
+      if (!found) return candles.get(key) ?? [];
+      return publishBook(key, book);
+    }
+    return publishBook(key, book);
+  }
+  if (book.id.startsWith("gecko:")) {
+    const pool = book.id.split(":").slice(2).join(":");
+    const network = book.id.split(":")[1] ?? "";
+    const bars = network && pool ? await geckoBars(network, pool, frame) : [];
+    if (bars.length > 1) {
+      book.bars = mergeBars(book.bars, bars);
+      book.points = book.bars.map((bar) => ({ timestamp: bar.t ?? 0, price: bar.c }));
+    }
+    if (!book.bars || book.bars.length < 2) return candles.get(key) ?? [];
     return publishBook(key, book);
   }
   const start = Math.max(ORIGIN, now - PAGE * plan.step);
@@ -296,6 +416,19 @@ async function olderCandles(symbol: string, frame: string, key: string) {
   if (!books.get(key)) await fetchCandles(symbol, frame, key);
   const book = books.get(key);
   if (!book || book.exhausted) return false;
+  if (book.id.startsWith("gecko:")) {
+    const pool = book.id.split(":").slice(2).join(":");
+    const network = book.id.split(":")[1] ?? "";
+    const oldest = book.bars?.[0]?.t ?? book.from;
+    const older = network && pool ? await geckoBars(network, pool, frame, oldest) : [];
+    const before = book.bars?.length ?? 0;
+    book.bars = mergeBars(older, book.bars);
+    book.points = (book.bars ?? []).map((bar) => ({ timestamp: bar.t ?? 0, price: bar.c }));
+    book.from = book.bars?.[0]?.t ?? book.from;
+    if ((book.bars?.length ?? 0) <= before) book.exhausted = true;
+    if ((book.bars?.length ?? 0) > 1) publishBook(key, book);
+    return (book.bars?.length ?? 0) > before;
+  }
   const id = book.id || llamaId(symbol);
   if (!id) return false;
   const plan = historyPlan(frame);

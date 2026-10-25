@@ -188,7 +188,7 @@ function publishForeign(assets: IntentAsset[]) {
   for (const asset of assets) {
     if (asset.blockchain === "near" || !(Number(asset.price) > 0)) continue;
     const meta = chainById(asset.blockchain);
-    if (!meta || (meta.kind !== "evm" && meta.kind !== "sol")) continue;
+    if (!meta) continue;
     const chain = meta.label;
     const base = asset.symbol.replace(/\s/g, "") || chain;
     let token = TOKENS.find((item) => item.assetId === asset.assetId);
@@ -425,7 +425,7 @@ export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (mar
   if (assets) {
     publishForeign(assets);
     void warmLogos(assets);
-    void pullDexMarkets();
+    void refreshDexMarkets();
     void paintForeignStats().then(() => {
       useDesk.setState((state) => ({ clock: state.clock + 1 }));
       onPaint?.({ ...marks });
@@ -500,6 +500,14 @@ const DEX_LABEL_SLUG: Record<string, string> = {
   Scroll: "scroll",
   Berachain: "berachain",
   "X Layer": "xlayer",
+  Tron: "tron",
+  TON: "ton",
+  Sui: "sui",
+  Aptos: "aptos",
+  Starknet: "starknet",
+  Monad: "monad",
+  Plasma: "plasma",
+  Abstract: "abstract",
 };
 
 const SLUG_LABEL: Record<string, string> = Object.fromEntries(Object.entries(DEX_LABEL_SLUG).map(([label, slug]) => [slug, label]));
@@ -508,9 +516,31 @@ const DEX_SLUG = DEX_LABEL_SLUG;
 
 function dropOtherChains() {
   for (const token of TOKENS) {
-    const meta = chainByLabel(token.chain);
-    if (!meta || (meta.kind !== "near" && meta.kind !== "evm" && meta.kind !== "sol")) token.listed = false;
+    if (!chainByLabel(token.chain)) token.listed = false;
   }
+}
+
+const boostRank = new Map<string, number>();
+
+function boostKey(chain: string, address: string) {
+  const keep = chain === "Solana" || chain === "NEAR" || chain === "TON" || chain === "Aptos" || chain === "Sui" || chain === "Fogo";
+  return `${chain}:${keep ? address : address.toLowerCase()}`;
+}
+
+export function trendScore(token: { chain: string; address?: string; volN: number; txnsN: number; liqN: number }) {
+  const boost = token.address ? (boostRank.get(boostKey(token.chain, token.address)) ?? 0) : 0;
+  const vol = token.volN || 0;
+  const tx = token.txnsN || 0;
+  const liq = token.liqN || 0;
+  if (vol <= 0 && tx <= 0 && liq <= 0 && boost <= 0) return 0;
+  return boost * 1_000_000_000 + vol * Math.log10(tx + 10) + Math.sqrt(liq);
+}
+
+function paintIcon(token: { icon: string }, image?: string) {
+  if (!image) return;
+  const current = token.icon || "";
+  const weak = !current || current.startsWith("data:") || current.includes("cdn.dexscreener.com/tokens/") || current.includes("dd.dexscreener.com/ds-data/tokens/");
+  token.icon = weak ? image : preferIcon(current, image);
 }
 
 function addressKind(value: string) {
@@ -571,7 +601,7 @@ function ingestForeignPairs(pairs: DexPair[], icons: Map<string, string>, loose 
       token.rails = [chain];
       token.notes = token.verified ? ["Widely traded"] : ["Live DexScreener market"];
     }
-    if (image) token.icon = preferIcon(token.icon, image);
+    if (image) paintIcon(token, image);
     applyLiveStats(token, pair, false);
   }
 }
@@ -611,6 +641,14 @@ async function pullDexMarkets() {
     }),
   );
   useDesk.setState((state) => ({ clock: state.clock + 1 }));
+}
+
+let dexAt = 0;
+
+export async function refreshDexMarkets() {
+  if (Date.now() - dexAt < 45_000) return;
+  dexAt = Date.now();
+  await pullDexMarkets();
 }
 
 export async function searchTokens(query: string) {

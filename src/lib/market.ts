@@ -75,7 +75,7 @@ export const WINDOWS: { id: WindowId; label: string }[] = [
   { id: "h24", label: "24H" },
 ];
 
-export const CHAINS = ["NEAR", "Ethereum", "Solana", "Base", "Arbitrum", "Optimism", "BNB", "Polygon", "Avalanche", "Gnosis", "Aurora", "Scroll", "Berachain", "X Layer"] as const;
+export const CHAINS = ["NEAR", "Ethereum", "Solana", "Base", "Arbitrum", "Optimism", "BNB", "Polygon", "Avalanche", "Bitcoin", "Tron", "TON", "Sui", "Aptos", "Gnosis", "Aurora", "Scroll", "Berachain", "X Layer", "Monad", "Plasma", "Abstract", "Hyperliquid", "Starknet", "Stellar", "XRP", "Dogecoin", "Litecoin", "Bitcoin Cash", "Dash", "Zcash", "Cardano", "Aleo", "Movement", "Fogo", "ADI", "Hood", "QTC"] as const;
 
 export const CHAIN_ICON: Record<string, string> = {
   NEAR: "/tokens/near.svg",
@@ -92,6 +92,28 @@ export const CHAIN_ICON: Record<string, string> = {
   Scroll: "/chains/scroll.png",
   Berachain: "/chains/bera.png",
   "X Layer": "/chains/xlayer.jpg",
+  Bitcoin: "/chains/bitcoin.png",
+  Tron: "/chains/tron.png",
+  TON: "/chains/ton.png",
+  Sui: "/chains/sui.png",
+  Aptos: "/chains/aptos.png",
+  Dogecoin: "/chains/doge.png",
+  XRP: "/chains/xrp.png",
+  Litecoin: "/chains/ltc.png",
+  "Bitcoin Cash": "/chains/bch.png",
+  Dash: "/chains/dash.png",
+  Zcash: "/chains/zec.png",
+  Cardano: "/chains/cardano.png",
+  Stellar: "/chains/stellar.png",
+  Starknet: "/chains/starknet.png",
+  Aleo: "/chains/aleo.png",
+  Monad: "/chains/monad.png",
+  Plasma: "/chains/plasma.png",
+  Abstract: "/chains/abstract.png",
+  Hyperliquid: "/chains/hyperliquid.png",
+  Hood: "/chains/hyperliquid.png",
+  Movement: "/chains/movement.png",
+  Fogo: "/chains/fogo.png",
 };
 
 const clean: Safety = {
@@ -453,7 +475,10 @@ export const MARKETS = [
 
 export function canPerp(symbol: string) {
   const token = TOKENS.find((item) => item.symbol === symbol);
-  return Boolean(token && token.listed && Number.isFinite(token.price) && token.price > 0);
+  if (!token || !token.listed || !(token.price > 0)) return false;
+  if (token.kind !== "meme") return true;
+  const base = token.symbol.split(".")[0];
+  return MARKETS.some((market) => market.base === token.symbol || market.base === base);
 }
 
 export const LEND_MARKETS: { symbol: string; supplyApy: number; borrowApy: number }[] = [];

@@ -137,7 +137,7 @@ export function TokenTrade({
           </div>
           <p className="hidden px-4 font-mono text-xs text-muted sm:block">
             {bars.length < 2 ? (
-              "Waiting on DefiLlama candles"
+              "Waiting on the live chart"
             ) : hover ? (
               <>
                 {hover.label} O {fmt(hover.o)} H {fmt(hover.h)} L {fmt(hover.l)} C {fmt(hover.c)}{" "}
