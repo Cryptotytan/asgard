@@ -15,6 +15,7 @@ import {
   type WindowId,
 } from "@/lib/market";
 import { marketsSynced } from "@/lib/dex";
+import { chainIcon } from "@/lib/chains";
 import { hideToken, toggleStar, useWatch, visitToken } from "@/lib/watch";
 import { useDesk } from "@/lib/store";
 
@@ -147,10 +148,18 @@ export function Markets({
               <VerifiedMark className={verifiedOnly ? "" : "bg-muted text-bg shadow-none"} />
             </button>
           </div>
-          <div className="hidden min-w-0 items-center gap-1.5 lg:flex">
-            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto pb-0.5">
-              {CHAINS.map((item) => (
-                <ChainMark key={item} id={item} active={chain === item} onClick={() => setChain(chain === item ? "All" : item)} />
+          <div className="hidden min-w-0 items-center gap-2 lg:flex">
+            <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-0.5">
+              {chainOptions.filter((id) => id !== "All").map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setChain(chain === item ? "All" : item)}
+                  className={`flex h-9 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold ${chain === item ? "bg-surface-2 text-fg ring-1 ring-primary" : "bg-surface text-muted"}`}
+                >
+                  <ChainLogo id={item} />
+                  {item}
+                </button>
               ))}
             </div>
             <button
@@ -244,7 +253,7 @@ function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowPro
             <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
               <span>{ageLabel(token.ageH)}</span>
               <span className="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-fg">
-                <img src={CHAIN_ICON[token.chain]} alt="" className="size-3.5 rounded-full object-cover" />
+                <img src={CHAIN_ICON[token.chain] || chainIcon(token.chain)} alt="" className="size-3.5 rounded-full bg-bg object-cover" />
                 {token.chain}
               </span>
               <IconButton
@@ -311,30 +320,10 @@ function completeStats(token: Token) {
 
 function ChainLogo({ id }: { id: string }) {
   const [failed, setFailed] = useState(false);
-  const icon = id === "All" ? "" : CHAIN_ICON[id];
+  const icon = id === "All" ? "" : CHAIN_ICON[id] || chainIcon(id);
   if (id === "All") return <span className="size-4 shrink-0 rounded-full border border-line bg-surface-2" />;
   if (!icon || failed) return <span className="grid size-4 shrink-0 place-items-center rounded-full bg-surface-2 text-[9px] font-semibold">{id.slice(0, 1)}</span>;
-  return <img src={icon} alt="" onError={() => setFailed(true)} className="size-4 shrink-0 rounded-full object-cover" />;
-}
-
-function ChainMark({ id, active, onClick }: { id: string; active: boolean; onClick: () => void }) {
-  const [failed, setFailed] = useState(false);
-  const icon = CHAIN_ICON[id];
-  return (
-    <button
-      type="button"
-      aria-label={id}
-      aria-pressed={active}
-      onClick={onClick}
-      className={`grid size-9 shrink-0 place-items-center rounded-full ${active ? "ring-2 ring-primary" : "opacity-80"}`}
-    >
-      {icon && !failed ? (
-        <img src={icon} alt="" onError={() => setFailed(true)} className="size-6 rounded-full object-cover" />
-      ) : (
-        <span className="grid size-6 place-items-center rounded-full bg-surface-2 text-[10px] font-semibold">{id.slice(0, 1)}</span>
-      )}
-    </button>
-  );
+  return <img src={icon} alt="" onError={() => setFailed(true)} className="size-4 shrink-0 rounded-full bg-bg object-cover" />;
 }
 
 function MobileRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowProps) {
@@ -351,7 +340,7 @@ function MobileRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowProp
           </span>
           <span className="block truncate text-xs text-muted">{token.tag}</span>
           <span className="mt-0.5 flex items-center gap-1 text-xs text-muted">
-            {ageLabel(token.ageH)} · <img src={CHAIN_ICON[token.chain]} alt="" className="size-3.5 rounded-full object-cover" />
+            {ageLabel(token.ageH)} · <img src={CHAIN_ICON[token.chain] || chainIcon(token.chain)} alt="" className="size-3.5 rounded-full bg-bg object-cover" />
             {token.chain}
           </span>
         </span>

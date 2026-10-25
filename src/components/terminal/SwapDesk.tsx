@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowDownUp, ChevronDown, ShieldAlert } from "lucide-react";
 import { TokenIcon, TokenPicker, VerifiedMark } from "@/components/terminal/TokenIcon";
 import { linkedWallets, useForeign, WALLET_MARK, type LinkedWallet } from "@/lib/foreign-wallet";
-import { canSign, chainByLabel, validAddress } from "@/lib/chains";
-import { fmt, scoreLabel, tokenBySymbol, tokenLabel, usd } from "@/lib/market";
+import { canSign, chainByLabel, chainIcon, validAddress } from "@/lib/chains";
+import { CHAIN_ICON, fmt, scoreLabel, tokenBySymbol, tokenLabel, usd } from "@/lib/market";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 import { useDesk } from "@/lib/store";
 import { useHoldings } from "@/lib/wallet-holdings";
@@ -436,8 +436,8 @@ function SwapRow({
           <p className="font-mono text-[11px] text-muted sm:text-xs">{usd(usdValue)}</p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <button type="button" onClick={onMenu} className="flex h-8 max-w-full items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 font-mono text-xs text-fg">
-            <span className={`size-1.5 shrink-0 rounded-full ${address ? "bg-primary" : "bg-muted"}`} />
+          <button type="button" onClick={onMenu} className="flex h-8 max-w-full items-center gap-1.5 rounded-full border border-line bg-surface px-1.5 pr-2.5 font-mono text-xs text-fg">
+            {address && activeId ? <img src={WALLET_MARK[activeId]} alt="" className="size-5 shrink-0 rounded-full object-cover" /> : <span className="size-1.5 shrink-0 rounded-full bg-muted" />}
             <span className="truncate">{address ? shortAddr(address) : "Connect"}</span>
             <ChevronDown className="size-3.5 shrink-0 text-muted" />
           </button>
@@ -445,7 +445,10 @@ function SwapRow({
             <TokenIcon token={token} className="size-8" />
             <span className="min-w-0 text-left leading-tight">
               <span className="block truncate text-sm font-semibold">{tokenLabel(token)}</span>
-              <span className="block truncate text-[10px] text-muted">{token.chain}</span>
+              <span className="flex items-center gap-1 truncate text-[10px] text-muted">
+                <img src={CHAIN_ICON[token.chain] || chainIcon(token.chain)} alt="" className="size-3 shrink-0 rounded-full object-cover" />
+                {token.chain}
+              </span>
             </span>
           </button>
         </div>

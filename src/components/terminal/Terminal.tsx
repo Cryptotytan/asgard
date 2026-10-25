@@ -396,14 +396,17 @@ function WalletSheet({
         <p className="shrink-0 px-5 pb-3 text-sm text-[#8d938c]">NEAR signs NEAR deposits. EVM, Solana, and Bitcoin sign the chain you sell from.</p>
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
           {nearAccount && (
-            <div className="mb-1 flex items-center gap-3 rounded-2xl bg-[#171b18] px-2 py-2">
-              <span className="grid size-10 place-items-center rounded-full bg-[#00ec97] text-sm font-bold text-[#002116]">N</span>
+            <div className="mb-2 flex items-center gap-3 rounded-2xl border border-[#243028] bg-[#121815] px-3 py-3">
+              <img src="/tokens/near.svg" alt="" className="size-11 shrink-0 rounded-full bg-[#0c0f0d] object-cover" />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold">{nearAccount}</span>
-                <span className="text-[10px] uppercase tracking-wide text-[#8d938c]">NEAR connected</span>
+                <span className="flex items-center gap-1.5 text-sm font-semibold">
+                  NEAR
+                  <span className="size-1.5 rounded-full bg-[#00ec97]" />
+                </span>
+                <span className="mt-1 block truncate rounded-lg bg-[#0c0f0d] px-2 py-1 font-mono text-xs text-[#c8cdc6]">{nearAccount}</span>
               </span>
-              <button type="button" onClick={onDisconnectNear} className="text-xs text-[#8d938c]">
-                Disconnect
+              <button type="button" aria-label="Disconnect NEAR" onClick={onDisconnectNear} className="grid size-9 shrink-0 place-items-center rounded-full text-[#ff5d73] hover:bg-[#ff5d73]/10">
+                <Unplug className="size-4" />
               </button>
             </div>
           )}
@@ -427,12 +430,15 @@ function WalletSheet({
               <li key={chain.kind} className="flex items-center gap-3 rounded-2xl px-2 py-2">
                 <img src={chain.logo} alt="" className="size-10 shrink-0 rounded-full bg-[#171b18] object-cover" />
                 <button type="button" onClick={() => onForeign(chain.kind)} className="min-w-0 flex-1 text-left">
-                  <span className="block truncate text-[15px] font-semibold">{chain.name}</span>
-                  <span className="block truncate font-mono text-[11px] text-[#8d938c]">{chain.address ? `${chain.address.slice(0, 6)}…${chain.address.slice(-4)}` : chain.note}</span>
+                  <span className="flex items-center gap-1.5 text-[15px] font-semibold">
+                    {chain.name}
+                    {chain.address && <span className="size-1.5 rounded-full bg-[#00ec97]" />}
+                  </span>
+                  <span className="mt-0.5 block truncate font-mono text-[11px] text-[#8d938c]">{chain.address ? midAddress(chain.address) : chain.note}</span>
                 </button>
                 {chain.address ? (
-                  <button type="button" onClick={() => disconnectForeign(chain.kind)} className="text-xs text-[#8d938c]">
-                    Disconnect
+                  <button type="button" aria-label={`Disconnect ${chain.name}`} onClick={() => disconnectForeign(chain.kind)} className="grid size-9 shrink-0 place-items-center rounded-full text-[#ff5d73] hover:bg-[#ff5d73]/10">
+                    <Unplug className="size-4" />
                   </button>
                 ) : (
                   <span className="rounded-full bg-[#171b18] px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-[#8d938c]">Connect</span>
@@ -509,17 +515,20 @@ function WalletButton({ compact = false, onConnectNew }: { compact?: boolean; on
   const hint = current?.id === "near" ? (nearText ? `${nearText} NEAR` : "NEAR") : current?.label ?? null;
   return (
     <div ref={box} className="relative">
-      <button type="button" onClick={() => setOpen((value) => !value)} className={`flex h-11 min-w-0 items-center gap-2 rounded-full text-left ${current ? `border border-line bg-surface pl-1 pr-2 ${compact ? "max-w-[52vw] shrink" : "max-w-64"}` : "bg-primary pl-1.5 pr-4 text-sm font-semibold text-primary-fg"}`}>
+      <button type="button" onClick={() => setOpen((value) => !value)} className={`flex h-11 min-w-0 items-center gap-2 rounded-full text-left ${current ? `border border-primary/40 bg-surface pl-1 pr-2.5 shadow-[inset_0_0_0_1px_rgba(0,236,151,0.08)] ${compact ? "max-w-[58vw]" : "max-w-[17rem]"}` : "bg-primary pl-1.5 pr-4 text-sm font-semibold text-primary-fg"}`}>
         {current ? (
           <>
-            <span className="flex shrink-0 -space-x-2">
-              {rows.slice(0, 3).map((row) => (
-                <img key={row.id} src={WALLET_MARK[row.id]} alt="" className="size-8 rounded-full bg-bg object-cover ring-2 ring-surface" />
-              ))}
+            <span className="relative flex shrink-0">
+              <span className="flex -space-x-2">
+                {rows.slice(0, 3).map((row) => (
+                  <img key={row.id} src={WALLET_MARK[row.id]} alt="" className="size-8 rounded-full bg-bg object-cover ring-2 ring-surface" />
+                ))}
+              </span>
+              <span className="absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full bg-primary ring-2 ring-surface" />
             </span>
-            <span className="min-w-0 leading-none">
-              <span className="block truncate font-mono text-sm font-semibold">{rows.length > 1 ? `${rows.length} wallets` : midAddress(current.address)}</span>
-              <span className="mt-0.5 block truncate text-[10px] font-medium text-muted">{rows.length > 1 ? rows.map((row) => row.label).join(" · ") : hint}</span>
+            <span className="min-w-0 leading-tight">
+              <span className="block truncate font-mono text-[13px] font-semibold">{rows.length > 1 ? `${rows.length} wallets` : midAddress(current.address)}</span>
+              <span className="block truncate text-[10px] font-medium text-muted">{rows.length > 1 ? rows.map((row) => row.label).join(" · ") : hint}</span>
             </span>
             <ChevronDown className={`size-4 shrink-0 text-muted transition ${open ? "rotate-180" : ""}`} />
           </>
@@ -533,21 +542,21 @@ function WalletButton({ compact = false, onConnectNew }: { compact?: boolean; on
         )}
       </button>
       {open && (
-        <div className="absolute right-0 top-12 z-50 w-[min(19rem,calc(100vw-1.25rem))] overflow-hidden rounded-2xl border border-line bg-[#0e1210] shadow-2xl">
-          <div className="flex items-center justify-between border-b border-line px-4 py-3">
-            <p className="text-sm font-semibold">Wallets</p>
-            <span className="rounded-full bg-surface px-2 py-0.5 text-[11px] text-muted">{rows.length} connected</span>
+        <div className="absolute right-0 top-[3.15rem] z-50 w-[min(22rem,calc(100vw-1rem))] rounded-2xl border border-line bg-[#0e1210] p-3 shadow-2xl">
+          <div className="mb-2 flex items-center justify-between px-1">
+            <p className="text-sm font-semibold">Connected</p>
+            <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-semibold text-primary">{rows.length}</span>
           </div>
-          <ul className="space-y-2 p-2">
+          <ul className="space-y-2">
             {rows.map((row) => (
-              <li key={row.id} className="flex items-center gap-3 rounded-xl bg-surface px-3 py-2.5">
-                <img src={WALLET_MARK[row.id]} alt="" className="size-10 shrink-0 rounded-full bg-bg object-cover" />
+              <li key={row.id} className="flex items-center gap-3 rounded-2xl border border-line bg-surface px-3 py-3">
+                <img src={WALLET_MARK[row.id]} alt="" className="size-11 shrink-0 rounded-full bg-bg object-cover" />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5 text-sm font-semibold">
                     {row.label}
                     <span className="size-1.5 rounded-full bg-primary" />
                   </span>
-                  <span className="mt-0.5 block truncate font-mono text-xs text-muted">{midAddress(row.address)}</span>
+                  <span className="mt-1 block truncate rounded-lg bg-bg px-2 py-1 font-mono text-xs text-muted">{midAddress(row.address)}</span>
                 </span>
                 <button
                   type="button"
@@ -563,19 +572,17 @@ function WalletButton({ compact = false, onConnectNew }: { compact?: boolean; on
               </li>
             ))}
           </ul>
-          {rows.length === 0 && <p className="px-4 pb-3 text-sm text-muted">No wallet connected yet.</p>}
-          <div className="p-2 pt-0">
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                onConnectNew();
-              }}
-              className="h-11 w-full rounded-xl bg-primary text-sm font-semibold text-primary-fg"
-            >
-              Connect new wallet
-            </button>
-          </div>
+          {rows.length === 0 && <p className="px-1 pb-2 text-sm text-muted">No wallet connected yet.</p>}
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              onConnectNew();
+            }}
+            className="mt-3 h-11 w-full rounded-xl bg-primary text-sm font-semibold text-primary-fg"
+          >
+            Connect another wallet
+          </button>
         </div>
       )}
     </div>

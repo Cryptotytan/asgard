@@ -1,5 +1,5 @@
 import { ensureToken, isCanonical, isMajorAsset, money, preferIcon, qualityScore, TOKENS, type WindowId } from "@/lib/market";
-import { chainLabel, foreignIcon } from "@/lib/chains";
+import { chainById, foreignIcon } from "@/lib/chains";
 import { loadIntentAssets, type IntentAsset } from "@/lib/intents";
 import { useDesk } from "@/lib/store";
 
@@ -49,7 +49,6 @@ const LOCAL: Record<string, string> = {
   MATIC: "/chains/polygon.png",
   ARB: "/chains/arbitrum.png",
   OP: "/chains/optimism.png",
-  TON: "/chains/ton.png",
   SUI: "/chains/sui.png",
   APT: "/chains/aptos.png",
   DOGE: "/chains/doge.png",
@@ -185,9 +184,14 @@ function publishTradable(map: Map<string, IntentAsset>) {
 }
 
 function publishForeign(assets: IntentAsset[]) {
+  for (const token of TOKENS) {
+    if (token.chain === "TON") token.listed = false;
+  }
   for (const asset of assets) {
-    if (asset.blockchain === "near" || !(Number(asset.price) > 0)) continue;
-    const chain = chainLabel(asset.blockchain);
+    if (asset.blockchain === "near" || asset.blockchain === "ton" || !(Number(asset.price) > 0)) continue;
+    const meta = chainById(asset.blockchain);
+    if (!meta) continue;
+    const chain = meta.label;
     const base = asset.symbol.replace(/\s/g, "") || chain;
     let token = TOKENS.find((item) => item.assetId === asset.assetId);
     if (!token) {
@@ -489,7 +493,6 @@ const DEX_SLUG: Record<string, string> = {
   Scroll: "scroll",
   Berachain: "berachain",
   Tron: "tron",
-  TON: "ton",
   Sui: "sui",
   Aptos: "aptos",
   "X Layer": "xlayer",

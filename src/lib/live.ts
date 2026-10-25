@@ -27,7 +27,6 @@ const COINGECKO: Record<string, string> = {
   LTC: "coingecko:litecoin",
   BCH: "coingecko:bitcoin-cash",
   TRX: "coingecko:tron",
-  TON: "coingecko:the-open-network",
   SUI: "coingecko:sui",
   APT: "coingecko:aptos",
   LINK: "coingecko:chainlink",
@@ -54,7 +53,6 @@ const LLAMA_CHAIN: Record<string, string> = {
   Aurora: "aurora",
   Solana: "solana",
   Tron: "tron",
-  TON: "ton",
   Sui: "sui",
   Aptos: "aptos",
 };
