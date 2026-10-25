@@ -189,7 +189,8 @@ export function CandleChart({
   }, [all.length, viewRight, wanted, frame, historyEnded, historyTick]);
 
   const { liveEdge, maxRight, minRight } = limits(wanted, all.length);
-  const rightEdge = viewRight == null ? liveEdge : clamp(viewRight, minRight, maxRight);
+  const followEdge = all.length + RIGHT_GAP < wanted ? wanted : liveEdge;
+  const rightEdge = viewRight == null ? followEdge : clamp(viewRight, minRight, maxRight);
   const start = rightEdge - wanted;
   const from = Math.max(0, Math.floor(start));
   const to = Math.min(all.length, Math.ceil(rightEdge));
