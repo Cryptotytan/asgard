@@ -13,6 +13,7 @@ import { canPerp, fmt, money, tokenBySymbol, TOKENS } from "@/lib/market";
 import { setWalletOpener, useDesk } from "@/lib/store";
 import { startLiveFeed } from "@/lib/live";
 import { visitToken } from "@/lib/watch";
+import { disconnectForeign, useForeign } from "@/lib/foreign-wallet";
 
 const NAV = [
   ["markets", "Markets"],
@@ -42,6 +43,9 @@ export function Terminal() {
   const accountId = useDesk((s) => s.accountId);
   const nearYocto = useDesk((s) => s.nearYocto);
   const disconnect = useDesk((s) => s.disconnect);
+  const foreign = useForeign();
+  const headerAccount = accountId || foreign.evm || foreign.sol || foreign.btc;
+  const headerHint = accountId ? "NEAR" : foreign.evm ? "EVM" : foreign.sol ? "Solana" : foreign.btc ? "Bitcoin" : null;
   const balances = useDesk((s) => s.balances);
   const positions = useDesk((s) => s.positions);
   const tick = useDesk((s) => s.tick);
@@ -105,10 +109,22 @@ export function Terminal() {
   }
 
   function onWallet() {
-    if (connected) disconnect();
-    else {
-      setWalletError("");
-      setWalletOpen(true);
+    setWalletError("");
+    setWalletOpen(true);
+  }
+
+  async function pickForeign(kind: "evm" | "sol" | "btc") {
+    setWalletError("");
+    try {
+      const mod = await import("@/lib/foreign-wallet");
+      if (kind === "evm") await mod.connectEvm();
+      if (kind === "sol") await mod.connectSol();
+      if (kind === "btc") await mod.connectBtc();
+      setWalletOpen(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Wallet did not open";
+      if (/closed/i.test(message)) return;
+      setWalletError(message);
     }
   }
 
@@ -162,7 +178,7 @@ export function Terminal() {
             <span className="mark" aria-hidden />
             <span className="text-base font-semibold tracking-tight">Asgard</span>
           </Link>
-          <WalletButton connected={connected} account={accountId} near={formatNear(nearYocto)} compact onClick={onWallet} />
+          <WalletButton connected={Boolean(headerAccount)} account={headerAccount} hint={headerHint ?? (formatNear(nearYocto) ? `${formatNear(nearYocto)} NEAR` : null)} compact onClick={onWallet} />
         </div>
         <nav className="grid grid-cols-7 border-t border-line md:hidden">
           {NAV.map(([id, label]) => (
@@ -193,7 +209,7 @@ export function Terminal() {
               </button>
             ))}
           </nav>
-          <WalletButton connected={connected} account={accountId} near={formatNear(nearYocto)} compact onClick={onWallet} />
+          <WalletButton connected={Boolean(headerAccount)} account={headerAccount} hint={headerHint ?? (formatNear(nearYocto) ? `${formatNear(nearYocto)} NEAR` : null)} compact onClick={onWallet} />
         </div>
         <div className="hidden items-center gap-5 px-6 py-3 lg:flex">
           <Link to="/" className="flex shrink-0 items-center gap-2.5">
@@ -227,7 +243,7 @@ export function Terminal() {
                 <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">Ctrl K</kbd>
               </label>
             )}
-            <WalletButton connected={connected} account={accountId} near={formatNear(nearYocto)} onClick={onWallet} />
+            <WalletButton connected={Boolean(headerAccount)} account={headerAccount} hint={headerHint ?? (formatNear(nearYocto) ? `${formatNear(nearYocto)} NEAR` : null)} onClick={onWallet} />
           </div>
         </div>
         {view === "markets" && (
@@ -308,7 +324,17 @@ export function Terminal() {
       </footer>
 
       {flash && <p className="fixed bottom-16 left-1/2 z-30 max-w-md -translate-x-1/2 rounded-full border border-line bg-bg px-4 py-2 text-center text-sm">{flash}</p>}
-      {walletOpen && <WalletSheet error={walletError} onClose={() => setWalletOpen(false)} onPick={(kind) => void pickWallet(kind)} onWatch={(account) => void watchAccount(account)} />}
+      {walletOpen && (
+        <WalletSheet
+          error={walletError}
+          nearAccount={accountId}
+          onClose={() => setWalletOpen(false)}
+          onPick={(kind) => void pickWallet(kind)}
+          onForeign={(kind) => void pickForeign(kind)}
+          onWatch={(account) => void watchAccount(account)}
+          onDisconnectNear={() => disconnect()}
+        />
+      )}
     </div>
   );
 }
@@ -327,16 +353,23 @@ function FooterStat({ token, label, value, className = "" }: { token?: { icon: s
 
 function WalletSheet({
   error,
+  nearAccount,
   onClose,
   onPick,
+  onForeign,
   onWatch,
+  onDisconnectNear,
 }: {
   error: string;
+  nearAccount: string | null;
   onClose: () => void;
   onPick: (kind: "intear" | "here" | "meteor" | "hot" | "nightly" | "sender") => void;
+  onForeign: (kind: "evm" | "sol" | "btc") => void;
   onWatch: (account: string) => void;
+  onDisconnectNear: () => void;
 }) {
   const [account, setAccount] = useState("");
+  const foreign = useForeign();
   const wallets: { kind: "intear" | "here" | "meteor" | "hot" | "nightly" | "sender"; name: string; note: string; logo: string }[] = [
     { kind: "intear", name: "Intear Wallet", note: "Web", logo: "/wallets/intear.svg" },
     { kind: "here", name: "HERE Wallet", note: "Web", logo: "/wallets/here.png" },
@@ -345,41 +378,80 @@ function WalletSheet({
     { kind: "nightly", name: "Nightly", note: "Extension", logo: "/wallets/nightly.png" },
     { kind: "sender", name: "Sender", note: "Extension", logo: "/wallets/sender.png" },
   ];
+  const chains: { kind: "evm" | "sol" | "btc"; name: string; note: string; mark: string; address: string | null }[] = [
+    { kind: "evm", name: "EVM wallet", note: "MetaMask, Rabby", mark: "E", address: foreign.evm },
+    { kind: "sol", name: "Solana", note: "Phantom", mark: "S", address: foreign.sol },
+    { kind: "btc", name: "Bitcoin", note: "UniSat", mark: "B", address: foreign.btc },
+  ];
   return (
     <div className="fixed inset-0 z-[80] grid place-items-end bg-black/75 p-3 sm:place-items-center" onClick={onClose}>
-      <section className="w-full max-w-[420px] overflow-hidden rounded-[22px] border border-[#2a302b] bg-[#0c0f0d] shadow-[0_24px_80px_rgba(0,0,0,0.55)]" onClick={(event) => event.stopPropagation()}>
-        <div className="flex items-start justify-between gap-3 px-5 pb-2 pt-5">
+      <section className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-[420px] flex-col overflow-hidden rounded-[22px] border border-[#2a302b] bg-[#0c0f0d] shadow-[0_24px_80px_rgba(0,0,0,0.55)]" onClick={(event) => event.stopPropagation()}>
+        <div className="flex shrink-0 items-start justify-between gap-3 px-5 pb-2 pt-5">
           <div>
-            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-[#8d938c]">NEAR mainnet</p>
+            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-[#8d938c]">Wallets</p>
             <h2 className="mt-1 text-[22px] font-semibold leading-none tracking-tight">Connect a wallet</h2>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="grid size-8 place-items-center rounded-full bg-[#171b18] text-lg leading-none text-[#c8cdc6]">
             ×
           </button>
         </div>
-        <p className="px-5 pb-3 text-sm text-[#8d938c]">Intear and HERE open on this page. Extension wallets only connect if they are installed.</p>
-        <ul className="max-h-[50dvh] overflow-y-auto px-3 pb-2">
-          {wallets.map((wallet) => (
-            <li key={wallet.kind}>
-              <button type="button" onClick={() => onPick(wallet.kind)} className="flex h-[60px] w-full items-center gap-3 rounded-2xl px-2 text-left transition hover:bg-[#171b18]">
-                <img src={wallet.logo} alt="" width={40} height={40} className="size-10 shrink-0 rounded-full bg-[#171b18] object-cover" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[15px] font-semibold">{wallet.name}</span>
-                </span>
-                <span className="rounded-full bg-[#171b18] px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-[#8d938c]">{wallet.note}</span>
+        <p className="shrink-0 px-5 pb-3 text-sm text-[#8d938c]">NEAR signs NEAR deposits. EVM, Solana, and Bitcoin sign the chain you sell from.</p>
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
+          {nearAccount && (
+            <div className="mb-1 flex items-center gap-3 rounded-2xl bg-[#171b18] px-2 py-2">
+              <span className="grid size-10 place-items-center rounded-full bg-[#00ec97] text-sm font-bold text-[#002116]">N</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold">{nearAccount}</span>
+                <span className="text-[10px] uppercase tracking-wide text-[#8d938c]">NEAR connected</span>
+              </span>
+              <button type="button" onClick={onDisconnectNear} className="text-xs text-[#8d938c]">
+                Disconnect
               </button>
-            </li>
-          ))}
-        </ul>
+            </div>
+          )}
+          <p className="px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.18em] text-[#8d938c]">NEAR</p>
+          <ul>
+            {wallets.map((wallet) => (
+              <li key={wallet.kind}>
+                <button type="button" onClick={() => onPick(wallet.kind)} className="flex h-[60px] w-full items-center gap-3 rounded-2xl px-2 text-left transition hover:bg-[#171b18]">
+                  <img src={wallet.logo} alt="" width={40} height={40} className="size-10 shrink-0 rounded-full bg-[#171b18] object-cover" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[15px] font-semibold">{wallet.name}</span>
+                  </span>
+                  <span className="rounded-full bg-[#171b18] px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-[#8d938c]">{wallet.note}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="px-2 pb-1 pt-3 text-[10px] font-medium uppercase tracking-[0.18em] text-[#8d938c]">Other chains</p>
+          <ul>
+            {chains.map((chain) => (
+              <li key={chain.kind} className="flex items-center gap-3 rounded-2xl px-2 py-2">
+                <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[#171b18] text-sm font-bold">{chain.mark}</span>
+                <button type="button" onClick={() => onForeign(chain.kind)} className="min-w-0 flex-1 text-left">
+                  <span className="block truncate text-[15px] font-semibold">{chain.name}</span>
+                  <span className="block truncate font-mono text-[11px] text-[#8d938c]">{chain.address ? `${chain.address.slice(0, 6)}…${chain.address.slice(-4)}` : chain.note}</span>
+                </button>
+                {chain.address ? (
+                  <button type="button" onClick={() => disconnectForeign(chain.kind)} className="text-xs text-[#8d938c]">
+                    Disconnect
+                  </button>
+                ) : (
+                  <span className="rounded-full bg-[#171b18] px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-[#8d938c]">Connect</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
         <form
-          className="border-t border-[#2a302b] bg-black/35 px-5 py-4"
+          className="shrink-0 border-t border-[#2a302b] bg-black/35 px-5 py-4"
           onSubmit={(event) => {
             event.preventDefault();
             onWatch(account);
           }}
         >
           <label className="block text-xs text-[#8d938c]" htmlFor="near-account">
-            Or read a mainnet account
+            Or read a NEAR account
           </label>
           <div className="mt-2 flex gap-2">
             <input
@@ -417,13 +489,13 @@ function formatNear(yocto: string | null) {
 function WalletButton({
   connected,
   account,
-  near,
+  hint,
   onClick,
   compact = false,
 }: {
   connected: boolean;
   account: string | null;
-  near: string | null;
+  hint: string | null;
   onClick: () => void;
   compact?: boolean;
 }) {
@@ -435,14 +507,14 @@ function WalletButton({
       </button>
     );
   }
-  const name = account ?? "near";
+  const name = account ?? "wallet";
   const short = name.length > 14 ? `${name.slice(0, 4)}…${name.slice(-4)}` : name;
   return (
     <button type="button" onClick={onClick} className={`flex h-10 min-w-0 items-center gap-2 overflow-hidden rounded-full border border-line bg-surface py-1 pl-1 pr-2.5 text-left ${compact ? "max-w-[46vw] shrink" : "max-w-56"}`}>
       <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary font-mono text-xs font-bold text-primary-fg">{name.slice(0, 1).toUpperCase()}</span>
       <span className="min-w-0 leading-none">
         <span className="block truncate text-sm font-semibold">{short}</span>
-        <span className="mt-0.5 block truncate text-[10px] font-normal text-primary">{near ? `${near} NEAR` : "Connected"}</span>
+        <span className="mt-0.5 block truncate text-[10px] font-normal text-primary">{hint ?? "Connected"}</span>
       </span>
     </button>
   );

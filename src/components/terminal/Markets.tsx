@@ -68,7 +68,7 @@ export function Markets({
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center">
           <div className="grid flex-1 grid-cols-4 rounded-lg bg-surface p-0.5 sm:flex sm:flex-none">
             {WINDOWS.map((item) => (
               <button
@@ -81,29 +81,22 @@ export function Markets({
               </button>
             ))}
           </div>
-          <div className="flex max-w-[11rem] items-center gap-1 overflow-x-auto sm:max-w-none">
-            {CHAINS.map((item) => (
-              <button
-                key={item}
-                type="button"
-                aria-label={item}
-                aria-pressed={chain === item}
-                onClick={() => setChain(chain === item ? "All" : item)}
-                className={`grid size-9 place-items-center rounded-full ${chain === item ? "ring-2 ring-primary" : "opacity-70"}`}
-              >
-                <img src={CHAIN_ICON[item]} alt="" className="size-6 rounded-full object-cover" />
-              </button>
-            ))}
+          <div className="flex min-w-0 items-center gap-1.5">
+            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto pb-0.5">
+              {CHAINS.map((item) => (
+                <ChainMark key={item} id={item} active={chain === item} onClick={() => setChain(chain === item ? "All" : item)} />
+              ))}
+            </div>
+            <button
+              type="button"
+              aria-pressed={verifiedOnly}
+              onClick={() => setVerifiedOnly((value) => !value)}
+              className={`grid size-8 shrink-0 place-items-center rounded-lg border ${verifiedOnly ? "border-primary bg-primary/15" : "border-line text-muted"}`}
+              title="Verified only"
+            >
+              <VerifiedMark className={verifiedOnly ? "" : "bg-muted text-bg shadow-none"} />
+            </button>
           </div>
-          <button
-            type="button"
-            aria-pressed={verifiedOnly}
-            onClick={() => setVerifiedOnly((value) => !value)}
-            className={`grid size-8 place-items-center rounded-lg border ${verifiedOnly ? "border-primary bg-primary/15" : "border-line text-muted"}`}
-            title="Verified only"
-          >
-            <VerifiedMark className={verifiedOnly ? "" : "bg-muted text-bg shadow-none"} />
-          </button>
         </div>
       </div>
       {(!marketsSynced && rows.length === 0) ? (
@@ -242,6 +235,26 @@ function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowPro
         </button>
       </td>
     </tr>
+  );
+}
+
+function ChainMark({ id, active, onClick }: { id: string; active: boolean; onClick: () => void }) {
+  const [failed, setFailed] = useState(false);
+  const icon = CHAIN_ICON[id];
+  return (
+    <button
+      type="button"
+      aria-label={id}
+      aria-pressed={active}
+      onClick={onClick}
+      className={`grid size-9 shrink-0 place-items-center rounded-full ${active ? "ring-2 ring-primary" : "opacity-80"}`}
+    >
+      {icon && !failed ? (
+        <img src={icon} alt="" onError={() => setFailed(true)} className="size-6 rounded-full object-cover" />
+      ) : (
+        <span className="grid size-6 place-items-center rounded-full bg-surface-2 text-[10px] font-semibold">{id.slice(0, 1)}</span>
+      )}
+    </button>
   );
 }
 
