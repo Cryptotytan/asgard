@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Bell, Eye, EyeOff, Pencil, Plus, Search, Trash2, Wallet, X } from "lucide-react";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
-import { qty, signedPct, scoreLabel, TOKENS, usd, type Token } from "@/lib/market";
+import { qty, signedPct, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 import {
   EMPTY_TRACKER,
@@ -19,6 +19,7 @@ import {
   type TrackedWallet,
   type TrackerState,
 } from "@/lib/tracker";
+import { refreshWatch } from "@/lib/watch-stats";
 
 const blank = {
   id: "",
@@ -48,6 +49,19 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
   const [spam, setSpam] = useState(false);
   const [research, setResearch] = useState("");
   const [chainRev, setChainRev] = useState(0);
+  const [statsRev, setStatsRev] = useState(0);
+  const watchedKey = data.tokens.join("|");
+  useEffect(() => {
+    if (!data.tokens.length) return;
+    let live = true;
+    void refreshWatch(data.tokens, () => {
+      if (live) setStatsRev((value) => value + 1);
+    });
+    return () => {
+      live = false;
+    };
+  }, [watchedKey]);
+  void statsRev;
   const [walletFilter, setWalletFilter] = useState("all");
   const [folderFilter, setFolderFilter] = useState("all");
   const [query, setQuery] = useState("");
@@ -505,13 +519,12 @@ function WalletDetail({
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
         <Stat k="Total value" v={live ? usd(live.value) : "…"} />
         <Stat k="Holdings" v={live ? String(live.holdings.length) : "…"} />
-        <Stat k="In USDT" v={live ? `${(live.usdt ?? live.value).toFixed(2)} USDT` : "…"} />
         <Stat k="Transactions" v={live ? (live.txCount || live.trades).toLocaleString("en-US") : "…"} />
       </div>
       <div className="mt-3 rounded-xl border border-line bg-surface p-3">
         <p className="text-xs text-muted">Total worth of tokens</p>
         <p className="font-mono text-xl">{live ? usd(live.value) : "Reading balances…"}</p>
-        <p className="mt-1 text-xs text-muted">{live ? `${live.holdings.length} tokens · ${(live.txCount || live.trades).toLocaleString("en-US")} transactions · ${(live.usdt ?? live.value).toFixed(2)} USDT` : "Balances show as soon as the account is read. Transfers follow."}</p>
+        <p className="mt-1 text-xs text-muted">{live ? `${live.holdings.length} tokens · ${(live.txCount || live.trades).toLocaleString("en-US")} transactions` : "Balances show as soon as the account is read. Transfers follow."}</p>
       </div>
       <div className="mt-4 flex items-center gap-3 border-b border-line">
         {(["balances", "performance", "activity"] as const).map((item) => (
@@ -524,21 +537,20 @@ function WalletDetail({
           <table className="w-full min-w-[640px] text-left text-sm">
             <thead className="text-[11px] uppercase text-muted">
               <tr>
-                {["Token", "Amount", "USD", "USDT", "Share", ""].map((label) => (
+                {["Token", "Amount", "USD", "Share", ""].map((label) => (
                   <th key={label} className="py-2 font-medium">{label}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {!live && (
-                <tr><td colSpan={6} className="py-4 text-sm text-muted">Reading balances…</td></tr>
+                <tr><td colSpan={5} className="py-4 text-sm text-muted">Reading balances…</td></tr>
               )}
               {live && held.length === 0 && (
-                <tr><td colSpan={6} className="py-4 text-sm text-muted">This wallet has no tokens.</td></tr>
+                <tr><td colSpan={5} className="py-4 text-sm text-muted">This wallet has no tokens.</td></tr>
               )}
               {held.map((row) => {
                 const token = TOKENS.find((item) => item.symbol.toLowerCase() === row.symbol.toLowerCase() && item.chain === "NEAR") ?? TOKENS.find((item) => item.symbol.toLowerCase() === row.symbol.toLowerCase());
-                const unit = live && live.value > 0 ? row.usd / (live.value / Math.max(live.usdt, 1e-12)) : row.usd;
                 return (
                   <tr key={row.contract || row.symbol} className="border-t border-line">
                     <td className="py-2">
@@ -549,7 +561,6 @@ function WalletDetail({
                     </td>
                     <td className="font-mono">{row.amount > 0 ? qty(row.amount) : "—"}</td>
                     <td className="font-mono">{row.usd ? usd(row.usd) : "—"}</td>
-                    <td className="font-mono">{row.usd ? unit.toFixed(2) : "—"}</td>
                     <td><span className="block h-1.5 w-24 overflow-hidden rounded-full bg-bg"><i className="block h-full bg-primary" style={{ width: `${row.share}%` }} /></span></td>
                     <td className="text-right"><button type="button" onClick={() => onTrade(row.symbol)} className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-black">Buy</button></td>
                   </tr>
@@ -562,7 +573,6 @@ function WalletDetail({
       {pane === "performance" && (
         <div className="grid grid-cols-2 gap-2 py-3 sm:grid-cols-3">
           <Stat k="Token worth" v={live ? usd(live.value) : "…"} />
-          <Stat k="USDT total" v={live ? `${(live.usdt ?? live.value).toFixed(2)} USDT` : "…"} />
           <Stat k="Holdings" v={live ? String(live.holdings.length) : "…"} />
           <Stat k="Largest" v={top[0] ? `${top[0].symbol} ${top[0].share.toFixed(0)}%` : "—"} />
           <Stat k="In" v={live ? String(live.fills.filter((fill) => fill.incoming).length) : "…"} />
@@ -597,7 +607,7 @@ function TokenPreview({ token, tracked, onTrade, onWatch }: { token: Token; trac
         <div><dt className="text-xs text-muted">Market cap</dt><dd>{token.mcap}</dd></div>
         <div><dt className="text-xs text-muted">Liquidity</dt><dd>{token.liquidity}</dd></div>
         <div><dt className="text-xs text-muted">Volume</dt><dd>{token.volume}</dd></div>
-        <div><dt className="text-xs text-muted">Score</dt><dd>{scoreLabel(token)}</dd></div>
+        <div><dt className="text-xs text-muted">Transactions</dt><dd>{token.txns}</dd></div>
       </dl>
       <button type="button" onClick={onTrade} className="mt-3 h-10 w-full rounded-xl bg-primary text-sm font-semibold text-black">Trade</button>
       <button type="button" onClick={onWatch} disabled={tracked} className="mt-2 h-9 w-full rounded-xl border border-line text-sm disabled:opacity-50">{tracked ? "On the watchlist" : "Add to watchlist"}</button>
