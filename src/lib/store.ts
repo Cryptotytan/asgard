@@ -275,21 +275,36 @@ export const useDesk = create<Desk>((set, get) => ({
   placeOrder: (order) => {
     if (order.amount <= 0 || order.limit <= 0) return false;
     const { balances, orders } = get();
-    if ((balances[order.pay] ?? 0) + 1e-9 < order.amount && order.kind === "spot") return false;
+    if (order.kind === "spot" && (balances[order.pay] ?? 0) + 1e-9 < order.amount) return false;
     if (order.kind === "perp") {
       const margin = order.amount / Math.max(order.leverage ?? 1, 1);
-      if ((balances.USDT ?? 0) + 1e-9 < margin) return false;
+      const next = take(balances, "USDT", margin);
+      if (!next) return false;
+      set({ balances: next, orders: [{ ...order, id: `${order.symbol}-${Date.now()}` }, ...orders].slice(0, 20) });
+      return true;
     }
     set({ orders: [{ ...order, id: `${order.symbol}-${Date.now()}` }, ...orders].slice(0, 20) });
     return true;
   },
 
-  cancelOrder: (id) => set({ orders: get().orders.filter((order) => order.id !== id) }),
+  cancelOrder: (id) => {
+    const state = get();
+    const order = state.orders.find((item) => item.id === id);
+    if (!order) return;
+    const orders = state.orders.filter((item) => item.id !== id);
+    if (order.kind !== "perp") {
+      set({ orders });
+      return;
+    }
+    const margin = order.amount / Math.max(order.leverage ?? 1, 1);
+    set({ orders, balances: add(state.balances, "USDT", margin) });
+  },
 
   openPerp: (market, base, side, notional, leverage, extra) => {
     if (notional <= 0 || leverage < 1 || !canPerp(base)) return false;
     const state = get();
     const mark = priceOf(base, state.marks);
+    if (!(mark > 0)) return false;
     const limit = extra?.limit;
     const marketable = !limit || (side === "long" ? mark <= limit : mark >= limit);
     if (!marketable) {
@@ -499,17 +514,11 @@ export const useDesk = create<Desk>((set, get) => ({
     for (const order of orders) {
       const mark = priceOf(order.base ?? order.symbol, marks);
       const hit = order.side === "buy" || order.side === "long" ? mark <= order.limit : mark >= order.limit;
-      if (!hit || order.kind === "spot" || !order.base) {
+      if (!hit || order.kind === "spot" || !order.base || !(order.limit > 0)) {
         kept.push(order);
         continue;
       }
       const margin = order.amount / Math.max(order.leverage ?? 1, 1);
-      const paid = take(balances, "USDT", margin);
-      if (!paid) {
-        kept.push(order);
-        continue;
-      }
-      balances = paid;
       positions = [
         {
           id: `${order.symbol}-${order.id}`,

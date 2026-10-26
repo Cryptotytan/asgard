@@ -106,7 +106,7 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
       folders: next.folder && !current.folders.includes(next.folder) ? [...current.folders, next.folder] : current.folders,
     }));
     setWalletOpen(false);
-    void refreshChain(next.address).then(() => setChainRev((value) => value + 1));
+    void refreshChain(next.address).then(() => setChainRev((value) => value + 1)).catch(() => undefined);
     onFlash(`Wallet ${form.id ? "updated" : "added to Tracker"}\n${next.name}`);
   }
 

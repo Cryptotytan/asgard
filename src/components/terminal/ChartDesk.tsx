@@ -81,7 +81,7 @@ export function ChartDesk({ mode, symbol, onSymbol }: { mode: "spot" | "perp"; s
           <span className={up ? "text-primary" : "text-danger"}>
             {up ? "+" : ""}
             {fmt(delta)} ({up ? "+" : ""}
-            {((delta / open.o) * 100).toFixed(2)}%)
+            {((delta / (open.o || 1)) * 100).toFixed(2)}%)
           </span>
         </p>
         <CandleChart seed={`${symbol}-${frame}`} last={mark} frame={frame} series={series} historyEnded={history.exhausted} historyTick={history.from} onNeedHistory={needOlder} />

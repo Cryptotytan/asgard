@@ -82,7 +82,7 @@ export function PortfolioDesk() {
     const pnl = position.side === "long" ? (mark - position.entry) * position.size : (position.entry - mark) * position.size;
     return sum + pnl;
   }, 0);
-  const total = walletValue + vaultValue + lendValue - debtValue + positions.reduce((sum, position) => sum + position.margin, 0) + openPnl;
+  const total = walletValue + vaultValue + lendValue - debtValue + openPnl;
 
   return (
     <div className="px-2 py-3 sm:px-4 sm:py-5">

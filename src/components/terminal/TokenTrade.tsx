@@ -192,7 +192,7 @@ export function TokenTrade({
                 <span className={hover.c >= hover.o ? "text-primary" : "text-danger"}>
                   {hover.c >= hover.o ? "+" : ""}
                   {fmt(hover.c - hover.o)} ({hover.c >= hover.o ? "+" : ""}
-                  {(((hover.c - hover.o) / hover.o) * 100).toFixed(2)}%)
+                  {(((hover.c - hover.o) / (hover.o || 1)) * 100).toFixed(2)}%)
                 </span>
               </>
             ) : (
@@ -201,7 +201,7 @@ export function TokenTrade({
                 <span className={delta >= 0 ? "text-primary" : "text-danger"}>
                   {delta >= 0 ? "+" : ""}
                   {fmt(delta)} ({delta >= 0 ? "+" : ""}
-                  {((delta / open.o) * 100).toFixed(2)}%)
+                  {((delta / (open.o || 1)) * 100).toFixed(2)}%)
                 </span>
               </>
             )}
@@ -713,7 +713,7 @@ function Ticket({
   }, [token.symbol, quickUsd]);
 
   const qty = Number(amount) || 0;
-  const spend = side === "sell" ? qty / Math.max(token.price, 1e-12) : qty;
+  const spend = side === "sell" ? (token.price > 0 ? qty / token.price : 0) : qty;
   const stable = useMemo(() => stableOn(token.chain, token.symbol), [token.chain, token.symbol, clock]);
   const pay = side === "buy" ? stable : token;
   const receiveToken = side === "buy" ? token : stable;
@@ -767,7 +767,11 @@ function Ticket({
       onFlash("USDT is the quote. Pick another token.");
       return;
     }
-    if (qty <= 0) {
+    if (viewMode === "spot" && side === "sell" && !(token.price > 0)) {
+      onFlash("This token has no price yet.");
+      return;
+    }
+    if (qty <= 0 || (viewMode === "spot" && spend <= 0)) {
       onFlash("Enter an amount.");
       return;
     }
@@ -786,7 +790,7 @@ function Ticket({
         limit,
       });
       const guards = [tp && `TP ${tp}`, sl && `SL ${sl}`, reduceOnly && "reduce-only"].filter(Boolean).join(" · ");
-      onFlash(ok ? `${limit ? "Limit " : ""}${perpSide} ${token.symbol}/USDT ${lev}x ${marginMode}${guards ? ` · ${guards}` : ""}. USDT margin is locked until this position closes.` : "Not enough USDT margin");
+      onFlash(ok ? `${limit ? "Limit " : ""}${perpSide} ${token.symbol}/USDT ${lev}x ${marginMode}${guards ? ` · ${guards}` : ""}. USDT margin is locked until this position closes.` : token.price > 0 ? "Not enough USDT margin" : "This market has no price yet.");
       return;
     }
     if (orderType === "limit") {

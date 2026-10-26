@@ -19,8 +19,8 @@ export function SwapDesk({ focus }: { focus?: string }) {
   useDesk((s) => s.clock);
   const receipts = useDesk((s) => s.receipts);
   const positions = useDesk((s) => s.positions);
-  const [sellS, setSellS] = useState(focus && focus !== "USDC" ? "USDC" : "NEAR");
-  const [buyS, setBuyS] = useState(focus || "USDC");
+  const [sellS, setSellS] = useState(focus && focus !== "USDT" ? "USDT" : "NEAR");
+  const [buyS, setBuyS] = useState(focus || "USDT");
   const [amount, setAmount] = useState("");
   const [picking, setPicking] = useState<"sell" | "buy" | null>(null);
   const [acked, setAcked] = useState(false);
@@ -74,7 +74,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
   useEffect(() => {
     if (!focus) return;
     setBuyS(focus);
-    setSellS((current) => (current === focus ? (focus === "USDC" ? "NEAR" : "USDC") : current));
+    setSellS((current) => (current === focus ? (focus === "USDT" ? "NEAR" : "USDT") : current));
   }, [focus]);
 
   const sell = tokenBySymbol(sellS);
@@ -94,8 +94,13 @@ export function SwapDesk({ focus }: { focus?: string }) {
   const originConnected = Boolean(sellActive) && sellActive?.id === originKind;
   const book = routes;
   const best = book.find((route) => route.id === pickedId) ?? book[0] ?? null;
+  const orders = useDesk((s) => s.orders);
   const parked = Object.values(receipts).reduce((sum, receipt) => sum + (receipt.asset === sell.symbol ? receipt.amount : 0), 0);
-  const margin = sell.symbol === "USDC" ? positions.reduce((sum, position) => sum + position.margin, 0) : 0;
+  const quote = sell.symbol.split(".")[0]?.toUpperCase();
+  const lockedUsdt =
+    positions.reduce((sum, position) => sum + position.margin, 0) +
+    orders.reduce((sum, order) => (order.kind === "perp" ? sum + order.amount / Math.max(order.leverage ?? 1, 1) : sum), 0);
+  const margin = quote === "USDT" ? lockedUsdt : 0;
   const walletAmt = sellHold.book[sell.symbol] ?? 0;
   const held = sellActive?.id === "near" ? Math.max(0, walletAmt - (vault[sell.symbol] ?? 0) - parked - margin) : walletAmt;
   const walletUsd = Object.entries(sellHold.book).reduce((sum, [symbol, amount]) => sum + amount * (tokenBySymbol(symbol).price || 0), 0);

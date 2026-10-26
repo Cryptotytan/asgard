@@ -118,8 +118,8 @@ export function LendDesk() {
                       </div>
                     </div>
                     <div className="shrink-0 text-right font-mono text-[11px]">
-                      <p className="text-primary">{market.supplyApy.toFixed(1)}% supply</p>
-                      <p className="text-muted">{market.borrowApy.toFixed(1)}% borrow</p>
+                      <p className="text-primary">{Number(market.supplyApy || 0).toFixed(1)}% supply</p>
+                      <p className="text-muted">{Number(market.borrowApy || 0).toFixed(1)}% borrow</p>
                     </div>
                   </div>
                   <div className="mt-1.5 grid grid-cols-4 gap-1.5">
