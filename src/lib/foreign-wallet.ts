@@ -50,7 +50,7 @@ export function useForeign() {
 export type LinkedWallet = { id: "near" | "evm" | "sol" | "btc"; label: string; address: string };
 
 export const WALLET_MARK: Record<LinkedWallet["id"], string> = {
-  near: "/tokens/near.svg",
+  near: "/tokens/near.jpg",
   evm: "/tokens/eth.png",
   sol: "/chains/solana.png",
   btc: "/chains/bitcoin.png",
