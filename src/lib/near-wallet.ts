@@ -161,22 +161,18 @@ export function openNearWallets() {
 }
 
 export async function signOutNear() {
-  await boot();
+  await boot().catch(() => undefined);
   localStorage.removeItem(ACCOUNT_STORE);
   localStorage.removeItem(KEY_STORE);
   localStorage.removeItem(READONLY_STORE);
-  const walletId = useDesk.getState().accountId;
-  if (!walletId) {
-    useDesk.getState().setAccount(null);
-    return;
-  }
   const selector = await selectorPromise;
-  if (!selector) return;
-  try {
-    const wallet = await selector.wallet();
-    await wallet.signOut();
-  } catch {
-    /* Redirect sessions have no injected signer. */
+  if (selector) {
+    try {
+      const wallet = await selector.wallet();
+      await wallet.signOut();
+    } catch {
+      /* Redirect sessions have no injected signer. */
+    }
   }
   useDesk.getState().setAccount(null);
 }

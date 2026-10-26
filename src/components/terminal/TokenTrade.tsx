@@ -456,7 +456,9 @@ function baseOf(symbol: string) {
 }
 
 function WalletTrades({ symbol }: { symbol: string }) {
-  const rows = useTradeLog().filter((row) => row.bucket === "trade" && baseOf(row.symbol) === baseOf(symbol));
+  const accountId = useDesk((state) => (state.connected ? state.accountId : null));
+  const rows = useTradeLog().filter((row) => accountId && row.account === accountId && row.bucket === "trade" && baseOf(row.symbol) === baseOf(symbol));
+  if (!accountId) return <BookNote>Connect a wallet to see its trades.</BookNote>;
   if (rows.length === 0) return <BookNote>No trades from the connected wallet on {symbol} yet.</BookNote>;
   return (
     <ul className="divide-y divide-line">
@@ -474,7 +476,9 @@ function WalletTrades({ symbol }: { symbol: string }) {
 }
 
 function OrderHistory({ symbol }: { symbol: string }) {
-  const rows = useTradeLog().filter((row) => row.bucket === "order" && baseOf(row.symbol) === baseOf(symbol) && row.status !== "open");
+  const accountId = useDesk((state) => (state.connected ? state.accountId : null));
+  const rows = useTradeLog().filter((row) => accountId && row.account === accountId && row.bucket === "order" && baseOf(row.symbol) === baseOf(symbol) && row.status !== "open");
+  if (!accountId) return <BookNote>Connect a wallet to see its orders.</BookNote>;
   if (rows.length === 0) return <BookNote>No filled or canceled orders from this wallet on {symbol} yet.</BookNote>;
   return (
     <ul className="divide-y divide-line">
@@ -494,14 +498,17 @@ function OrderHistory({ symbol }: { symbol: string }) {
 function TxHistory() {
   const saved = useWalletHistory();
   const accountId = useDesk((state) => state.accountId);
+  const connected = useDesk((state) => state.connected);
   const foreign = useForeign();
+  const wallets = linkedWallets(connected ? accountId : null, foreign);
   const [chain, setChain] = useState<WalletTx[]>([]);
   useEffect(() => {
-    const wallets = linkedWallets(accountId, foreign);
     if (!wallets.length) return;
     void loadChainHistory(wallets).then(setChain).catch(() => undefined);
-  }, [accountId, foreign]);
-  const rows = [...saved, ...chain].sort((a, b) => b.time - a.time);
+  }, [accountId, foreign, wallets.length]);
+  if (!wallets.length) return <BookNote>Connect a wallet to see its transactions.</BookNote>;
+  const ids = new Set(wallets.map((wallet) => wallet.address.toLowerCase()));
+  const rows = [...saved, ...chain].filter((row) => ids.has(row.address.toLowerCase())).sort((a, b) => b.time - a.time);
   if (rows.length === 0) return <BookNote>No transactions from the connected wallets yet.</BookNote>;
   return (
     <ul className="divide-y divide-line">
@@ -904,7 +911,7 @@ function Ticket({
           });
         }
         state.log(`${side === "buy" ? "Buy" : "Sell"} via ${picked.name}`, `${pay.symbol} → ${receiveToken.symbol}`, qty);
-        logTrade({ bucket: "trade", symbol: token.symbol, title: `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}/USDT`, detail: picked.name, value: qty, status: "filled" });
+        logTrade({ bucket: "trade", symbol: token.symbol, title: `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}/USDT`, detail: picked.name, value: qty, status: "filled", account: state.accountId ?? "" });
         await refreshBalances(wallets);
         setFills((prev) => (side === "buy" ? { ...prev, bought: prev.bought + qty } : { ...prev, sold: prev.sold + qty }));
         onFlash(`${side === "buy" ? "Bought" : "Sold"} ${token.symbol} via ${picked.name} · ${fmt(result.amountOutHuman)} ${receiveToken.symbol} · ${result.status}`);

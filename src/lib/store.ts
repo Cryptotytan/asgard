@@ -75,6 +75,7 @@ type Desk = {
     extra?: { tp?: number; sl?: number; reduceOnly?: boolean; limit?: number },
   ) => boolean;
   closePerp: (id: string, reason?: string) => boolean;
+  setGuards: (id: string, guards: { tp?: number; sl?: number }) => void;
   depositVault: (symbol: string, amount: number) => boolean;
   withdrawVault: (symbol: string, amount: number) => boolean;
   supply: (symbol: string, amount: number) => boolean;
@@ -282,11 +283,11 @@ export const useDesk = create<Desk>((set, get) => ({
       const next = take(balances, "USDT", margin);
       if (!next) return false;
       set({ balances: next, orders: [{ ...order, id: `${order.symbol}-${Date.now()}` }, ...orders].slice(0, 20) });
-      logTrade({ bucket: "order", symbol: order.base ?? order.symbol, title: `Limit ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "open" });
+      logTrade({ bucket: "order", symbol: order.base ?? order.symbol, title: `Limit ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "open", account: get().accountId });
       return true;
     }
     set({ orders: [{ ...order, id: `${order.symbol}-${Date.now()}` }, ...orders].slice(0, 20) });
-    logTrade({ bucket: "order", symbol: order.symbol, title: `Limit ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "open" });
+    logTrade({ bucket: "order", symbol: order.symbol, title: `Limit ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "open", account: get().accountId });
     return true;
   },
 
@@ -296,12 +297,12 @@ export const useDesk = create<Desk>((set, get) => ({
     if (!order) return;
     const orders = state.orders.filter((item) => item.id !== id);
     if (order.kind !== "perp") {
-      logTrade({ bucket: "order", symbol: order.symbol, title: `Canceled ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "canceled" });
+      logTrade({ bucket: "order", symbol: order.symbol, title: `Canceled ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "canceled", account: state.accountId });
       set({ orders });
       return;
     }
     const margin = order.amount / Math.max(order.leverage ?? 1, 1);
-    logTrade({ bucket: "order", symbol: order.base ?? order.symbol, title: `Canceled ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "canceled" });
+    logTrade({ bucket: "order", symbol: order.base ?? order.symbol, title: `Canceled ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "canceled", account: state.accountId });
     set({ orders, balances: add(state.balances, "USDT", margin) });
   },
 
@@ -368,7 +369,7 @@ export const useDesk = create<Desk>((set, get) => ({
       positions,
       activity: push(state.activity, `${side === "long" ? "Long" : "Short"} ${market}`, `${leverage}x`, notional),
     });
-    logTrade({ bucket: "trade", symbol: base, title: `${side === "long" ? "Long" : "Short"} ${base}/USDT`, detail: `${leverage}x`, value: notional, status: "open" });
+    logTrade({ bucket: "trade", symbol: base, title: `${side === "long" ? "Long" : "Short"} ${base}/USDT`, detail: `${leverage}x`, value: notional, status: "open", account: state.accountId });
     return true;
   },
 
@@ -387,8 +388,18 @@ export const useDesk = create<Desk>((set, get) => ({
       closes: state.closes + 1,
       activity: push(state.activity, `${reason} ${position.market}`, position.side, pnl),
     });
-    logTrade({ bucket: "trade", symbol: position.base, title: `${reason} ${position.base}/USDT`, detail: position.side, value: pnl, status: "closed" });
+    logTrade({ bucket: "trade", symbol: position.base, title: `${reason} ${position.base}/USDT`, detail: position.side, value: pnl, status: "closed", account: state.accountId });
     return true;
+  },
+
+  setGuards: (id, guards) => {
+    set({
+      positions: get().positions.map((position) =>
+        position.id === id
+          ? { ...position, tp: guards.tp && guards.tp > 0 ? guards.tp : undefined, sl: guards.sl && guards.sl > 0 ? guards.sl : undefined }
+          : position,
+      ),
+    });
   },
 
   depositVault: (symbol, amount) => {
@@ -542,8 +553,8 @@ export const useDesk = create<Desk>((set, get) => ({
         ...positions,
       ];
       activity = push(activity, `Limit ${order.side}`, `${order.base}-PERP`, order.amount);
-      logTrade({ bucket: "order", symbol: order.base, title: `Filled ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "filled" });
-      logTrade({ bucket: "trade", symbol: order.base, title: `${order.side} ${order.base}/USDT`, detail: `${order.leverage ?? 1}x`, value: order.amount, status: "filled" });
+      logTrade({ bucket: "order", symbol: order.base, title: `Filled ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "filled", account: state.accountId });
+      logTrade({ bucket: "trade", symbol: order.base, title: `${order.side} ${order.base}/USDT`, detail: `${order.leverage ?? 1}x`, value: order.amount, status: "filled", account: state.accountId });
     }
     orders = kept;
     const still: Position[] = [];
@@ -579,7 +590,7 @@ export const useDesk = create<Desk>((set, get) => ({
         if (debt) loans[market.symbol] = debt * (1 + market.borrowApy / 100 / 365 / 24);
       }
     }
-    set({ marks, balances, orders, positions, activity, realized, wins, closes, clock, supplied, loans });
+    set({ balances, orders, positions, activity, realized, wins, closes, clock, supplied, loans });
   },
 }));
 

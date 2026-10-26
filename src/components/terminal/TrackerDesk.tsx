@@ -481,7 +481,7 @@ function WalletDetail({
   onBack: () => void;
 }) {
   const live = peekChain(wallet.address);
-  const held = (live?.holdings ?? []).filter((row) => spam || row.usd >= 0.05 || row.usd === 0);
+  const held = live?.holdings ?? [];
   const top = (live?.holdings ?? []).slice(0, 3);
   return (
     <div className="px-3 py-3 sm:px-4">
@@ -506,12 +506,12 @@ function WalletDetail({
         <Stat k="Total value" v={live ? usd(live.value) : "…"} />
         <Stat k="Holdings" v={live ? String(live.holdings.length) : "…"} />
         <Stat k="In USDT" v={live ? `${(live.usdt ?? live.value).toFixed(2)} USDT` : "…"} />
-        <Stat k="Last transfer" v={live?.ago ?? "…"} />
+        <Stat k="Transactions" v={live ? (live.txCount || live.trades).toLocaleString("en-US") : "…"} />
       </div>
       <div className="mt-3 rounded-xl border border-line bg-surface p-3">
         <p className="text-xs text-muted">Total worth of tokens</p>
         <p className="font-mono text-xl">{live ? usd(live.value) : "Reading balances…"}</p>
-        <p className="mt-1 text-xs text-muted">{live ? `${live.holdings.length} holdings · ${(live.usdt ?? live.value).toFixed(2)} USDT` : "Balances show as soon as the account is read. Transfers follow."}</p>
+        <p className="mt-1 text-xs text-muted">{live ? `${live.holdings.length} tokens · ${(live.txCount || live.trades).toLocaleString("en-US")} transactions · ${(live.usdt ?? live.value).toFixed(2)} USDT` : "Balances show as soon as the account is read. Transfers follow."}</p>
       </div>
       <div className="mt-4 flex items-center gap-3 border-b border-line">
         {(["balances", "performance", "activity"] as const).map((item) => (

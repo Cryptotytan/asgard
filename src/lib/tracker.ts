@@ -143,7 +143,7 @@ export function fillsOf(wallets: TrackedWallet[]): Fill[] {
 
 export type ChainHolding = { symbol: string; amount: number; usd: number; share: number };
 export type ChainFill = { id: string; symbol: string; incoming: boolean; amount: number; ago: string; kind: string; detail: string; time: number };
-export type ChainWallet = { value: number; usdt: number; holdings: ChainHolding[]; trades: number; ago: string; fills: ChainFill[] };
+export type ChainWallet = { value: number; usdt: number; holdings: ChainHolding[]; trades: number; txCount: number; ago: string; fills: ChainFill[] };
 
 const chainCache = new Map<string, ChainWallet>();
 const inflight = new Map<string, Promise<ChainWallet>>();
@@ -235,49 +235,59 @@ function priced(holdings: ChainHolding[]) {
 }
 
 async function fetchChain(account: string): Promise<ChainWallet> {
-  const accountJob = fetch(`https://api.nearblocks.io/v1/account/${account}`);
-  const inventoryJob = fetch(`https://api.nearblocks.io/v1/account/${account}/inventory`);
-  const txJob = fetch(`https://api.nearblocks.io/v1/account/${account}/txns?per_page=25`);
-  const ftJob = fetch(`https://api.nearblocks.io/v1/account/${account}/ft-txns?per_page=25`);
-  const nftJob = fetch(`https://api.nearblocks.io/v1/account/${account}/nft-txns?per_page=25`);
-  const [accountRes, inventoryRes] = await Promise.all([accountJob, inventoryJob]);
+  const id = encodeURIComponent(account);
+  const accountJob = fetch(`https://api.nearblocks.io/v1/account/${id}`);
+  const inventoryJob = fetch(`https://api.nearblocks.io/v1/account/${id}/inventory`);
+  const countJob = fetch(`https://api.nearblocks.io/v1/account/${id}/txns/count`);
+  const txJob = fetch(`https://api.nearblocks.io/v1/account/${id}/txns?per_page=50`);
+  const ftJob = fetch(`https://api.nearblocks.io/v1/account/${id}/ft-txns?per_page=50`);
+  const nftJob = fetch(`https://api.nearblocks.io/v1/account/${id}/nft-txns?per_page=50`);
+  const rpcJob = fetch("https://rpc.mainnet.near.org", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: "asgard", method: "query", params: { request_type: "view_account", finality: "final", account_id: account } }),
+  }).catch(() => null);
+  const [accountRes, inventoryRes, countRes, rpcRes] = await Promise.all([accountJob, inventoryJob, countJob, rpcJob]);
   const accountBody = accountRes.ok ? ((await accountRes.json()) as { account?: { amount?: string }[] | { amount?: string } }) : {};
   const inventoryBody = inventoryRes.ok
     ? ((await inventoryRes.json()) as { inventory?: { fts?: { contract?: string; amount?: string; ft_meta?: { symbol?: string; decimals?: number; price?: number | string | null } }[] } })
     : {};
+  const countBody = countRes.ok ? ((await countRes.json()) as { txns?: { count?: string }[] }) : {};
+  const txCount = Number(countBody.txns?.[0]?.count ?? 0) || 0;
+  const rpcBody = rpcRes && rpcRes.ok ? ((await rpcRes.json()) as { result?: { amount?: string } }) : {};
   const accountRow = Array.isArray(accountBody.account) ? accountBody.account[0] : accountBody.account;
   const inventoryTrusted = inventoryRes.ok && Array.isArray(inventoryBody.inventory?.fts);
-  const accountTrusted = accountRes.ok && accountRow != null && accountRow.amount != null;
-  const near = accountTrusted ? Number(accountRow.amount ?? "0") / 1e24 : 0;
+  const listedNear = accountRes.ok && accountRow?.amount != null ? Number(accountRow.amount) / 1e24 : null;
+  const rpcNear = rpcBody.result?.amount != null ? Number(rpcBody.result.amount) / 1e24 : null;
+  const near = listedNear ?? rpcNear;
   const holdings: ChainHolding[] = [];
-  if (accountTrusted && near > 0) holdings.push({ symbol: "NEAR", amount: near, usd: near * tokenPrice("NEAR"), share: 0 });
+  if (near != null && near > 0) holdings.push({ symbol: "NEAR", amount: near, usd: near * (tokenPrice("NEAR") || 0), share: 0 });
   if (inventoryTrusted) {
     for (const row of inventoryBody.inventory?.fts ?? []) {
       const symbol = row.ft_meta?.symbol || "FT";
       const decimals = row.ft_meta?.decimals ?? 0;
-      const amount = Number(row.amount ?? "0") / 10 ** decimals;
+      const amount = Number(row.amount ?? "0") / 10 ** Math.max(decimals, 0);
       if (!Number.isFinite(amount) || amount <= 0) continue;
       const metaPrice = Number(row.ft_meta?.price);
-      const price = tokenPrice(symbol, row.contract) || (Number.isFinite(metaPrice) && metaPrice > 0 ? metaPrice : 0);
+      const price = (Number.isFinite(metaPrice) && metaPrice > 0 ? metaPrice : 0) || tokenPrice(symbol, row.contract);
       const known = TOKENS.find((token) => token.chain === "NEAR" && row.contract && token.address?.toLowerCase() === row.contract.toLowerCase());
       holdings.push({ symbol: known?.symbol || symbol, amount, usd: price > 0 ? amount * price : 0, share: 0 });
     }
   }
   const previous = chainCache.get(account) ?? peekChain(account);
-  const trusted = accountTrusted && inventoryTrusted;
-  const kept = !trusted || (holdings.length === 0 && (previous?.holdings.length ?? 0) > 0) ? previous?.holdings ?? holdings : holdings;
+  const kept = holdings.length > 0 ? holdings : !inventoryTrusted && near == null ? previous?.holdings ?? [] : holdings;
   const pricedRows = kept.map((row) => {
     if (row.usd > 0) return row;
     const old = previous?.holdings.find((item) => item.symbol === row.symbol);
     return old && old.usd > 0 ? { ...row, usd: old.amount === row.amount ? old.usd : old.usd * (row.amount / Math.max(old.amount, 1e-12)) } : row;
   });
   const money = priced(pricedRows);
-  const safe = !trusted && previous ? { value: previous.value, usdt: previous.usdt ?? previous.value } : money.value <= 0 && (previous?.value ?? 0) > 0 ? { value: previous!.value, usdt: previous!.usdt ?? previous!.value } : money;
   const partial: ChainWallet = {
-    value: safe.value,
-    usdt: safe.usdt,
+    value: money.value > 0 ? money.value : previous && pricedRows.length === 0 ? previous.value : money.value,
+    usdt: money.value > 0 ? money.usdt : previous && pricedRows.length === 0 ? previous.usdt ?? previous.value : money.usdt,
     holdings: pricedRows,
-    trades: previous?.trades ?? 0,
+    trades: txCount || previous?.trades || 0,
+    txCount: txCount || previous?.txCount || 0,
     ago: previous?.ago ?? "…",
     fills: previous?.fills ?? [],
   };
@@ -288,7 +298,7 @@ async function fetchChain(account: string): Promise<ChainWallet> {
   const nftBody = nftRes.ok ? ((await nftRes.json()) as { txns?: NftTxn[] }) : {};
   const freshFills = txRes.ok || ftRes.ok || nftRes.ok ? mergeActivity(txBody.txns ?? [], ftBody.txns ?? [], nftBody.txns ?? []) : [];
   const fills = freshFills.length > 0 ? freshFills : previous?.fills ?? [];
-  const next: ChainWallet = { ...partial, trades: fills.length, ago: fills[0]?.ago ?? previous?.ago ?? "—", fills };
+  const next: ChainWallet = { ...partial, trades: partial.txCount || fills.length, ago: fills[0]?.ago ?? previous?.ago ?? "—", fills };
   remember(account, next);
   return next;
 }

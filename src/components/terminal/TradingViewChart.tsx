@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { tradingViewPerp, tradingViewSpot } from "@/lib/tv";
 
 const SCRIPT = "https://widgets.tradingview-widget.com/w/en/tv-advanced-chart.js";
@@ -15,6 +15,14 @@ function ensureScript() {
 export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; market?: "spot" | "perp" }) {
   const host = useRef<HTMLDivElement>(null);
   const plotted = market === "spot" ? tradingViewSpot(symbol) : tradingViewPerp(symbol);
+  const [desktop, setDesktop] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1024px)");
+    const apply = () => setDesktop(media.matches);
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, []);
 
   useEffect(() => {
     if (!plotted) return;
@@ -30,7 +38,12 @@ export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; 
     chart.setAttribute("allow-symbol-change", "false");
     chart.setAttribute("autosize", "");
     chart.setAttribute("hide-legend", "");
-    chart.setAttribute("hide-top-toolbar", "");
+    if (desktop) {
+      chart.setAttribute("show-drawing-toolbar", "");
+      chart.setAttribute("show-date-ranges", "");
+    } else {
+      chart.setAttribute("hide-side-toolbar", "");
+    }
     chart.style.display = "block";
     chart.style.position = "absolute";
     chart.style.inset = "0";
@@ -38,7 +51,7 @@ export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; 
     chart.style.height = "100%";
     node.replaceChildren(chart);
     return () => node.replaceChildren();
-  }, [plotted]);
+  }, [plotted, desktop]);
 
   if (!plotted) {
     return <p className="px-3 py-8 text-sm text-muted sm:px-4">{symbol} is not on TradingView.</p>;
@@ -47,12 +60,6 @@ export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; 
   return (
     <div className="w-full">
       <div ref={host} className="relative h-[340px] min-h-[340px] w-full bg-black sm:h-[440px] lg:h-[560px]" />
-      <p className="hidden px-3 py-1 text-[10px] text-muted sm:block sm:px-4">
-        <a className="underline" href={`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(plotted)}`} target="_blank" rel="noreferrer">
-          Chart
-        </a>{" "}
-        by TradingView · {plotted}
-      </p>
     </div>
   );
 }

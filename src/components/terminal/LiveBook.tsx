@@ -122,6 +122,10 @@ export function LiveBook({ symbol, mark, liquidity }: { symbol: string; mark: nu
   const box = useRef<HTMLDivElement>(null);
   const base = symbol.split(".")[0] || symbol;
   useDesk((state) => state.clock);
+  useEffect(() => {
+    if (!(last > 0)) return;
+    useDesk.setState((state) => ({ marks: { ...state.marks, [base]: last, [symbol]: last } }));
+  }, [base, last, symbol]);
 
   const steps = useMemo(() => stepsFor(last > 0 ? last : mark), [last, mark]);
 
@@ -417,19 +421,13 @@ function withTotal(rows: Level[], side: "ask" | "bid") {
 }
 
 function Ladder({ rows, side, step, unit, edge }: { rows: { price: number; qty: number; total: number }[]; side: "ask" | "bid"; step: number; unit: Unit; edge: "start" | "end" }) {
-  const scroller = useRef<HTMLDivElement>(null);
   const max = Math.max(...rows.map((row) => row.total), 1);
-  useEffect(() => {
-    const node = scroller.current;
-    if (!node || edge !== "end") return;
-    node.scrollTop = node.scrollHeight;
-  }, [edge, rows]);
   return (
-    <div ref={scroller} className="h-full overflow-y-auto">
+    <div className={`flex h-full flex-col overflow-hidden ${edge === "end" ? "justify-end" : "justify-start"}`}>
       {rows.map((row) => {
         const size = unit === "quote" ? row.qty * row.price : row.qty;
         return (
-          <div key={`${side}-${row.price}`} className="relative grid h-5 grid-cols-2 items-center px-2 font-mono text-[11px] lg:grid-cols-[1.15fr_1fr_1fr]">
+          <div key={`${side}-${row.price}`} className="relative grid h-5 shrink-0 grid-cols-2 items-center px-2 font-mono text-[11px] lg:grid-cols-[1.15fr_1fr_1fr]">
             <span
               className="absolute inset-y-0 right-0"
               style={{ width: `${Math.max(6, (row.total / max) * 100)}%`, background: side === "ask" ? "rgba(255,121,102,0.22)" : "rgba(0,236,151,0.18)" }}
