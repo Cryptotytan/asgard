@@ -75,24 +75,24 @@ export async function tradableNearAssets(): Promise<IntentAsset[]> {
 
 export async function resolveAsset(symbol: string, chain?: string): Promise<IntentAsset | null> {
   const list = await loadIntentAssets();
-  const token = TOKENS.find((item) => item.symbol === symbol);
+  const token = TOKENS.find((item) => item.symbol === symbol && (!chain || item.chain === chain)) ?? (!chain ? TOKENS.find((item) => item.symbol === symbol) : undefined);
   const chainId = (chain ? chainByLabel(chain)?.id : token ? chainByLabel(token.chain)?.id : "") ?? "";
+  const onChain = (asset: IntentAsset) => !chainId || asset.blockchain === chainId;
   if (token?.assetId && (!chain || token.chain === chain)) {
     const exact = list.find((asset) => asset.assetId === token.assetId);
-    if (exact && (!chainId || exact.blockchain === chainId)) return exact;
+    if (exact && onChain(exact)) return exact;
   }
-  const want = (ALIAS[symbol] ?? symbol.split(".")[0] ?? symbol).toLowerCase();
-  const named = list.filter((asset) => asset.symbol.toLowerCase() === want);
-  const address = token?.address?.toLowerCase();
+  const address = token && (!chain || token.chain === chain) ? token.address?.toLowerCase() : "";
   if (address) {
-    const byAddress = list.find((asset) => asset.contractAddress?.toLowerCase() === address && (!chainId || asset.blockchain === chainId));
+    const byAddress = list.find((asset) => asset.contractAddress?.toLowerCase() === address && onChain(asset));
     if (byAddress) return byAddress;
+    const byId = list.find((asset) => asset.assetId.toLowerCase() === address && onChain(asset));
+    if (byId) return byId;
   }
-  if (chainId) {
-    const onChain = named.find((asset) => asset.blockchain === chainId);
-    if (onChain) return onChain;
-  }
-  return named.find((asset) => asset.blockchain === "near" && asset.contractAddress && Number(asset.price) > 0) ?? named[0] ?? null;
+  const base = (ALIAS[symbol.split(".")[0] ?? symbol] ?? symbol.split(".")[0] ?? symbol).toLowerCase();
+  const named = list.filter((asset) => asset.symbol.toLowerCase() === base && onChain(asset));
+  if (chainId === "near") return named.find((asset) => asset.contractAddress === "wrap.near") ?? named.find((asset) => asset.contractAddress && Number(asset.price) > 0) ?? named[0] ?? null;
+  return named.find((asset) => Number(asset.price) > 0) ?? named[0] ?? null;
 }
 
 export async function quoteIntent(input: {
@@ -110,7 +110,7 @@ export async function quoteIntent(input: {
 }): Promise<IntentQuote> {
   const origin = await resolveAsset(input.from, input.fromChain);
   const destination = await resolveAsset(input.to, input.toChain);
-  if (!origin || !destination) throw new Error("This pair is not listed on NEAR Intents.");
+  if (!origin || !destination) throw new Error(`${input.from} on ${input.fromChain || "its chain"} to ${input.to} on ${input.toChain || "its chain"} is not listed on NEAR Intents.`);
   const refundTo = (input.refundTo || input.accountId).trim();
   const recipient = (input.recipient || input.accountId).trim();
   if (!refundTo || !recipient) throw new Error("A refund address and a receive address are required. Nothing was sent.");
@@ -133,7 +133,7 @@ export async function quoteIntent(input: {
       recipientType: "DESTINATION_CHAIN",
       deadline: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       referral: "asgard",
-      quoteWaitingTimeMs: input.dry ? 2000 : 4000,
+      quoteWaitingTimeMs: input.dry ? 7000 : 5000,
     }),
   });
   if (!response.ok) throw new Error(await readError(response));

@@ -328,16 +328,20 @@ export async function quoteRoutes(input: {
   const slip = input.slippageBps ?? 100;
   const purpose = input.purpose ?? "Swap";
   const sameEvm = input.from.chain === input.to.chain && chainByLabel(input.from.chain)?.kind === "evm";
+  const intentsJob = sameEvm
+    ? Promise.resolve({ route: null as LiveRoute | null, error: "" })
+    : timeout(intentsRoute(input.from, input.to, input.amount, input.accountId || input.refundTo, input.refundTo, input.recipient, slip, purpose), 16000)
+        .then((route) => ({ route, error: "" }))
+        .catch((error: unknown) => ({ route: null, error: error instanceof Error ? error.message : "NEAR Intents has no quote for this pair." }));
   const jobs = [
-    sameEvm
-      ? Promise.resolve(null)
-      : timeout(intentsRoute(input.from, input.to, input.amount, input.accountId || input.refundTo, input.refundTo, input.recipient, slip, purpose), 8000).catch(() => null),
+    intentsJob,
     sameEvm
       ? timeout(evmDexRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => [])
       : timeout(lifiRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => []),
     timeout(jupiterRoute(input.from, input.to, input.amount, input.refundTo), 8000).catch(() => null),
   ] as const;
   const [intents, lifi, jupiter] = await Promise.all(jobs);
-  const routes = [...(intents ? [intents] : []), ...(lifi ?? []), ...(jupiter ? [jupiter] : [])];
+  const routes = [...(intents.route ? [intents.route] : []), ...(lifi ?? []), ...(jupiter ? [jupiter] : [])];
+  if (!routes.length && intents.error) throw new Error(intents.error);
   return routes.sort((a, b) => a.impact - b.impact || b.receive - a.receive);
 }

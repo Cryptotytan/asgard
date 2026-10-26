@@ -117,7 +117,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
     setRoutes([]);
     setPickedId(null);
     setQuoteError("");
-    if (amountN <= 0 || sell.symbol === buy.symbol) return;
+    if (amountN <= 0 || (sell.symbol === buy.symbol && sell.chain === buy.chain)) return;
     if (!refundOk || !receiveOk) {
       setQuoteError(`Add a ${!refundOk ? sell.chain : buy.chain} address. A failed bridge refunds there.`);
       return;
@@ -138,7 +138,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
         .finally(() => setFetching(false));
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [sell.symbol, buy.symbol, amount, amountN, accountId, refundTo, recipient, refundOk, receiveOk]);
+  }, [sell.symbol, sell.chain, buy.symbol, buy.chain, amount, amountN, accountId, refundTo, recipient, refundOk, receiveOk]);
 
   useEffect(() => {
     if (fetching || !routesOpen) return;
@@ -371,7 +371,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
 
         <button
           type="button"
-          disabled={settling || (!needsWallet && amountN > 0 && (fetching || !best || short || (risk && !acked) || sell.symbol === buy.symbol || (best?.impact ?? 0) > slipPct))}
+          disabled={settling || (!needsWallet && amountN > 0 && (fetching || !best || short || (risk && !acked) || (sell.symbol === buy.symbol && sell.chain === buy.chain) || (best?.impact ?? 0) > slipPct))}
           onClick={() => void submit()}
           className="mt-2 h-10 w-full rounded-xl bg-primary font-semibold text-primary-fg disabled:opacity-40"
         >
