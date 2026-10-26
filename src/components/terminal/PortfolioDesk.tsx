@@ -118,7 +118,7 @@ export function PortfolioDesk() {
         </div>
 
         <dl className="grid grid-cols-2 gap-px border-b border-line bg-line sm:grid-cols-3 lg:grid-cols-6">
-          <Stat k="Total value" v={money(total)} />
+          <Stat k="Total value" v={usd(total)} />
           <Stat k="Holdings" v={holdings.length ? String(holdings.length) : "—"} />
           <Stat k="Vault" v={vaultRows.length ? money(vaultValue) : "—"} />
           <Stat k="Lending" v={lendRows.length ? money(lendValue) : "—"} />

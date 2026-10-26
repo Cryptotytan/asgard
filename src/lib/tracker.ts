@@ -187,7 +187,7 @@ async function fetchChain(account: string): Promise<ChainWallet> {
     fetch(`https://api.nearblocks.io/v1/account/${account}/nft-txns?per_page=25`),
   ]);
   const accountBody = accountRes.ok ? ((await accountRes.json()) as { account?: { amount?: string } }) : {};
-  const inventoryBody = inventoryRes.ok ? ((await inventoryRes.json()) as { inventory?: { fts?: { amount?: string; ft_meta?: { symbol?: string; decimals?: number } }[] } }) : {};
+  const inventoryBody = inventoryRes.ok ? ((await inventoryRes.json()) as { inventory?: { fts?: { contract?: string; amount?: string; ft_meta?: { symbol?: string; decimals?: number; price?: number | string | null } }[] } }) : {};
   const txBody = txRes.ok ? ((await txRes.json()) as { txns?: ReceiptTxn[] }) : {};
   const ftBody = ftRes.ok ? ((await ftRes.json()) as { txns?: FtTxn[] }) : {};
   const nftBody = nftRes.ok ? ((await nftRes.json()) as { txns?: NftTxn[] }) : {};
@@ -200,8 +200,13 @@ async function fetchChain(account: string): Promise<ChainWallet> {
     const decimals = row.ft_meta?.decimals ?? 0;
     const amount = Number(row.amount ?? "0") / 10 ** decimals;
     if (!Number.isFinite(amount) || amount <= 0) continue;
-    const known = TOKENS.find((token) => token.symbol.toLowerCase() === symbol.toLowerCase());
-    holdings.push({ symbol, amount, usd: known ? amount * known.price : 0, share: 0 });
+    const known =
+      TOKENS.find((token) => token.chain === "NEAR" && token.address && row.contract && token.address.toLowerCase() === row.contract.toLowerCase()) ??
+      TOKENS.find((token) => token.chain === "NEAR" && token.symbol.toLowerCase() === symbol.toLowerCase()) ??
+      TOKENS.find((token) => token.symbol.toLowerCase() === symbol.toLowerCase());
+    const metaPrice = Number(row.ft_meta?.price);
+    const price = known && known.price > 0 ? known.price : Number.isFinite(metaPrice) ? metaPrice : 0;
+    holdings.push({ symbol: known?.symbol || symbol, amount, usd: price > 0 ? amount * price : 0, share: 0 });
   }
   const total = holdings.reduce((sum, row) => sum + row.usd, 0);
   for (const row of holdings) row.share = total > 0 ? (row.usd / total) * 100 : 0;

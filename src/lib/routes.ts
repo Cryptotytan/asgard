@@ -339,14 +339,10 @@ export async function quoteRoutes(input: {
     !cross && sameKind === "evm"
       ? timeout(evmDexRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => [] as LiveRoute[])
       : Promise.resolve([] as LiveRoute[]),
-    !cross
-      ? timeout(lifiRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => [] as LiveRoute[])
-      : Promise.resolve([] as LiveRoute[]),
-    !cross
-      ? timeout(jupiterRoute(input.from, input.to, input.amount, input.refundTo), 8000).catch(() => null)
-      : Promise.resolve(null),
+    timeout(lifiRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), cross ? 12000 : 8000).catch(() => [] as LiveRoute[]),
+    !cross ? timeout(jupiterRoute(input.from, input.to, input.amount, input.refundTo), 8000).catch(() => null) : Promise.resolve(null),
   ]);
   const routes = [...(intents.route ? [intents.route] : []), ...evm, ...lifi, ...(jupiter ? [jupiter] : [])];
-  if (!routes.length) throw new Error(intents.error || (cross ? "NEAR Intents has no route for this pair." : "No live route for this pair."));
-  return routes.sort((a, b) => a.impact - b.impact || b.receive - a.receive);
+  if (!routes.length) throw new Error(intents.error || (cross ? "No route for this pair." : "No live route for this pair."));
+  return routes.sort((a, b) => Number(b.id === "intents") - Number(a.id === "intents") || a.impact - b.impact || b.receive - a.receive);
 }

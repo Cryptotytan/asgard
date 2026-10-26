@@ -47,8 +47,14 @@ export function SwapDesk({ focus }: { focus?: string }) {
     if (turnLock.current) return;
     const nextSell = buyS;
     const nextBuy = sellS;
+    const nextSellWallet = buyWalletId;
+    const nextBuyWallet = sellWalletId;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     setFlipped((value) => !value);
+    setRefundEdit(null);
+    setReceiveEdit(null);
+    setSellWalletId(nextSellWallet);
+    setBuyWalletId(nextBuyWallet);
     if (reduce) {
       setSellS(nextSell);
       setBuyS(nextBuy);
