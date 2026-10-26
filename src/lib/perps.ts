@@ -1,4 +1,5 @@
 import { coinIcon, knownLogo } from "@/lib/dex";
+import { logoOf } from "@/lib/logo-book";
 import { ensureToken, MARKETS, money, TOKENS, type PerpMarket } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 
@@ -19,7 +20,7 @@ function marketOf(base: string, name = base): PerpMarket {
 }
 
 function publish(market: PerpMarket, price = Number.NaN, change = 0, volume = 0) {
-  const icon = knownLogo(market.base) || coinIcon(market.base) || undefined;
+  const icon = logoOf(market.base) || knownLogo(market.base) || coinIcon(market.base) || undefined;
   let token = TOKENS.find((item) => item.chain === "NEAR" && item.symbol.split(".")[0].toUpperCase() === market.base);
   if (!token) {
     const bareFree = !TOKENS.some((item) => item.symbol.toUpperCase() === market.base);
@@ -27,6 +28,8 @@ function publish(market: PerpMarket, price = Number.NaN, change = 0, volume = 0)
     token = ensureToken({ symbol, name: market.name, price, chain: "NEAR", icon });
     if (token.notes.length === 1 && token.notes[0] === "DexScreener") token.notes = ["NEAR perp"];
   }
+  const booked = logoOf(token.symbol);
+  if (booked) token.icon = booked;
   if (!(token.price > 0) && price > 0) token.price = price;
   if (price > 0 && token.notes.includes("NEAR perp")) {
     if (!token.windows.h24) {

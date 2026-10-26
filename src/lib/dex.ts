@@ -1,4 +1,5 @@
 import { ensureToken, isCanonical, isMajorAsset, money, preferIcon, qualityScore, TOKENS, type WindowId } from "@/lib/market";
+import { logoOf } from "@/lib/logo-book";
 import { chainById, chainByLabel } from "@/lib/chains";
 import { loadIntentAssets, type IntentAsset } from "@/lib/intents";
 import { useDesk } from "@/lib/store";
@@ -208,6 +209,8 @@ function publishTradable(map: Map<string, IntentAsset>) {
     token.rails = ["NEAR"];
     token.verified = isCanonical({ symbol: token.symbol, address });
     token.notes = token.verified ? ["Widely used NEAR asset"] : ["Tradable on NEAR Intents"];
+    const booked = logoOf(token.symbol);
+    if (booked) token.icon = booked;
     if (asset.coingeckoId) geckoBySymbol.set(token.symbol, asset.coingeckoId);
   }
 }
@@ -244,6 +247,8 @@ function publishForeign(assets: IntentAsset[]) {
     token.rails = [chain];
     token.verified = isMajorAsset(base, chain);
     token.notes = [`Crosschain on ${chain} via NEAR Intents`];
+    const booked = logoOf(base) || logoOf(token.symbol);
+    if (booked) token.icon = booked;
     if (asset.coingeckoId) geckoBySymbol.set(token.symbol, asset.coingeckoId);
     const icon = knownLogo(base) || undefined;
     if (icon) token.icon = preferIcon(token.icon, icon);

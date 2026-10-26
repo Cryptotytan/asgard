@@ -27,6 +27,7 @@ import {
 import { useDesk, type Side } from "@/lib/store";
 import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, warmCharts, watchCandles, type HolderRow } from "@/lib/live";
 import { searchTokens, syncNearMarkets } from "@/lib/dex";
+import { logoOf } from "@/lib/logo-book";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 import { chainByLabel, validAddress } from "@/lib/chains";
 import { linkedWallets, foreignWallets, useForeign, type ForeignWallets } from "@/lib/foreign-wallet";
@@ -79,12 +80,6 @@ export function TokenTrade({
     const near = TOKENS.find((item) => item.chain === "NEAR" && item.symbol.split(".")[0].toUpperCase() === base);
     if (near && near.symbol !== symbol) onSymbol(near.symbol);
   }, [mode, symbol, onSymbol]);
-  useEffect(() => {
-    if (mode !== "spot" || token.chain === "NEAR") return;
-    const base = symbol.split(".")[0]?.toUpperCase() ?? "";
-    const near = TOKENS.find((item) => item.chain === "NEAR" && item.symbol.split(".")[0].toUpperCase() === base && (item.assetId || item.listed));
-    if (near && near.symbol !== symbol) onSymbol(near.symbol);
-  }, [mode, symbol, token.chain, onSymbol]);
 
   const deskMode: TicketMode = canPerp(symbol) ? mode : "spot";
   const plotted = deskMode === "perp" ? tradingViewPerp(symbol) : tradingViewPerp(symbol).replace(/\.P$/, "");
@@ -309,17 +304,17 @@ function TokenMenu({ token, mode, onPick }: { token: Token; scanning: boolean; m
         .filter((row) => !needle || `${row.token.symbol} ${row.token.name} near perp`.toLowerCase().includes(needle) || row.label.toLowerCase().includes(needle))
         .sort((a, b) => b.token.volN - a.token.volN || a.label.localeCompare(b.label));
     }
+    const SPOT_CHAINS = new Set(["NEAR", "Ethereum", "Solana", "Base", "Arbitrum", "Optimism", "BNB", "Polygon", "Avalanche", "Bitcoin", "Tron", "TON", "Sui", "Aptos", "Gnosis"]);
     return TOKENS.filter((item) => {
-      if (item.chain !== "NEAR") return false;
-      if (item.notes.includes("NEAR perp") && !item.assetId) return false;
-      const spot = Boolean(item.assetId) || Boolean(item.listed && item.price > 0);
-      if (!spot) return false;
-      const hay = `${item.symbol} ${item.name} near spot`.toLowerCase();
+      if (!SPOT_CHAINS.has(item.chain)) return false;
+      if (!item.assetId || !(item.price > 0)) return false;
+      if (!logoOf(item.symbol)) return false;
+      const hay = `${item.symbol} ${item.name} ${item.chain} spot`.toLowerCase();
       return !needle || hay.includes(needle);
     })
-      .sort((a, b) => b.volN - a.volN || a.symbol.localeCompare(b.symbol))
-      .slice(0, needle ? 120 : 160)
-      .map((item) => ({ id: item.symbol, label: displayName(item), token: item }));
+      .sort((a, b) => a.chain.localeCompare(b.chain) || b.volN - a.volN || a.symbol.localeCompare(b.symbol))
+      .slice(0, needle ? 160 : 200)
+      .map((item) => ({ id: `${item.chain}:${item.symbol}`, label: displayName(item), token: item }));
   }, [clock, mode, query]);
 
   useEffect(() => {
