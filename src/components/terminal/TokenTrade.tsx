@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ChevronDown, Copy, Search, ShieldAlert } from "lucide-react";
 import { CandleChart, type ChartHover } from "@/components/terminal/CandleChart";
-import { TradingViewChart, tradingViewPerp } from "@/components/terminal/TradingViewChart";
+import { TradingViewChart } from "@/components/terminal/TradingViewChart";
+import { tradingViewPerp, tradingViewSpot } from "@/lib/tv";
 import { LiveBook } from "@/components/terminal/LiveBook";
 import { SecurityGate } from "@/components/terminal/SecurityGate";
 import { TokenIcon, VerifiedMark, ChainBadge } from "@/components/terminal/TokenIcon";
@@ -82,7 +83,7 @@ export function TokenTrade({
   }, [mode, symbol, onSymbol]);
 
   const deskMode: TicketMode = canPerp(symbol) ? mode : "spot";
-  const plotted = deskMode === "perp" ? tradingViewPerp(symbol) : tradingViewPerp(symbol).replace(/\.P$/, "");
+  const plotted = deskMode === "perp" ? tradingViewPerp(symbol) : tradingViewSpot(symbol);
   const tvChart = Boolean(plotted);
   useEffect(() => {
     const node = chartPane.current;
@@ -301,7 +302,7 @@ function TokenMenu({ token, mode, onPick }: { token: Token; scanning: boolean; m
           const market = MARKETS.find((entry) => entry.base === base);
           return { id: item.symbol, label: market?.label ?? `${base}-USD`, token: item };
         })
-        .filter((row) => !needle || `${row.token.symbol} ${row.token.name} near perp`.toLowerCase().includes(needle) || row.label.toLowerCase().includes(needle))
+        .filter((row) => tradingViewPerp(row.token.symbol) && (!needle || `${row.token.symbol} ${row.token.name} near perp`.toLowerCase().includes(needle) || row.label.toLowerCase().includes(needle)))
         .sort((a, b) => b.token.volN - a.token.volN || a.label.localeCompare(b.label));
     }
     const SPOT_CHAINS = new Set(["NEAR", "Ethereum", "Solana", "Base", "Arbitrum", "Optimism", "BNB", "Polygon", "Avalanche", "Bitcoin", "Tron", "TON", "Sui", "Aptos", "Gnosis"]);
@@ -309,6 +310,7 @@ function TokenMenu({ token, mode, onPick }: { token: Token; scanning: boolean; m
       if (!SPOT_CHAINS.has(item.chain)) return false;
       if (!item.assetId || !(item.price > 0)) return false;
       if (!logoOf(item.symbol)) return false;
+      if (!tradingViewSpot(item.symbol)) return false;
       const hay = `${item.symbol} ${item.name} ${item.chain} spot`.toLowerCase();
       return !needle || hay.includes(needle);
     })

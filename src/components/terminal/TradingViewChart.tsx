@@ -1,25 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { tradingViewPerp, tradingViewSpot } from "@/lib/tv";
 
 const SCRIPT = "https://widgets.tradingview-widget.com/w/en/tv-advanced-chart.js";
-
-const PERPS: Record<string, string> = {
-  NEAR: "BINANCE:NEARUSDT.P",
-  WNEAR: "BINANCE:NEARUSDT.P",
-  ETH: "BINANCE:ETHUSDT.P",
-  WETH: "BINANCE:ETHUSDT.P",
-  BTC: "BINANCE:BTCUSDT.P",
-  WBTC: "BINANCE:BTCUSDT.P",
-};
-
-const SKIP = new Set(["SPX500", "NAS100", "XAU", "XAG", "CL", "EURUSD", "USDJPY", "NVDA", "TSLA", "GOOGL"]);
-
-export function tradingViewPerp(symbol: string) {
-  const base = symbol.split(".")[0]?.toUpperCase() ?? "";
-  if (!base || SKIP.has(base)) return "";
-  if (PERPS[base]) return PERPS[base];
-  if (!/^[A-Z0-9]{2,15}$/.test(base)) return "";
-  return `BINANCE:${base}USDT.P`;
-}
 
 function ensureScript() {
   if (document.querySelector("script[data-asgard-tv]")) return;
@@ -32,8 +14,7 @@ function ensureScript() {
 
 export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; market?: "spot" | "perp" }) {
   const host = useRef<HTMLDivElement>(null);
-  const perp = tradingViewPerp(symbol);
-  const plotted = market === "spot" ? perp.replace(/\.P$/, "") : perp;
+  const plotted = market === "spot" ? tradingViewSpot(symbol) : tradingViewPerp(symbol);
   const [compact, setCompact] = useState(false);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 1023px)");
@@ -71,7 +52,7 @@ export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; 
   }, [plotted, compact]);
 
   if (!plotted) {
-    return <p className="px-3 py-8 text-sm text-muted sm:px-4">{symbol} has no perpetual chart.</p>;
+    return <p className="px-3 py-8 text-sm text-muted sm:px-4">{symbol} is not on TradingView.</p>;
   }
 
   return (

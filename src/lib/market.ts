@@ -1,3 +1,5 @@
+import { tradingViewPerp } from "@/lib/tv";
+
 export type Safety = {
   top10: number;
   insiders: number;
@@ -480,7 +482,7 @@ export const MARKETS: PerpMarket[] = [
 
 export function canPerp(symbol: string) {
   const base = symbol.split(".")[0]?.toUpperCase() ?? "";
-  return MARKETS.some((market) => market.base === base);
+  return Boolean(tradingViewPerp(symbol)) && MARKETS.some((market) => market.base === base);
 }
 
 export const LEND_MARKETS: { symbol: string; token?: string; supplyApy: number; borrowApy: number }[] = [];
