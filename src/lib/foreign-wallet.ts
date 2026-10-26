@@ -228,9 +228,26 @@ async function tokenAllowance(provider: Eip, token: string, owner: string, spend
   return BigInt(raw || "0x0");
 }
 
-async function waitReceipt(provider: Eip, hash: string) {
+async function readReceipt(provider: Eip, hash: string, rpc?: string) {
+  if (rpc) {
+    try {
+      const response = await fetch(rpc, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getTransactionReceipt", params: [hash] }),
+      });
+      const body = (await response.json()) as { result?: { status?: string } | null };
+      if (body.result) return body.result;
+    } catch {
+      /* The chain RPC can miss a just-broadcast transaction. The wallet is the fallback. */
+    }
+  }
+  return (await provider.request({ method: "eth_getTransactionReceipt", params: [hash] }).catch(() => null)) as { status?: string } | null;
+}
+
+async function waitReceipt(provider: Eip, hash: string, rpc?: string) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const receipt = (await provider.request({ method: "eth_getTransactionReceipt", params: [hash] })) as { status?: string } | null;
+    const receipt = await readReceipt(provider, hash, rpc);
     if (receipt) {
       if (receipt.status === "0x0") throw new Error("The transaction failed on chain. Nothing else was sent.");
       return;
@@ -242,11 +259,11 @@ async function waitReceipt(provider: Eip, hash: string) {
 
 async function sendApprove(provider: Eip, meta: ChainMeta, from: string, token: string, spender: string, amount: bigint) {
   const data = `0x095ea7b3${padAddress(spender)}${amount.toString(16).padStart(64, "0")}`;
-  const tx = { from, to: token, data, value: "0x0", chainId: `0x${(meta.chainId ?? 1).toString(16)}` };
+  const tx = { from, to: token, data, value: "0x0" };
   await assertCanPay(provider, meta, from, tx);
   const hash = (await provider.request({ method: "eth_sendTransaction", params: [tx] })) as string;
   if (!hash) throw new Error("The wallet did not approve the token. Nothing else was sent.");
-  await waitReceipt(provider, hash);
+  await waitReceipt(provider, hash, meta.rpc);
 }
 
 export async function ensureEvmAllowance(chainLabel: string, token: string, spender: string, amount: string) {
@@ -291,24 +308,23 @@ async function sendEvm(meta: ChainMeta, token: string | null, to: string, amount
   emit({ evm: from });
   await ensureChain(provider, meta);
   const native = !token || token.toLowerCase() === NATIVE;
-  const chainId = `0x${(meta.chainId ?? 1).toString(16)}`;
   if (native) {
     const value = hexAmount(amount);
-    const tx = { from, to, value, chainId };
+    const tx = { from, to, value };
     await assertCanPay(provider, meta, from, tx);
     const hash = (await provider.request({ method: "eth_sendTransaction", params: [tx] })) as string;
     if (!hash) throw new Error("The wallet did not return a transaction. Nothing else was sent.");
-    await waitReceipt(provider, hash);
+    await waitReceipt(provider, hash, meta.rpc);
     return hash;
   }
   if (!isEvmAddress(token)) throw new Error("That token address is not an EVM contract. Nothing was sent.");
   const held = await tokenBalance(provider, token, from);
   if (held < BigInt(amount)) throw new Error(`Not enough of this token on ${meta.label}. Nothing was sent.`);
-  const tx = { from, to: token, data: encodeTransfer(to, amount), value: "0x0", chainId };
+  const tx = { from, to: token, data: encodeTransfer(to, amount), value: "0x0" };
   await assertCanPay(provider, meta, from, tx);
   const hash = (await provider.request({ method: "eth_sendTransaction", params: [tx] })) as string;
   if (!hash) throw new Error("The wallet did not return a transaction. Nothing else was sent.");
-  await waitReceipt(provider, hash);
+  await waitReceipt(provider, hash, meta.rpc);
   return hash;
 }
 
@@ -324,11 +340,11 @@ export async function sendEvmCall(chainLabel: string, tx: { to: string; data?: s
   emit({ evm: from });
   await ensureChain(provider, meta);
   const value = hexValue(tx.value);
-  const call = { from, to: tx.to, data: hexData(tx.data), value, chainId: `0x${(meta.chainId ?? 1).toString(16)}` };
+  const call = { from, to: tx.to, data: hexData(tx.data), value };
   await assertCanPay(provider, meta, from, call);
   const hash = (await provider.request({ method: "eth_sendTransaction", params: [call] })) as string;
   if (!hash) throw new Error("The wallet did not return a transaction. Nothing else was sent.");
-  await waitReceipt(provider, hash);
+  await waitReceipt(provider, hash, meta.rpc);
   return hash;
 }
 

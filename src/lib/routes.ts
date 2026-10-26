@@ -1,4 +1,5 @@
 import { chainByLabel, validAddress } from "@/lib/chains";
+import { evmDexRoutes } from "@/lib/evm-dex";
 import { ensureEvmAllowance, sendEvmCall, sendSolanaSerialized } from "@/lib/foreign-wallet";
 import { executeIntent, parseUnits, quoteIntent } from "@/lib/intents";
 import type { Token } from "@/lib/market";
@@ -326,9 +327,14 @@ export async function quoteRoutes(input: {
 }) {
   const slip = input.slippageBps ?? 100;
   const purpose = input.purpose ?? "Swap";
+  const sameEvm = input.from.chain === input.to.chain && chainByLabel(input.from.chain)?.kind === "evm";
   const jobs = [
-    timeout(intentsRoute(input.from, input.to, input.amount, input.accountId || input.refundTo, input.refundTo, input.recipient, slip, purpose), 8000).catch(() => null),
-    timeout(lifiRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => []),
+    sameEvm
+      ? Promise.resolve(null)
+      : timeout(intentsRoute(input.from, input.to, input.amount, input.accountId || input.refundTo, input.refundTo, input.recipient, slip, purpose), 8000).catch(() => null),
+    sameEvm
+      ? timeout(evmDexRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => [])
+      : timeout(lifiRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => []),
     timeout(jupiterRoute(input.from, input.to, input.amount, input.refundTo), 8000).catch(() => null),
   ] as const;
   const [intents, lifi, jupiter] = await Promise.all(jobs);
