@@ -6,6 +6,7 @@ const DEFAULT_BARS: Record<string, number> = { "1m": 100, "5m": 100, "15m": 110,
 const MIN_SPAN = 16;
 const MAX_SPAN = 480;
 const RIGHT_GAP = 4;
+const LEFT_GAP = 0.16;
 const UP = "#00e8a0";
 const DOWN = "#ff4d8d";
 const VB_W = 960;
@@ -108,19 +109,25 @@ export function CandleChart({
     setTrackedFirst(firstT);
   }, [all, trackedFirst]);
 
+  function homeEdge(spanNext: number, len: number) {
+    const liveEdge = len + RIGHT_GAP;
+    if (liveEdge >= spanNext) return liveEdge;
+    return spanNext - Math.max(6, Math.round(spanNext * LEFT_GAP));
+  }
+
   function limits(spanNext: number, len: number) {
     const liveEdge = len + RIGHT_GAP;
-    const rest = liveEdge < spanNext ? spanNext : liveEdge;
+    const rest = homeEdge(spanNext, len);
     const slack = Math.round(spanNext * 0.75);
     const maxRight = Math.max(rest, liveEdge) + slack;
-    const floor = liveEdge < spanNext ? Math.max(1, Math.round(spanNext * 0.12)) : endedRef.current ? Math.max(8, spanNext) : 8;
+    const floor = liveEdge < spanNext ? Math.max(1, Math.round(spanNext * 0.04)) : endedRef.current ? Math.max(8, spanNext) : 8;
     const minRight = Math.min(rest, floor);
     return { liveEdge, rest, maxRight, minRight };
   }
 
   function shownEdge(len = lenRef.current, spanNext = spanRef.current) {
     if (rightRef.current != null) return rightRef.current;
-    return len + RIGHT_GAP < spanNext ? spanNext : len + RIGHT_GAP;
+    return homeEdge(spanNext, len);
   }
 
   function commit(nextSpan: number, nextRight: number | null, pin = true) {
