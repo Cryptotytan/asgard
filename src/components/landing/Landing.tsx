@@ -66,7 +66,7 @@ export function Landing() {
       if (node) {
         const box = node.getBoundingClientRect();
         const view = window.innerHeight || 1;
-        const progress = Math.min(1, Math.max(0, (view * 0.72 - box.top) / (view * 0.9)));
+        const progress = Math.min(1, Math.max(0, (view * 0.92 - box.top) / (view * 0.42)));
         node.style.setProperty("--lift", progress.toFixed(3));
       }
       frame = requestAnimationFrame(tick);
