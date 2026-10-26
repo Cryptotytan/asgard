@@ -340,8 +340,18 @@ function remember(symbol: string, bars: Candle[], step: number) {
   }
 }
 
+const warming = new Set<string>();
+
 export function warmCharts(symbol: string) {
-  for (const frame of ALL_FRAMES) void loadCandles(symbol, frame).catch(() => undefined);
+  if (warming.has(symbol)) return;
+  warming.add(symbol);
+  void (async () => {
+    await loadCandles(symbol, "15m").catch(() => undefined);
+    await loadCandles(symbol, "5m").catch(() => undefined);
+    await loadCandles(symbol, "1H").catch(() => undefined);
+  })().finally(() => {
+    window.setTimeout(() => warming.delete(symbol), 60_000);
+  });
 }
 
 export function candleMeta(symbol: string, frame = "5m") {
@@ -402,30 +412,40 @@ async function geckoGet(url: string) {
 }
 
 const poolCache = new Map<string, string>();
+const poolFlight = new Map<string, Promise<string>>();
 
 async function geckoPool(network: string, address: string, expect = 0, remember = true) {
   const key = `${network}:${address}`;
   if (remember) {
     const cached = poolCache.get(key);
     if (cached) return cached;
+    const pending = poolFlight.get(key);
+    if (pending) return pending;
   }
-  const body = await geckoGet(`https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${encodeURIComponent(address)}/pools?page=1`);
-  const rows = (body as { data?: { attributes?: { address?: string; base_token_price_usd?: string; reserve_in_usd?: string; volume_usd?: { h24?: string } | string } }[] } | null)?.data ?? [];
-  let best = "";
-  let bestVol = -1;
-  for (const row of rows) {
-    const attrs = row.attributes ?? {};
-    const pool = attrs.address ?? "";
-    const px = Number(attrs.base_token_price_usd);
-    if (!pool || !(px > 0) || !priceAgrees(px, expect)) continue;
-    const vol = Number(typeof attrs.volume_usd === "object" ? attrs.volume_usd?.h24 : attrs.volume_usd) || Number(attrs.reserve_in_usd) || 0;
-    if (vol >= bestVol) {
-      bestVol = vol;
-      best = pool;
+  const job = (async () => {
+    const body = await geckoGet(`https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${encodeURIComponent(address)}/pools?page=1`);
+    const rows = (body as { data?: { attributes?: { address?: string; base_token_price_usd?: string; reserve_in_usd?: string; volume_usd?: { h24?: string } | string } }[] } | null)?.data ?? [];
+    let best = "";
+    let bestVol = -1;
+    for (const row of rows) {
+      const attrs = row.attributes ?? {};
+      const pool = attrs.address ?? "";
+      const px = Number(attrs.base_token_price_usd);
+      if (!pool || !(px > 0) || !priceAgrees(px, expect)) continue;
+      const vol = Number(typeof attrs.volume_usd === "object" ? attrs.volume_usd?.h24 : attrs.volume_usd) || Number(attrs.reserve_in_usd) || 0;
+      if (vol >= bestVol) {
+        bestVol = vol;
+        best = pool;
+      }
     }
+    if (best && remember) poolCache.set(key, best);
+    return best;
+  })();
+  if (remember) {
+    poolFlight.set(key, job);
+    void job.finally(() => poolFlight.delete(key));
   }
-  if (best && remember) poolCache.set(key, best);
-  return best;
+  return job;
 }
 
 async function geckoBars(network: string, pool: string, frame: string, before?: number, limit = 1000) {

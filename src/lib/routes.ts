@@ -132,6 +132,36 @@ async function runLifi(steps: LifiStep[], fallback: string) {
   return hash || "SENT";
 }
 
+async function reloadLifiSteps(from: Token, to: Token, amount: string, sender: string, recipient: string, name: string) {
+  const origin = lifiAsset(from);
+  const destination = lifiAsset(to);
+  if (!origin || !destination) return null;
+  const units = parseUnits(amount, origin.decimals);
+  if (!units) return null;
+  const response = await fetch(`${LIFI}/routes`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      fromChainId: origin.chainId,
+      toChainId: destination.chainId,
+      fromTokenAddress: origin.address,
+      toTokenAddress: destination.address,
+      fromAmount: units,
+      fromAddress: sender,
+      toAddress: recipient,
+      options: { slippage: 0.01, maxPriceImpact: 0.05, order: "CHEAPEST" },
+    }),
+  });
+  if (!response.ok) return null;
+  const body = (await response.json()) as { routes?: LifiRoute[] };
+  for (const route of body.routes ?? []) {
+    const steps = route.steps ?? [];
+    const tool = steps.map((step) => step.tool).filter(Boolean).join(" + ") || "Li.Fi";
+    if (toolName(tool) === name) return steps;
+  }
+  return body.routes?.[0]?.steps ?? null;
+}
+
 async function lifiRoutes(from: Token, to: Token, amount: string, sender: string, recipient: string): Promise<LiveRoute[]> {
   const origin = lifiAsset(from);
   const destination = lifiAsset(to);
@@ -168,17 +198,25 @@ async function lifiRoutes(from: Token, to: Token, amount: string, sender: string
     const receive = to.price > 0 && outUsd > 0 ? outUsd / to.price : Number(route.toAmount) / 10 ** destination.decimals;
     if (!(receive > 0)) continue;
     const stepsCopy = steps.map((step) => ({ ...step }));
+    const label = toolName(tool);
     routes.push({
       id: `lifi:${route.id ?? tool}`,
-      name: toolName(tool),
+      name: label,
       kind: from.chain === to.chain ? "Swap" : "Bridge",
       feeBps: Math.round(cost * 100),
       impact: cost,
       receive,
       eta: "live",
       execute: async () => {
-        const hash = await runLifi(stepsCopy, from.chain);
-        return { status: hash, amountOutHuman: receive };
+        try {
+          const hash = await runLifi(stepsCopy, from.chain);
+          return { status: hash, amountOutHuman: receive };
+        } catch (error) {
+          const again = await reloadLifiSteps(from, to, amount, sender, recipient, label);
+          if (!again?.length) throw error;
+          const hash = await runLifi(again, from.chain);
+          return { status: hash, amountOutHuman: receive };
+        }
       },
     });
     if (routes.length >= 4) break;
@@ -212,22 +250,37 @@ async function jupiterRoute(from: Token, to: Token, amount: string, sender: stri
     receive,
     eta: "live",
     execute: async () => {
+      const fresh = await fetch(quoteUrl);
+      if (!fresh.ok) throw new Error("Jupiter did not return a quote. Nothing was sent.");
+      const freshQuote = (await fresh.json()) as { outAmount?: string };
       const swap = await fetch(`${JUP}/swap`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ quoteResponse: quote, userPublicKey: sender, wrapAndUnwrapSol: true }),
+        body: JSON.stringify({ quoteResponse: freshQuote, userPublicKey: sender, wrapAndUnwrapSol: true }),
       });
       if (!swap.ok) throw new Error("Jupiter did not return a transaction. Nothing was sent.");
       const body = (await swap.json()) as { swapTransaction?: string };
       if (!body.swapTransaction) throw new Error("Jupiter did not return a transaction. Nothing was sent.");
       const hash = await sendSolanaSerialized(body.swapTransaction);
-      return { status: hash, amountOutHuman: receive };
+      const out = Number(freshQuote.outAmount);
+      return { status: hash, amountOutHuman: out > 0 ? out / 10 ** destination.decimals : receive };
     },
   };
 }
 
 async function intentsRoute(from: Token, to: Token, amount: string, accountId: string, refundTo: string, recipient: string, slippageBps: number, purpose: "Swap" | "Spot"): Promise<LiveRoute | null> {
-  const quote = await quoteIntent({ from: from.symbol, to: to.symbol, amount, accountId, refundTo, recipient, dry: true, slippageBps });
+  const quote = await quoteIntent({
+    from: from.symbol,
+    to: to.symbol,
+    fromChain: from.chain,
+    toChain: to.chain,
+    amount,
+    accountId,
+    refundTo,
+    recipient,
+    dry: true,
+    slippageBps,
+  });
   const cost = gap(quote.amountInUsd, quote.amountOutUsd);
   return {
     id: "intents",
@@ -241,6 +294,8 @@ async function intentsRoute(from: Token, to: Token, amount: string, accountId: s
       const result = await executeIntent({
         from: from.symbol,
         to: to.symbol,
+        fromChain: from.chain,
+        toChain: to.chain,
         amount,
         accountId,
         refundTo,

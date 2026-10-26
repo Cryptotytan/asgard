@@ -1,3 +1,4 @@
+import { actionCreators } from "@near-js/transactions";
 import { installBrowserGlobals } from "@/lib/node-globals";
 import { TOKENS } from "@/lib/market";
 import { useDesk } from "@/lib/store";
@@ -347,7 +348,10 @@ export async function sendIntentDeposit(input: {
   const selector = await selectorPromise;
   if (!selector) throw new Error("Wallet is not ready.");
   const wallet = await selector.wallet();
-  const actions = input.wrap ? await wrapActions(input.accountId, input.depositAddress, input.amount) : transferActions(input.depositAddress, input.amount);
+  const registerRecipient = !(await isRegistered(input.contractId, input.depositAddress));
+  const actions = input.wrap
+    ? await wrapActions(input.accountId, input.depositAddress, input.amount, registerRecipient)
+    : transferActions(input.depositAddress, input.amount, registerRecipient);
   const outcome = await wallet.signAndSendTransaction({
     signerId: input.accountId,
     receiverId: input.contractId,
@@ -394,59 +398,57 @@ async function rpc(params: object) {
   return body.result;
 }
 
-type Call = {
-  type: "FunctionCall";
-  params: { methodName: string; args: Record<string, unknown>; gas: string; deposit: string };
-};
+type Call = ReturnType<typeof actionCreators.functionCall>;
 
-function transferActions(depositAddress: string, amount: string): Call[] {
-  return [register(depositAddress), transfer(depositAddress, amount)];
+function call(methodName: string, args: object, gas: bigint, deposit: bigint): Call {
+  return actionCreators.functionCall(methodName, args, gas, deposit);
 }
 
-async function wrapActions(accountId: string, depositAddress: string, amount: string): Promise<Call[]> {
+async function isRegistered(contractId: string, accountId: string) {
+  try {
+    const result = (await rpc({
+      request_type: "call_function",
+      finality: "final",
+      account_id: contractId,
+      method_name: "storage_balance_of",
+      args_base64: btoa(JSON.stringify({ account_id: accountId })),
+    })) as { result?: number[] };
+    const text = new TextDecoder().decode(new Uint8Array(result.result ?? [])).trim();
+    return text !== "" && text !== "null";
+  } catch {
+    return false;
+  }
+}
+
+function transferActions(depositAddress: string, amount: string, registerRecipient: boolean): Call[] {
+  const actions = registerRecipient ? [register(depositAddress)] : [];
+  actions.push(transfer(depositAddress, amount));
+  return actions;
+}
+
+async function wrapActions(accountId: string, depositAddress: string, amount: string, registerRecipient: boolean): Promise<Call[]> {
   const wrapped = BigInt(await ftBalance(accountId, "wrap.near"));
   const need = BigInt(amount);
-  const actions = [register(depositAddress)];
+  const actions: Call[] = [];
+  if (!(await isRegistered("wrap.near", accountId))) actions.push(register(accountId));
+  if (registerRecipient && depositAddress !== accountId) actions.push(register(depositAddress));
   if (wrapped < need) {
-    actions.push({
-      type: "FunctionCall",
-      params: {
-        methodName: "near_deposit",
-        args: {},
-        gas: "15000000000000",
-        deposit: (need - wrapped).toString(),
-      },
-    });
+    actions.push(call("near_deposit", {}, 30_000_000_000_000n, need - wrapped));
   }
   actions.push(transfer(depositAddress, amount));
   return actions;
 }
 
 function register(accountId: string): Call {
-  return {
-    type: "FunctionCall",
-    params: {
-      methodName: "storage_deposit",
-      args: { account_id: accountId, registration_only: true },
-      gas: "30000000000000",
-      deposit: "1250000000000000000000",
-    },
-  };
+  return call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, 1_250_000_000_000_000_000_000n);
 }
 
 function transfer(receiverId: string, amount: string): Call {
-  return {
-    type: "FunctionCall",
-    params: {
-      methodName: "ft_transfer",
-      args: { receiver_id: receiverId, amount, memo: null },
-      gas: "30000000000000",
-      deposit: "1",
-    },
-  };
+  return call("ft_transfer", { receiver_id: receiverId, amount }, 30_000_000_000_000n, 1n);
 }
 
 function hashOf(outcome: unknown) {
   if (!outcome || typeof outcome !== "object") return null;
-  return (outcome as { transaction?: { hash?: string } }).transaction?.hash ?? null;
+  const row = outcome as { transaction?: { hash?: string }; transaction_outcome?: { id?: string }; txHash?: string };
+  return row.transaction?.hash ?? row.transaction_outcome?.id ?? row.txHash ?? null;
 }

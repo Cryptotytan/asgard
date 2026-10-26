@@ -1,3 +1,4 @@
+import { chainByLabel } from "@/lib/chains";
 import { sendIntentDeposit, syncWallet } from "@/lib/near-wallet";
 import { sendOriginDeposit } from "@/lib/foreign-wallet";
 import { TOKENS } from "@/lib/market";
@@ -72,18 +73,33 @@ export async function tradableNearAssets(): Promise<IntentAsset[]> {
   return loadNearAssets();
 }
 
-export async function resolveAsset(symbol: string): Promise<IntentAsset | null> {
+export async function resolveAsset(symbol: string, chain?: string): Promise<IntentAsset | null> {
   const list = await loadIntentAssets();
   const token = TOKENS.find((item) => item.symbol === symbol);
-  if (token?.assetId) return list.find((asset) => asset.assetId === token.assetId) ?? null;
-  const near = list.filter((asset) => asset.blockchain === "near" && asset.contractAddress && Number(asset.price) > 0);
-  const want = (ALIAS[symbol] ?? symbol).toLowerCase();
-  return near.find((asset) => asset.symbol.toLowerCase() === want) ?? null;
+  const chainId = (chain ? chainByLabel(chain)?.id : token ? chainByLabel(token.chain)?.id : "") ?? "";
+  if (token?.assetId && (!chain || token.chain === chain)) {
+    const exact = list.find((asset) => asset.assetId === token.assetId);
+    if (exact && (!chainId || exact.blockchain === chainId)) return exact;
+  }
+  const want = (ALIAS[symbol] ?? symbol.split(".")[0] ?? symbol).toLowerCase();
+  const named = list.filter((asset) => asset.symbol.toLowerCase() === want);
+  const address = token?.address?.toLowerCase();
+  if (address) {
+    const byAddress = list.find((asset) => asset.contractAddress?.toLowerCase() === address && (!chainId || asset.blockchain === chainId));
+    if (byAddress) return byAddress;
+  }
+  if (chainId) {
+    const onChain = named.find((asset) => asset.blockchain === chainId);
+    if (onChain) return onChain;
+  }
+  return named.find((asset) => asset.blockchain === "near" && asset.contractAddress && Number(asset.price) > 0) ?? named[0] ?? null;
 }
 
 export async function quoteIntent(input: {
   from: string;
   to: string;
+  fromChain?: string;
+  toChain?: string;
   amount: string;
   accountId: string;
   refundTo?: string;
@@ -92,8 +108,8 @@ export async function quoteIntent(input: {
   slippageBps?: number;
   dry?: boolean;
 }): Promise<IntentQuote> {
-  const origin = await resolveAsset(input.from);
-  const destination = await resolveAsset(input.to);
+  const origin = await resolveAsset(input.from, input.fromChain);
+  const destination = await resolveAsset(input.to, input.toChain);
   if (!origin || !destination) throw new Error("This pair is not listed on NEAR Intents.");
   const refundTo = (input.refundTo || input.accountId).trim();
   const recipient = (input.recipient || input.accountId).trim();
@@ -153,6 +169,8 @@ export async function quoteIntent(input: {
 export async function executeIntent(input: {
   from: string;
   to: string;
+  fromChain?: string;
+  toChain?: string;
   amount: string;
   accountId: string;
   refundTo?: string;
@@ -163,7 +181,7 @@ export async function executeIntent(input: {
   maxPay?: number;
   maxImpactPct?: number;
 }): Promise<IntentQuote & { status: string }> {
-  const origin = await resolveAsset(input.from);
+  const origin = await resolveAsset(input.from, input.fromChain);
   if (!origin) throw new Error(`${input.from} is not listed on NEAR Intents.`);
   const quote = await quoteIntent({ ...input, dry: false });
   if (input.maxImpactPct != null && quote.amountInUsd > 0 && quote.amountOutUsd > 0) {
