@@ -232,12 +232,12 @@ async function waitReceipt(provider: Eip, hash: string) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const receipt = (await provider.request({ method: "eth_getTransactionReceipt", params: [hash] })) as { status?: string } | null;
     if (receipt) {
-      if (receipt.status === "0x0") throw new Error("The approval was rejected on chain. Nothing else was sent.");
+      if (receipt.status === "0x0") throw new Error("The transaction failed on chain. Nothing else was sent.");
       return;
     }
     await sleep(1500);
   }
-  throw new Error("The approval is still pending. Nothing else was sent.");
+  throw new Error("The transaction is still pending. Nothing else was sent.");
 }
 
 async function sendApprove(provider: Eip, meta: ChainMeta, from: string, token: string, spender: string, amount: bigint) {
@@ -298,6 +298,7 @@ async function sendEvm(meta: ChainMeta, token: string | null, to: string, amount
     await assertCanPay(provider, meta, from, tx);
     const hash = (await provider.request({ method: "eth_sendTransaction", params: [tx] })) as string;
     if (!hash) throw new Error("The wallet did not return a transaction. Nothing else was sent.");
+    await waitReceipt(provider, hash);
     return hash;
   }
   if (!isEvmAddress(token)) throw new Error("That token address is not an EVM contract. Nothing was sent.");
@@ -307,6 +308,7 @@ async function sendEvm(meta: ChainMeta, token: string | null, to: string, amount
   await assertCanPay(provider, meta, from, tx);
   const hash = (await provider.request({ method: "eth_sendTransaction", params: [tx] })) as string;
   if (!hash) throw new Error("The wallet did not return a transaction. Nothing else was sent.");
+  await waitReceipt(provider, hash);
   return hash;
 }
 
@@ -326,6 +328,7 @@ export async function sendEvmCall(chainLabel: string, tx: { to: string; data?: s
   await assertCanPay(provider, meta, from, call);
   const hash = (await provider.request({ method: "eth_sendTransaction", params: [call] })) as string;
   if (!hash) throw new Error("The wallet did not return a transaction. Nothing else was sent.");
+  await waitReceipt(provider, hash);
   return hash;
 }
 
@@ -342,7 +345,15 @@ export async function sendSolanaSerialized(raw: string) {
   const sent = await connected.signAndSendTransaction(tx);
   const signature = typeof sent === "string" ? sent : sent.signature;
   if (!signature) throw new Error("The wallet did not return a signature. Nothing else was sent.");
-  return signature;
+  const connection = new web3.Connection("https://api.mainnet-beta.solana.com", "confirmed");
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const status = await connection.getSignatureStatuses([signature]);
+    const row = status.value[0];
+    if (row?.err) throw new Error("The Solana transaction failed on chain. Nothing else was sent.");
+    if (row?.confirmationStatus === "confirmed" || row?.confirmationStatus === "finalized") return signature;
+    await sleep(1500);
+  }
+  throw new Error("The Solana transaction is still pending. Nothing else was sent.");
 }
 
 async function sendSol(token: string | null, to: string, amount: string) {

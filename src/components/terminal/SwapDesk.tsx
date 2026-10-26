@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowDownUp, ChevronDown, ShieldAlert } from "lucide-react";
+import { ArrowDownUp, ChevronDown, LoaderCircle, ShieldAlert } from "lucide-react";
 import { TokenIcon, TokenPicker, VerifiedMark, ChainBadge } from "@/components/terminal/TokenIcon";
 import { linkedWallets, useForeign, WALLET_MARK, type LinkedWallet } from "@/lib/foreign-wallet";
 import { canSign, chainByLabel, validAddress } from "@/lib/chains";
@@ -31,6 +31,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState("");
   const [settling, setSettling] = useState(false);
+  const [flight, setFlight] = useState<{ amount: string; sell: string; buy: string; route: string; legs: string } | null>(null);
   const [flipped, setFlipped] = useState(false);
   const [turn, setTurn] = useState<"a" | "b" | null>(null);
   const turnLock = useRef(false);
@@ -179,6 +180,13 @@ export function SwapDesk({ focus }: { focus?: string }) {
       return;
     }
     setSettling(true);
+    setFlight({
+      amount,
+      sell: `${tokenLabel(sell)} · ${sell.chain}`,
+      buy: `${tokenLabel(buy)} · ${buy.chain}`,
+      route: best.name,
+      legs: best.kind,
+    });
     setNote("Confirm the deposit in the origin wallet. A failed bridge refunds to your origin address.");
     try {
       const result = await best.execute();
@@ -188,6 +196,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
       setNote(error instanceof Error ? error.message : "Swap failed. Nothing else was sent.");
     } finally {
       setSettling(false);
+      setFlight(null);
     }
   }
 
@@ -376,6 +385,43 @@ export function SwapDesk({ focus }: { focus?: string }) {
           }
         }}
       />
+      {flight && (
+        <div className="fixed inset-0 z-[90] grid place-items-end bg-black/75 p-3 sm:place-items-center" role="presentation">
+          <div className="panel w-full max-w-sm p-5" role="dialog" aria-modal="true" aria-labelledby="swap-flight-title">
+            <div className="flex items-center gap-3">
+              <span className="grid size-11 shrink-0 place-items-center rounded-full bg-primary/15 text-primary">
+                <LoaderCircle className="size-6 animate-spin" />
+              </span>
+              <div>
+                <h2 id="swap-flight-title" className="text-base font-semibold">
+                  Transaction in progress
+                </h2>
+                <p className="text-xs text-muted">This card closes when the transfer is finalized.</p>
+              </div>
+            </div>
+            <dl className="mt-4 space-y-2 rounded-2xl border border-line bg-bg px-3 py-3 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted">Sending</dt>
+                <dd className="truncate font-mono">
+                  {flight.amount} {flight.sell}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted">Receiving</dt>
+                <dd className="truncate font-mono">{flight.buy}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted">Route</dt>
+                <dd className="truncate">
+                  {flight.route}
+                  <span className="text-muted"> · {flight.legs}</span>
+                </dd>
+              </div>
+            </dl>
+            <p className="mt-3 text-xs leading-5 text-muted">Confirm the prompt in your wallet. Nothing else can be sent from this card until that transfer finishes.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
