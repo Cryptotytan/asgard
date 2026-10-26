@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const SCRIPT = "https://widgets.tradingview-widget.com/w/en/tv-advanced-chart.js";
 
@@ -34,21 +34,29 @@ export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; 
   const host = useRef<HTMLDivElement>(null);
   const perp = tradingViewPerp(symbol);
   const plotted = market === "spot" ? perp.replace(/\.P$/, "") : perp;
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1023px)");
+    const apply = () => setCompact(media.matches);
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, []);
 
   useEffect(() => {
     if (!plotted) return;
     ensureScript();
     const node = host.current;
     if (!node) return;
-    const compact = window.matchMedia("(max-width: 1023px)").matches;
     const chart = document.createElement("tv-advanced-chart");
     chart.setAttribute("symbol", plotted);
-    chart.setAttribute("interval", compact ? "15" : "15");
+    chart.setAttribute("interval", "15");
     chart.setAttribute("theme", "dark");
     chart.setAttribute("chart-type", "candles");
     chart.setAttribute("timezone", "Etc/UTC");
     chart.setAttribute("allow-symbol-change", "false");
     chart.setAttribute("autosize", "");
+    if (compact) chart.setAttribute("hide-legend", "");
     if (!compact) {
       chart.setAttribute("show-drawing-toolbar", "");
       chart.setAttribute("show-date-ranges", "");
@@ -60,7 +68,7 @@ export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; 
     chart.style.height = "100%";
     node.replaceChildren(chart);
     return () => node.replaceChildren();
-  }, [plotted]);
+  }, [plotted, compact]);
 
   if (!plotted) {
     return <p className="px-3 py-8 text-sm text-muted sm:px-4">{symbol} has no perpetual chart.</p>;
