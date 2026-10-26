@@ -333,23 +333,20 @@ export async function quoteRoutes(input: {
       .then((route) => ({ route, error: "" }))
       .catch((error: unknown) => ({ route: null, error: error instanceof Error && error.message !== "timeout" ? error.message : "NEAR Intents has no quote for this pair." }));
 
-  if (cross) {
-    const intents = await intentsJob();
-    if (intents.route) return [intents.route];
-    if (intents.error) throw new Error(intents.error);
-    return [];
-  }
-
-  const sameEvm = chainByLabel(input.from.chain)?.kind === "evm";
-  const jobs = [
-    sameEvm ? Promise.resolve({ route: null as LiveRoute | null, error: "" }) : intentsJob(),
-    sameEvm
-      ? timeout(evmDexRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => [])
-      : timeout(lifiRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => []),
-    timeout(jupiterRoute(input.from, input.to, input.amount, input.refundTo), 8000).catch(() => null),
-  ] as const;
-  const [intents, lifi, jupiter] = await Promise.all(jobs);
-  const routes = [...(intents.route ? [intents.route] : []), ...(lifi ?? []), ...(jupiter ? [jupiter] : [])];
-  if (!routes.length && intents.error) throw new Error(intents.error);
+  const sameKind = chainByLabel(input.from.chain)?.kind;
+  const [intents, evm, lifi, jupiter] = await Promise.all([
+    intentsJob(),
+    !cross && sameKind === "evm"
+      ? timeout(evmDexRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => [] as LiveRoute[])
+      : Promise.resolve([] as LiveRoute[]),
+    !cross
+      ? timeout(lifiRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => [] as LiveRoute[])
+      : Promise.resolve([] as LiveRoute[]),
+    !cross
+      ? timeout(jupiterRoute(input.from, input.to, input.amount, input.refundTo), 8000).catch(() => null)
+      : Promise.resolve(null),
+  ]);
+  const routes = [...(intents.route ? [intents.route] : []), ...evm, ...lifi, ...(jupiter ? [jupiter] : [])];
+  if (!routes.length) throw new Error(intents.error || (cross ? "NEAR Intents has no route for this pair." : "No live route for this pair."));
   return routes.sort((a, b) => a.impact - b.impact || b.receive - a.receive);
 }

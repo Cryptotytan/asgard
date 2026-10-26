@@ -28,7 +28,8 @@ import { useDesk, type Side } from "@/lib/store";
 import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, warmCharts, watchCandles, type HolderRow } from "@/lib/live";
 import { searchTokens, syncNearMarkets } from "@/lib/dex";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
-import { linkedWallets, foreignWallets } from "@/lib/foreign-wallet";
+import { chainByLabel, validAddress } from "@/lib/chains";
+import { linkedWallets, foreignWallets, useForeign, type ForeignWallets } from "@/lib/foreign-wallet";
 import { refreshBalances } from "@/lib/wallet-holdings";
 import { rememberTx } from "@/lib/wallet-history";
 
@@ -149,7 +150,7 @@ export function TokenTrade({
       </header>
 
       <div className="flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_18rem_22rem] lg:grid-rows-[auto_minmax(0,1fr)] lg:items-start">
-        <section ref={chartPane} className="relative order-1 lg:col-start-1 lg:row-start-1 lg:self-start lg:border-r lg:border-line">
+        <section ref={chartPane} className="relative order-1 shrink-0 lg:col-start-1 lg:row-start-1 lg:self-start lg:border-r lg:border-line">
           {tvChart ? (
             <TradingViewChart symbol={symbol} market={deskMode} />
           ) : (
@@ -638,6 +639,21 @@ function CopyButton({ value }: { value: string }) {
   );
 }
 
+function stableOn(chain: string, avoid: string) {
+  const row = TOKENS.find((item) => item.chain === chain && item.symbol !== avoid && ["USDC", "USDT"].includes(item.symbol.split(".")[0].toUpperCase()) && item.assetId)
+    ?? TOKENS.find((item) => item.chain === chain && item.symbol !== avoid && ["USDC", "USDT"].includes(item.symbol.split(".")[0].toUpperCase()));
+  return row ?? tokenBySymbol("USDC");
+}
+
+function walletFor(chain: string, near: string, foreign: ForeignWallets) {
+  const kind = chainByLabel(chain)?.kind;
+  if (kind === "near") return near;
+  if (kind === "evm") return foreign.evm ?? "";
+  if (kind === "sol") return foreign.sol ?? "";
+  if (kind === "btc") return foreign.btc ?? "";
+  return "";
+}
+
 function Ticket({
   token,
   mode,
@@ -658,6 +674,8 @@ function Ticket({
   const connected = useDesk((s) => s.connected);
   const accountId = useDesk((s) => s.accountId);
   const balances = useDesk((s) => s.balances);
+  const clock = useDesk((s) => s.clock);
+  const foreign = useForeign();
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [perpSide, setPerpSide] = useState<Side>("long");
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
@@ -687,21 +705,25 @@ function Ticket({
   }, [token.symbol, quickUsd]);
 
   const qty = Number(amount) || 0;
-  const pay = side === "buy" ? tokenBySymbol("USDC") : token;
-  const receiveToken = side === "buy" ? token : tokenBySymbol("USDC");
+  const stable = useMemo(() => stableOn(token.chain, token.symbol), [token.chain, token.symbol, clock]);
+  const pay = side === "buy" ? stable : token;
+  const receiveToken = side === "buy" ? token : stable;
+  const refundTo = walletFor(pay.chain, accountId ?? "", foreign);
+  const recipient = walletFor(receiveToken.chain, accountId ?? "", foreign);
   const slipPct = slip === "Auto" ? 1 : Number(slip.replace("%", ""));
   useEffect(() => {
     setRoutes([]);
-    if (!connected || !accountId || qty <= 0 || pay.symbol === receiveToken.symbol) return;
+    if (!connected || qty <= 0 || (pay.symbol === receiveToken.symbol && pay.chain === receiveToken.chain)) return;
+    if (!validAddress(pay.chain, refundTo) || !validAddress(receiveToken.chain, recipient)) return;
     setQuoting(true);
     const timer = window.setTimeout(() => {
       void quoteRoutes({
         from: pay,
         to: receiveToken,
         amount: String(qty),
-        accountId,
-        refundTo: accountId,
-        recipient: accountId,
+        accountId: accountId || refundTo,
+        refundTo,
+        recipient,
         slippageBps: Math.round(slipPct * 100),
         purpose: "Spot",
       })
@@ -710,7 +732,7 @@ function Ticket({
         .finally(() => setQuoting(false));
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [accountId, connected, pay.symbol, qty, receiveToken.symbol, slipPct]);
+  }, [accountId, connected, pay.symbol, pay.chain, qty, receiveToken.symbol, receiveToken.chain, refundTo, recipient, slipPct]);
   const quotes = routes;
   const quoteKey = quotes.map((quote) => `${quote.id}:${quote.receive.toFixed(2)}`).join("|");
   useEffect(() => {
@@ -1091,7 +1113,7 @@ function Ticket({
               )}
             </div>
           ) : (
-            <p className="mt-2 text-xs text-muted">{connected ? (quoting ? "Comparing live routes…" : "No live route for this size.") : "Connect a wallet for a live route."}</p>
+            <p className="mt-2 text-xs text-muted">{!validAddress(pay.chain, refundTo) || !validAddress(receiveToken.chain, recipient) ? `Connect a ${!validAddress(pay.chain, refundTo) ? pay.chain : receiveToken.chain} wallet. The route refunds and delivers there.` : connected ? (quoting ? "Comparing live routes…" : "No live route for this size.") : "Connect a wallet for a live route."}</p>
           )}
         </div>
       )}

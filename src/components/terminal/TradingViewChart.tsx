@@ -40,17 +40,22 @@ export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; 
     ensureScript();
     const node = host.current;
     if (!node) return;
+    const compact = window.matchMedia("(max-width: 1023px)").matches;
     const chart = document.createElement("tv-advanced-chart");
     chart.setAttribute("symbol", plotted);
-    chart.setAttribute("interval", "15");
+    chart.setAttribute("interval", compact ? "15" : "15");
     chart.setAttribute("theme", "dark");
     chart.setAttribute("chart-type", "candles");
     chart.setAttribute("timezone", "Etc/UTC");
     chart.setAttribute("allow-symbol-change", "false");
-    chart.setAttribute("show-drawing-toolbar", "true");
-    chart.setAttribute("show-date-ranges", "true");
-    chart.setAttribute("hide-top-toolbar", "false");
+    chart.setAttribute("autosize", "");
+    if (!compact) {
+      chart.setAttribute("show-drawing-toolbar", "");
+      chart.setAttribute("show-date-ranges", "");
+    }
     chart.style.display = "block";
+    chart.style.position = "absolute";
+    chart.style.inset = "0";
     chart.style.width = "100%";
     chart.style.height = "100%";
     node.replaceChildren(chart);
@@ -63,7 +68,7 @@ export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; 
 
   return (
     <div className="w-full">
-      <div ref={host} className="h-[220px] w-full bg-black sm:h-[420px] lg:h-[560px]" />
+      <div ref={host} className="relative h-[340px] min-h-[340px] w-full bg-black sm:h-[440px] lg:h-[560px]" />
       <p className="hidden px-3 py-1 text-[10px] text-muted sm:block sm:px-4">
         <a className="underline" href={`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(plotted)}`} target="_blank" rel="noreferrer">
           Chart
