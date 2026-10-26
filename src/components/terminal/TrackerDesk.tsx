@@ -11,6 +11,7 @@ import {
   peekChain,
   readTracker,
   refreshChain,
+  subscribeChain,
   writeTracker,
   type AlertOn,
   type Label,
@@ -71,6 +72,8 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
   useEffect(() => {
     if (ready && accountId) writeTracker(accountId, data);
   }, [data, ready, accountId]);
+
+  useEffect(() => subscribeChain(() => setChainRev((value) => value + 1)), []);
 
   const wallet = data.wallets.find((item) => item.id === active) ?? null;
   const liveRows = data.wallets.flatMap((item) => {
@@ -202,7 +205,7 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
             <ul className="grid gap-2 p-3 md:hidden">
               {data.wallets.map((item) => {
                 const live = peekChain(item.address);
-                const value = live ? `$${live.value.toFixed(2)}` : chainRev >= 0 ? "…" : "…";
+                const value = live ? `${(live.usdt ?? live.value).toFixed(2)} USDT` : "Reading…";
                 return (
                   <li key={item.id}>
                     <button type="button" onClick={() => { setActive(item.id); setResearch(""); }} className="w-full rounded-2xl border border-line bg-surface p-3 text-left">
@@ -228,7 +231,7 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
               <table className="w-full min-w-[760px] text-left text-sm">
                 <thead className="text-[11px] uppercase tracking-wide text-muted">
                   <tr className="border-b border-line">
-                    {["Wallet", "Note", "Value", "Transfers", "Last activity", ""].map((label) => (
+                    {["Wallet", "Note", "Value", "Holdings", "Last activity", ""].map((label) => (
                       <th key={label} className="px-3 py-2 font-medium">{label}</th>
                     ))}
                   </tr>
@@ -248,8 +251,8 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
                           </span>
                         </td>
                         <td className="max-w-48 truncate px-3 text-muted">{item.note || "—"}</td>
-                        <td className="px-3 font-mono">{live ? `$${live.value.toFixed(2)}` : "…"}</td>
-                        <td className="px-3 font-mono">{live ? live.trades : "…"}</td>
+                        <td className="px-3 font-mono">{live ? `${(live.usdt ?? live.value).toFixed(2)} USDT` : "Reading…"}</td>
+                        <td className="px-3 font-mono">{live ? live.holdings.length : "…"}</td>
                         <td className="px-3 text-muted">{live?.ago ?? "…"}</td>
                         <td className="px-3">
                           <span className="flex justify-end gap-1">
@@ -500,15 +503,15 @@ function WalletDetail({
       </div>
       {research && <p className="mt-2 max-w-3xl text-sm text-muted">{research}</p>}
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-        <Stat k="Total value" v={live ? `$${live.value.toFixed(2)}` : "…"} />
+        <Stat k="Total value" v={live ? usd(live.value) : "…"} />
         <Stat k="Holdings" v={live ? String(live.holdings.length) : "…"} />
-        <Stat k="Top" v={top.map((row) => row.symbol).join(" ") || "—"} />
+        <Stat k="In USDT" v={live ? `${(live.usdt ?? live.value).toFixed(2)} USDT` : "…"} />
         <Stat k="Last transfer" v={live?.ago ?? "…"} />
       </div>
       <div className="mt-3 rounded-xl border border-line bg-surface p-3">
-        <p className="text-xs text-muted">On-chain balance</p>
-        <p className="font-mono text-xl">{live ? `$${live.value.toFixed(2)}` : "Loading NEAR…"}</p>
-        <p className="mt-1 text-xs text-muted">NEAR plus fungible tokens on this account. Prices are live where the terminal already lists the token.</p>
+        <p className="text-xs text-muted">Total worth of tokens</p>
+        <p className="font-mono text-xl">{live ? usd(live.value) : "Reading balances…"}</p>
+        <p className="mt-1 text-xs text-muted">{live ? `${live.holdings.length} holdings · ${(live.usdt ?? live.value).toFixed(2)} USDT` : "Balances show as soon as the account is read. Transfers follow."}</p>
       </div>
       <div className="mt-4 flex items-center gap-3 border-b border-line">
         {(["balances", "performance", "activity"] as const).map((item) => (
@@ -519,11 +522,17 @@ function WalletDetail({
       {pane === "balances" && (
         <div className="scroll-x">
           <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="text-[11px] uppercase text-muted"><tr>{["Token", "Amount", "Value", "Share", ""].map((label) => <th key={label} className="py-2 font-medium">{label}</th>)}</tr></thead>
+            <thead className="text-[11px] uppercase text-muted"><tr>{["Token", "Amount", "USD", "USDT", "Share", ""].map((label) => <th key={label} className="py-2 font-medium">{label}</th>)}</tr></thead>
             <tbody>
-              {held.length === 0 && <p className="py-4 text-sm text-muted">{live ? "This wallet has no tokens." : "Reading the wallet…"}</p>}
+              {!live && (
+                <tr><td colSpan={6} className="py-4 text-sm text-muted">Reading balances…</td></tr>
+              )}
+              {live && held.length === 0 && (
+                <tr><td colSpan={6} className="py-4 text-sm text-muted">This wallet has no tokens.</td></tr>
+              )}
               {held.map((row) => {
                 const token = TOKENS.find((item) => item.symbol.toLowerCase() === row.symbol.toLowerCase());
+                const unit = live && live.value > 0 ? row.usd / (live.value / Math.max(live.usdt, 1e-12)) : row.usd;
                 return (
                 <tr key={row.symbol} className="border-t border-line">
                   <td className="py-2">
@@ -533,7 +542,8 @@ function WalletDetail({
                     </span>
                   </td>
                   <td className="font-mono">{qty(row.amount)}</td>
-                  <td className="font-mono">{row.usd ? `$${row.usd.toFixed(2)}` : "—"}</td>
+                  <td className="font-mono">{row.usd ? usd(row.usd) : "—"}</td>
+                  <td className="font-mono">{row.usd ? unit.toFixed(2) : "—"}</td>
                   <td><span className="block h-1.5 w-24 overflow-hidden rounded-full bg-bg"><i className="block h-full bg-primary" style={{ width: `${row.share}%` }} /></span></td>
                   <td className="text-right"><button type="button" onClick={() => onTrade(row.symbol)} className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-black">Buy</button></td>
                 </tr>
@@ -543,18 +553,28 @@ function WalletDetail({
           </table>
         </div>
       )}
-      {pane === "performance" && <p className="py-4 text-sm text-muted">{live ? `${live.trades} recent fungible transfers on NEAR. Portfolio value is the live account balance.` : "Loading on-chain activity."}</p>}
+      {pane === "performance" && (
+        <div className="grid grid-cols-2 gap-2 py-3 sm:grid-cols-3">
+          <Stat k="Token worth" v={live ? usd(live.value) : "…"} />
+          <Stat k="USDT total" v={live ? `${(live.usdt ?? live.value).toFixed(2)} USDT` : "…"} />
+          <Stat k="Holdings" v={live ? String(live.holdings.length) : "…"} />
+          <Stat k="Largest" v={top[0] ? `${top[0].symbol} ${top[0].share.toFixed(0)}%` : "—"} />
+          <Stat k="In" v={live ? String(live.fills.filter((fill) => fill.incoming).length) : "…"} />
+          <Stat k="Out" v={live ? String(live.fills.filter((fill) => !fill.incoming).length) : "…"} />
+        </div>
+      )}
       {pane === "activity" && (
         <ul className="divide-y divide-line text-sm">
+          {!live && <li className="py-3 text-muted">Reading transfers…</li>}
           {(live?.fills ?? []).map((fill) => (
             <li key={fill.id} className="flex items-center justify-between gap-3 py-2">
-              <span className={fill.incoming ? "text-primary" : "text-fg"}>{fill.kind}</span>
-              <span className="min-w-0 flex-1 truncate">{fill.symbol}</span>
-              <span className="font-mono">{fill.amount ? fill.amount.toPrecision(4) : "—"}</span>
+              <span className={`w-24 shrink-0 ${fill.incoming ? "text-primary" : "text-fg"}`}>{fill.kind}</span>
+              <span className="min-w-0 flex-1 truncate">{fill.symbol}{fill.detail ? ` · ${fill.detail}` : ""}</span>
+              <span className="font-mono">{fill.amount ? qty(fill.amount) : "—"}</span>
               <span className="text-muted">{fill.ago}</span>
             </li>
           ))}
-          {live && live.fills.length === 0 && <li className="py-3 text-muted">No recent account activity.</li>}
+          {live && live.fills.length === 0 && <li className="py-3 text-muted">{live.ago === "…" ? "Reading transfers…" : "No recent account activity."}</li>}
         </ul>
       )}
     </div>

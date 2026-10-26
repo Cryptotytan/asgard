@@ -143,9 +143,11 @@ export function fillsOf(wallets: TrackedWallet[]): Fill[] {
 
 export type ChainHolding = { symbol: string; amount: number; usd: number; share: number };
 export type ChainFill = { id: string; symbol: string; incoming: boolean; amount: number; ago: string; kind: string; detail: string; time: number };
-export type ChainWallet = { value: number; holdings: ChainHolding[]; trades: number; ago: string; fills: ChainFill[] };
+export type ChainWallet = { value: number; usdt: number; holdings: ChainHolding[]; trades: number; ago: string; fills: ChainFill[] };
 
 const chainCache = new Map<string, ChainWallet>();
+const inflight = new Map<string, Promise<ChainWallet>>();
+const listeners = new Set<() => void>();
 
 function agoFrom(ns: string) {
   const ms = Number(BigInt(ns) / 1_000_000n);
@@ -158,61 +160,123 @@ function agoFrom(ns: string) {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+function remember(key: string, row: ChainWallet) {
+  chainCache.set(key, row);
+  try {
+    sessionStorage.setItem(`asgard-chain:${key}`, JSON.stringify(row));
+  } catch {
+    /* private mode */
+  }
+  for (const listener of listeners) listener();
+}
+
+export function subscribeChain(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 export function peekChain(address: string) {
-  return chainCache.get(address.trim().toLowerCase()) ?? null;
+  const key = address.trim().toLowerCase();
+  const cached = chainCache.get(key);
+  if (cached) return cached;
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(`asgard-chain:${key}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ChainWallet;
+    if (!parsed || !Array.isArray(parsed.holdings)) return null;
+    chainCache.set(key, parsed);
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 export function loadChain(address: string) {
   const key = address.trim().toLowerCase();
-  const cached = chainCache.get(key);
-  if (cached) return Promise.resolve(cached);
+  const cached = peekChain(key);
+  if (cached) {
+    void refreshChain(key);
+    return Promise.resolve(cached);
+  }
   return refreshChain(key);
 }
 
 export function refreshChain(address: string) {
   const key = address.trim().toLowerCase();
-  chainCache.delete(key);
-  return fetchChain(key).then((row) => {
-    chainCache.set(key, row);
-    return row;
-  });
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const job = fetchChain(key).finally(() => inflight.delete(key));
+  inflight.set(key, job);
+  return job;
+}
+
+function tokenPrice(symbol: string, contract?: string) {
+  const base = symbol.split(".")[0]?.toUpperCase() ?? symbol.toUpperCase();
+  if (base === "USDT" || base === "USDC" || base === "DAI" || base === "USN") return 1;
+  const byAddress = contract
+    ? TOKENS.find((token) => token.chain === "NEAR" && token.address?.toLowerCase() === contract.toLowerCase() && token.price > 0)
+    : undefined;
+  if (byAddress) return byAddress.price;
+  const bySymbol =
+    TOKENS.find((token) => token.chain === "NEAR" && token.symbol.toLowerCase() === symbol.toLowerCase() && token.price > 0) ??
+    TOKENS.find((token) => token.symbol.split(".")[0]?.toUpperCase() === base && token.price > 0);
+  return bySymbol?.price ?? 0;
+}
+
+function priced(holdings: ChainHolding[]) {
+  const value = holdings.reduce((sum, row) => sum + row.usd, 0);
+  const unit = tokenPrice("USDT") || 1;
+  for (const row of holdings) row.share = value > 0 ? (row.usd / value) * 100 : 0;
+  holdings.sort((a, b) => b.usd - a.usd || b.amount - a.amount);
+  return { value, usdt: value / unit };
 }
 
 async function fetchChain(account: string): Promise<ChainWallet> {
-  const [accountRes, inventoryRes, txRes, ftRes, nftRes] = await Promise.all([
-    fetch(`https://api.nearblocks.io/v1/account/${account}`),
-    fetch(`https://api.nearblocks.io/v1/account/${account}/inventory`),
-    fetch(`https://api.nearblocks.io/v1/account/${account}/txns?per_page=25`),
-    fetch(`https://api.nearblocks.io/v1/account/${account}/ft-txns?per_page=25`),
-    fetch(`https://api.nearblocks.io/v1/account/${account}/nft-txns?per_page=25`),
-  ]);
-  const accountBody = accountRes.ok ? ((await accountRes.json()) as { account?: { amount?: string } }) : {};
-  const inventoryBody = inventoryRes.ok ? ((await inventoryRes.json()) as { inventory?: { fts?: { contract?: string; amount?: string; ft_meta?: { symbol?: string; decimals?: number; price?: number | string | null } }[] } }) : {};
-  const txBody = txRes.ok ? ((await txRes.json()) as { txns?: ReceiptTxn[] }) : {};
-  const ftBody = ftRes.ok ? ((await ftRes.json()) as { txns?: FtTxn[] }) : {};
-  const nftBody = nftRes.ok ? ((await nftRes.json()) as { txns?: NftTxn[] }) : {};
-  const near = Number(accountBody.account?.amount ?? "0") / 1e24;
-  const nearPrice = TOKENS.find((token) => token.symbol === "NEAR")?.price ?? 0;
+  const accountJob = fetch(`https://api.nearblocks.io/v1/account/${account}`);
+  const inventoryJob = fetch(`https://api.nearblocks.io/v1/account/${account}/inventory`);
+  const txJob = fetch(`https://api.nearblocks.io/v1/account/${account}/txns?per_page=25`);
+  const ftJob = fetch(`https://api.nearblocks.io/v1/account/${account}/ft-txns?per_page=25`);
+  const nftJob = fetch(`https://api.nearblocks.io/v1/account/${account}/nft-txns?per_page=25`);
+  const [accountRes, inventoryRes] = await Promise.all([accountJob, inventoryJob]);
+  const accountBody = accountRes.ok ? ((await accountRes.json()) as { account?: { amount?: string }[] | { amount?: string } }) : {};
+  const inventoryBody = inventoryRes.ok
+    ? ((await inventoryRes.json()) as { inventory?: { fts?: { contract?: string; amount?: string; ft_meta?: { symbol?: string; decimals?: number; price?: number | string | null } }[] } })
+    : {};
+  const accountRow = Array.isArray(accountBody.account) ? accountBody.account[0] : accountBody.account;
+  const near = Number(accountRow?.amount ?? "0") / 1e24;
   const holdings: ChainHolding[] = [];
-  if (near > 0) holdings.push({ symbol: "NEAR", amount: near, usd: near * nearPrice, share: 0 });
+  if (near > 0) holdings.push({ symbol: "NEAR", amount: near, usd: near * tokenPrice("NEAR"), share: 0 });
   for (const row of inventoryBody.inventory?.fts ?? []) {
     const symbol = row.ft_meta?.symbol || "FT";
     const decimals = row.ft_meta?.decimals ?? 0;
     const amount = Number(row.amount ?? "0") / 10 ** decimals;
     if (!Number.isFinite(amount) || amount <= 0) continue;
-    const known =
-      TOKENS.find((token) => token.chain === "NEAR" && token.address && row.contract && token.address.toLowerCase() === row.contract.toLowerCase()) ??
-      TOKENS.find((token) => token.chain === "NEAR" && token.symbol.toLowerCase() === symbol.toLowerCase()) ??
-      TOKENS.find((token) => token.symbol.toLowerCase() === symbol.toLowerCase());
     const metaPrice = Number(row.ft_meta?.price);
-    const price = known && known.price > 0 ? known.price : Number.isFinite(metaPrice) ? metaPrice : 0;
+    const price = tokenPrice(symbol, row.contract) || (Number.isFinite(metaPrice) && metaPrice > 0 ? metaPrice : 0);
+    const known = TOKENS.find((token) => token.chain === "NEAR" && row.contract && token.address?.toLowerCase() === row.contract.toLowerCase());
     holdings.push({ symbol: known?.symbol || symbol, amount, usd: price > 0 ? amount * price : 0, share: 0 });
   }
-  const total = holdings.reduce((sum, row) => sum + row.usd, 0);
-  for (const row of holdings) row.share = total > 0 ? (row.usd / total) * 100 : 0;
-  holdings.sort((a, b) => b.usd - a.usd || b.amount - a.amount);
+  const money = priced(holdings);
+  const previous = chainCache.get(account);
+  const partial: ChainWallet = {
+    ...money,
+    holdings,
+    trades: previous?.trades ?? 0,
+    ago: previous?.ago ?? "…",
+    fills: previous?.fills ?? [],
+  };
+  remember(account, partial);
+  const [txRes, ftRes, nftRes] = await Promise.all([txJob, ftJob, nftJob]);
+  const txBody = txRes.ok ? ((await txRes.json()) as { txns?: ReceiptTxn[] }) : {};
+  const ftBody = ftRes.ok ? ((await ftRes.json()) as { txns?: FtTxn[] }) : {};
+  const nftBody = nftRes.ok ? ((await nftRes.json()) as { txns?: NftTxn[] }) : {};
   const fills = mergeActivity(txBody.txns ?? [], ftBody.txns ?? [], nftBody.txns ?? []);
-  return { value: total, holdings, trades: fills.length, ago: fills[0]?.ago ?? "—", fills };
+  const next: ChainWallet = { ...partial, holdings, trades: fills.length, ago: fills[0]?.ago ?? "—", fills };
+  remember(account, next);
+  return next;
 }
 
 type ReceiptTxn = { transaction_hash?: string; block_timestamp?: string; receiver_account_id?: string; predecessor_account_id?: string; actions?: { action?: string; method?: string }[] };
