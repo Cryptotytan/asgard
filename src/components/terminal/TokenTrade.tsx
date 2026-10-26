@@ -92,7 +92,7 @@ export function TokenTrade({
       <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 sm:flex-col sm:items-stretch sm:px-4 lg:flex-row lg:items-center lg:justify-between">
         <TokenMenu token={token} scanning={scanning} onPick={onSymbol} />
         <p className="ml-auto shrink-0 font-mono text-sm sm:hidden">{px(token.price)}</p>
-        <dl className="scroll-x hidden min-w-0 flex-1 items-stretch overflow-x-auto sm:flex">
+        <dl className="scroll-x hidden max-w-full items-stretch self-end overflow-x-auto sm:flex lg:ml-auto lg:self-center">
           <Stat k="Mcap" v={token.mcap} />
           <Stat k="Price" v={px(token.price)} accent />
           <Stat k="Liq" v={token.liquidity} />
