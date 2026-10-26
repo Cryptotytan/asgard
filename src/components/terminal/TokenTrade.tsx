@@ -9,6 +9,7 @@ import {
   displayName,
   fmt,
   isHoneypot,
+  qualityScore,
   scoreLabel,
   signedPct,
   tokenBySymbol,
@@ -91,20 +92,15 @@ export function TokenTrade({
       <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 sm:flex-col sm:items-stretch sm:px-4 lg:flex-row lg:items-center lg:justify-between">
         <TokenMenu token={token} scanning={scanning} onPick={onSymbol} />
         <p className="ml-auto shrink-0 font-mono text-sm sm:hidden">{px(token.price)}</p>
-        <dl className="hidden grid-cols-4 gap-x-3 gap-y-1 sm:grid lg:grid-cols-8">
+        <dl className="scroll-x hidden min-w-0 flex-1 items-stretch overflow-x-auto sm:flex">
           <Stat k="Mcap" v={token.mcap} />
-          <Stat k="Price" v={px(token.price)} />
+          <Stat k="Price" v={px(token.price)} accent />
           <Stat k="Liq" v={token.liquidity} />
           <Stat k="Vol" v={token.volume} />
-          <Stat k="Supply" v={token.supply} className="hidden lg:block" />
-          <Stat k="FDV" v={token.fdv} className="hidden lg:block" />
-          <Stat k="Txns" v={token.txns} className="hidden lg:block" />
-          <div className="hidden lg:block">
-            <dt className="text-xs text-muted">Safety</dt>
-            <dd className="mt-0.5 flex items-center gap-2">
-              <span className="font-mono text-sm text-muted">{scoreLabel(token)}</span>
-            </dd>
-          </div>
+          <Stat k="Supply" v={token.supply} />
+          <Stat k="FDV" v={token.fdv} />
+          <Stat k="Txns" v={token.txns} />
+          <SafetyStat token={token} />
         </dl>
       </header>
 
@@ -204,11 +200,28 @@ export function TokenTrade({
   );
 }
 
-function Stat({ k, v, className = "" }: { k: string; v: string; className?: string }) {
+function Stat({ k, v, accent = false }: { k: string; v: string; accent?: boolean }) {
+  const empty = !v || v === "—" || v === "–" || v === "-";
   return (
-    <div className={`min-w-0 ${className}`}>
-      <dt className="text-xs text-muted">{k}</dt>
-      <dd className="truncate font-mono text-xs sm:text-sm">{v}</dd>
+    <div className="flex min-w-[5.4rem] shrink-0 flex-col justify-center border-l border-line px-3 first:border-l-0 first:pl-1">
+      <dt className="text-[10px] uppercase tracking-[0.16em] text-muted">{k}</dt>
+      <dd className={`mt-1 truncate font-mono ${accent ? "text-[15px] text-fg" : "text-[13px]"} ${empty ? "text-muted/70" : "text-fg"}`}>{empty ? "—" : v}</dd>
+    </div>
+  );
+}
+
+function SafetyStat({ token }: { token: Token }) {
+  const score = qualityScore(token);
+  const tone = score == null ? "bg-line" : score >= 70 ? "bg-primary" : score >= 40 ? "bg-amber-400" : "bg-danger";
+  return (
+    <div className="flex min-w-[6.2rem] shrink-0 flex-col justify-center border-l border-line px-3">
+      <dt className="text-[10px] uppercase tracking-[0.16em] text-muted">Safety</dt>
+      <dd className="mt-1 flex items-center gap-2">
+        <span className="font-mono text-[13px] text-fg">{scoreLabel(token)}</span>
+        <span className="h-1.5 w-10 overflow-hidden rounded-full bg-white/10">
+          <span className={`block h-full rounded-full ${tone}`} style={{ width: `${score ?? 0}%` }} />
+        </span>
+      </dd>
     </div>
   );
 }
