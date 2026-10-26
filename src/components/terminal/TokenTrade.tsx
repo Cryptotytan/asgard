@@ -652,7 +652,7 @@ function Ticket({
         limit,
       });
       const guards = [tp && `TP ${tp}`, sl && `SL ${sl}`, reduceOnly && "reduce-only"].filter(Boolean).join(" · ");
-      onFlash(ok ? `${limit ? "Limit " : ""}${perpSide} ${token.symbol} ${lev}x ${marginMode}${guards ? ` · ${guards}` : ""}. Margin stays in this wallet.` : "Not enough USDC margin");
+      onFlash(ok ? `${limit ? "Limit " : ""}${perpSide} ${token.symbol} ${lev}x ${marginMode}${guards ? ` · ${guards}` : ""}. USDC margin is locked until this position closes.` : "Not enough USDC margin");
       return;
     }
     if (orderType === "limit") {

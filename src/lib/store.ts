@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { LEND_MARKETS, isHoneypot, tokenBySymbol } from "@/lib/market";
+import { LEND_MARKETS, canPerp, isHoneypot, tokenBySymbol } from "@/lib/market";
 
 export type Side = "long" | "short";
 
@@ -250,7 +250,10 @@ export const useDesk = create<Desk>((set, get) => ({
   setNearYocto: (nearYocto) => set({ nearYocto }),
   applyChain: (chain) => {
     const copy = cloneBook(chain);
-    set({ chain: copy, balances: { ...copy } });
+    const state = get();
+    const locked = lockedMargin(state.positions, state.orders);
+    const usdc = Math.max(0, (copy.USDC ?? 0) - locked);
+    set({ chain: copy, balances: { ...copy, USDC: usdc } });
   },
   log: (title, detail, value) => set({ activity: push(get().activity, title, detail, value) }),
 
@@ -282,7 +285,7 @@ export const useDesk = create<Desk>((set, get) => ({
   cancelOrder: (id) => set({ orders: get().orders.filter((order) => order.id !== id) }),
 
   openPerp: (market, base, side, notional, leverage, extra) => {
-    if (notional <= 0 || leverage < 1) return false;
+    if (notional <= 0 || leverage < 1 || !canPerp(base)) return false;
     const state = get();
     const mark = priceOf(base, state.marks);
     const limit = extra?.limit;
@@ -352,7 +355,7 @@ export const useDesk = create<Desk>((set, get) => ({
     if (!position) return false;
     const mark = priceOf(position.base, state.marks);
     const pnl = position.side === "long" ? (mark - position.entry) * position.size : (position.entry - mark) * position.size;
-    const back = Math.max(0, position.margin + pnl);
+    const back = position.margin;
     set({
       balances: add(state.balances, "USDC", back),
       positions: state.positions.filter((item) => item.id !== id),
@@ -500,7 +503,10 @@ export const useDesk = create<Desk>((set, get) => ({
       }
       const margin = order.amount / Math.max(order.leverage ?? 1, 1);
       const paid = take(balances, "USDC", margin);
-      if (!paid) continue;
+      if (!paid) {
+        kept.push(order);
+        continue;
+      }
       balances = paid;
       positions = [
         {
@@ -532,7 +538,7 @@ export const useDesk = create<Desk>((set, get) => ({
         continue;
       }
       const pnl = position.side === "long" ? (mark - position.entry) * position.size : (position.entry - mark) * position.size;
-      balances = add(balances, "USDC", Math.max(0, position.margin + pnl));
+      balances = add(balances, "USDC", position.margin);
       realized += pnl;
       wins += pnl >= 0 ? 1 : 0;
       closes += 1;
@@ -578,6 +584,15 @@ useDesk.subscribe((state, prev) => {
   saveLedger(state.accountId, snap(state));
 });
 
+function lockedMargin(positions: Position[], orders: RestingOrder[]) {
+  let locked = 0;
+  for (const position of positions) locked += Math.max(0, position.margin);
+  for (const order of orders) {
+    if (order.kind === "perp") locked += order.amount / Math.max(order.leverage ?? 1, 1);
+  }
+  return locked;
+}
+
 function reducePosition(base: string, side: Side, notional: number) {
   const state = useDesk.getState();
   const position = state.positions.find((item) => item.base === base && item.side !== side);
@@ -593,7 +608,7 @@ function reducePosition(base: string, side: Side, notional: number) {
       ? state.positions.filter((item) => item.id !== position.id)
       : state.positions.map((item) => (item.id === position.id ? { ...item, size: left, margin: item.margin - released } : item));
   useDesk.setState({
-    balances: add(state.balances, "USDC", Math.max(0, released + pnl)),
+    balances: add(state.balances, "USDC", released),
     positions,
     realized: state.realized + pnl,
     wins: state.wins + (left <= position.size * 0.001 && pnl >= 0 ? 1 : 0),

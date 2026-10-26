@@ -477,8 +477,7 @@ export const MARKETS = [
 
 export function canPerp(symbol: string) {
   const token = TOKENS.find((item) => item.symbol === symbol);
-  if (!token || !token.listed || !(token.price > 0)) return false;
-  if (token.kind !== "meme") return true;
+  if (!token || !token.listed || !(token.price > 0) || token.kind === "meme") return false;
   const base = token.symbol.split(".")[0];
   return MARKETS.some((market) => market.base === token.symbol || market.base === base);
 }

@@ -547,7 +547,7 @@ function WalletButton({ compact = false, onConnectNew }: { compact?: boolean; on
       {open && (
         <div className="absolute right-0 top-[3.15rem] z-50 w-[min(22rem,calc(100vw-1rem))] rounded-2xl border border-line bg-[#0e1210] p-3 shadow-2xl">
           <div className="mb-2 flex items-center justify-between px-1">
-            <p className="text-sm font-semibold">Connected</p>
+            <p className="text-sm font-semibold">{rows.length ? "Connected" : "Wallets"}</p>
             <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-semibold text-primary">{rows.length}</span>
           </div>
           <ul className="space-y-2">
@@ -585,7 +585,7 @@ function WalletButton({ compact = false, onConnectNew }: { compact?: boolean; on
             }}
             className="mt-3 h-11 w-full rounded-xl bg-primary text-sm font-semibold text-primary-fg"
           >
-            Connect another wallet
+            {rows.length ? "Connect another wallet" : "Connect wallet"}
           </button>
         </div>
       )}
