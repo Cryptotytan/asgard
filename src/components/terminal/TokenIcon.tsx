@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { knownLogo, logoFallback, lookupNearToken, searchTokens } from "@/lib/dex";
+import { knownLogo, coinIcon, logoFallback, lookupNearToken, searchTokens } from "@/lib/dex";
 import { chainIcon } from "@/lib/chains";
 import { CHAIN_ICON, CHAINS, displayName, fmt, glyph, px, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
@@ -34,8 +34,9 @@ export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "s
   const sources = useMemo(() => {
     const remote = token.icon?.startsWith("https://") ? token.icon : "";
     const local = knownLogo(token.symbol) || knownLogo(token.symbol.split(".")[0] ?? token.symbol);
+    const coin = coinIcon(token.symbol);
     const extra = logoFallback(token);
-    const list = [iconCache.get(key), remote, local, token.icon, extra].filter((src): src is string => Boolean(src && !src.startsWith("data:image/svg+xml;utf8,")));
+    const list = [iconCache.get(key), local, remote, coin, extra].filter((src): src is string => Boolean(src && !src.startsWith("data:image/svg+xml;utf8,")));
     return [...new Set(list)];
   }, [key, token.icon, token.symbol]);
   useEffect(() => {

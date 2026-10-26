@@ -309,6 +309,23 @@ function safeIcon(icon: unknown) {
   return "";
 }
 
+const COIN_ALIAS: Record<string, string> = {
+  WNEAR: "near",
+  WETH: "eth",
+  WBTC: "btc",
+  "1000PEPE": "pepe",
+  "1000BONK": "bonk",
+  POL: "pol",
+  MATIC: "matic",
+};
+
+export function coinIcon(symbol: string) {
+  const base = (symbol.split(".")[0] ?? symbol).toUpperCase();
+  const id = (COIN_ALIAS[base] ?? base).toLowerCase();
+  if (!/^[a-z0-9]{2,15}$/.test(id)) return "";
+  return `https://assets.coincap.io/assets/icons/${id}@2x.png`;
+}
+
 export function knownLogo(symbol: string) {
   return LOCAL[symbol.toUpperCase()] ?? LOCAL[symbol] ?? "";
 }

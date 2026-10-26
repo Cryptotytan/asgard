@@ -1,4 +1,4 @@
-import { knownLogo } from "@/lib/dex";
+import { coinIcon, knownLogo } from "@/lib/dex";
 import { ensureToken, MARKETS, money, TOKENS, type PerpMarket } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 
@@ -19,7 +19,7 @@ function marketOf(base: string, name = base): PerpMarket {
 }
 
 function publish(market: PerpMarket, price = Number.NaN, change = 0, volume = 0) {
-  const icon = knownLogo(market.base) || undefined;
+  const icon = knownLogo(market.base) || coinIcon(market.base) || undefined;
   let token = TOKENS.find((item) => item.chain === "NEAR" && item.symbol.split(".")[0].toUpperCase() === market.base);
   if (!token) {
     const bareFree = !TOKENS.some((item) => item.symbol.toUpperCase() === market.base);

@@ -288,8 +288,17 @@ export function LiveBook({ symbol, mark, liquidity }: { symbol: string; mark: nu
     );
   }, [prints, venue]);
 
-  const groupedAsks = bucket(asks, step, "ask").slice(-16);
-  const groupedBids = bucket(bids, step, "bid").slice(0, 16);
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1023px)");
+    const apply = () => setNarrow(media.matches);
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, []);
+
+  const groupedAsks = bucket(asks, step, "ask").slice(narrow ? -7 : -16);
+  const groupedBids = bucket(bids, step, "bid").slice(0, narrow ? 7 : 16);
   const askRows = withTotal(groupedAsks, "ask");
   const bidRows = withTotal(groupedBids, "bid");
   const spread = (askRows[askRows.length - 1]?.price ?? last) - (bidRows[0]?.price ?? last);
@@ -297,7 +306,7 @@ export function LiveBook({ symbol, mark, liquidity }: { symbol: string; mark: nu
 
   return (
     <div ref={box} className="flex h-full min-h-0 flex-col bg-bg">
-      <div className="grid grid-cols-2 border-b border-line text-[13px]">
+      <div className="hidden grid-cols-2 border-b border-line text-[13px] lg:grid">
         <button type="button" onClick={() => setTab("book")} className={`h-10 ${tab === "book" ? "bg-surface-2 font-semibold text-fg" : "text-muted"}`}>
           Order Book
         </button>
@@ -307,7 +316,7 @@ export function LiveBook({ symbol, mark, liquidity }: { symbol: string; mark: nu
       </div>
       {tab === "book" ? (
         <>
-          <div className="flex items-center gap-2 px-2 py-1.5">
+          <div className="hidden items-center gap-2 px-2 py-1.5 lg:flex">
             <div className="flex items-center gap-1">
               <ViewButton title="Both" active={view === "both"} onClick={() => setView("both")}>
                 <span className="flex h-3.5 w-3 gap-0.5"><i className="h-full flex-1 rounded-[1px] bg-primary" /><i className="h-full flex-1 rounded-[1px] bg-danger" /></span>
@@ -352,10 +361,10 @@ export function LiveBook({ symbol, mark, liquidity }: { symbol: string; mark: nu
               )}
             </div>
           </div>
-          <div className="grid grid-cols-[1.15fr_1fr_1fr] px-2 pb-1 text-[10px] uppercase tracking-wide text-muted">
+          <div className="grid grid-cols-2 px-2 pb-1 pt-1.5 text-[10px] uppercase tracking-wide text-muted lg:grid-cols-[1.15fr_1fr_1fr] lg:pt-0">
             <span>Price (USDT)</span>
             <span className="text-right">Size ({unit === "quote" ? "USDT" : base})</span>
-            <span className="text-right">Total (USDT)</span>
+            <span className="hidden text-right lg:block">Total (USDT)</span>
           </div>
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
             {view !== "buy" && <Ladder rows={askRows} side="ask" step={step} unit={unit} edge="end" />}
@@ -406,14 +415,14 @@ function Ladder({ rows, side, step, unit, edge }: { rows: { price: number; qty: 
       {rows.map((row) => {
         const size = unit === "quote" ? row.qty * row.price : row.qty;
         return (
-          <div key={`${side}-${row.price}`} className="relative grid grid-cols-[1.15fr_1fr_1fr] px-2 py-[3px] font-mono text-[11px]">
+          <div key={`${side}-${row.price}`} className="relative grid grid-cols-2 px-2 py-[3px] font-mono text-[11px] lg:grid-cols-[1.15fr_1fr_1fr]">
             <span
               className="absolute inset-y-0 right-0"
               style={{ width: `${Math.max(6, (row.total / max) * 100)}%`, background: side === "ask" ? "rgba(255,121,102,0.22)" : "rgba(0,236,151,0.18)" }}
             />
             <span className={`relative ${side === "ask" ? "text-danger" : "text-primary"}`}>{priceText(row.price, step)}</span>
             <span className="relative text-right">{sizeText(size)}</span>
-            <span className="relative text-right text-fg/75">{sizeText(row.total)}</span>
+            <span className="relative hidden text-right text-fg/75 lg:block">{sizeText(row.total)}</span>
           </div>
         );
       })}

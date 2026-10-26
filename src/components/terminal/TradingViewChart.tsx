@@ -63,8 +63,8 @@ export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; 
 
   return (
     <div className="w-full">
-      <div ref={host} className="h-[480px] w-full bg-black sm:h-[560px]" />
-      <p className="px-3 py-1 text-[10px] text-muted sm:px-4">
+      <div ref={host} className="h-[220px] w-full bg-black sm:h-[420px] lg:h-[560px]" />
+      <p className="hidden px-3 py-1 text-[10px] text-muted sm:block sm:px-4">
         <a className="underline" href={`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(plotted)}`} target="_blank" rel="noreferrer">
           Chart
         </a>{" "}

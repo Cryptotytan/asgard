@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ChevronDown, Copy, Search, ShieldAlert } from "lucide-react";
 import { CandleChart, type ChartHover } from "@/components/terminal/CandleChart";
 import { TradingViewChart, tradingViewPerp } from "@/components/terminal/TradingViewChart";
@@ -117,9 +117,26 @@ export function TokenTrade({
 
   return (
     <div className="flex flex-col lg:block">
-      <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 sm:flex-col sm:items-stretch sm:px-4 lg:flex-row lg:items-center lg:justify-between">
-        <TokenMenu token={token} mode={deskMode} scanning={scanning} onPick={onSymbol} />
-        <p className="ml-auto shrink-0 font-mono text-sm sm:hidden">{px(token.price)}</p>
+      <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 sm:px-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <TokenMenu token={token} mode={deskMode} scanning={scanning} onPick={onSymbol} />
+          {canPerp(symbol) ? (
+            <div className="flex shrink-0 rounded-md bg-surface p-0.5 text-[10px] font-semibold lg:hidden">
+              <button type="button" onClick={() => onMode("spot")} className={`h-6 rounded px-2 ${deskMode === "spot" ? "bg-surface-2 text-fg" : "text-muted"}`}>
+                Spot
+              </button>
+              <button type="button" onClick={() => onMode("perp")} className={`h-6 rounded px-2 ${deskMode === "perp" ? "bg-surface-2 text-fg" : "text-muted"}`}>
+                Perp
+              </button>
+            </div>
+          ) : (
+            <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-semibold text-muted lg:hidden">Spot</span>
+          )}
+          <span className={`ml-auto shrink-0 font-mono text-xs lg:hidden ${token.change >= 0 ? "text-primary" : "text-danger"}`}>
+            {token.change >= 0 ? "+" : ""}
+            {Number.isFinite(token.change) ? `${token.change.toFixed(2)}%` : "—"}
+          </span>
+        </div>
         <dl className="scroll-x hidden max-w-full items-stretch self-end overflow-x-auto sm:flex lg:ml-auto lg:self-center">
           <Stat k="Mcap" v={token.mcap} />
           <Stat k="Price" v={px(token.price)} accent />
@@ -203,26 +220,28 @@ export function TokenTrade({
             </>
           )}
         </section>
+        <div className="order-2 grid grid-cols-2 items-start lg:contents">
         <div
-          className={`order-2 flex flex-col overflow-hidden border-t border-line lg:col-start-2 lg:row-start-1 lg:border-r lg:border-t-0 ${chartH > 0 ? "min-h-0" : "min-h-[28rem]"}`}
-          style={chartH > 0 ? { height: chartH } : undefined}
+          className="flex h-[22rem] flex-col overflow-hidden border-t border-line lg:col-start-2 lg:row-start-1 lg:h-[var(--book-h)] lg:border-r lg:border-t-0"
+          style={chartH > 0 ? ({ "--book-h": `${chartH}px` } as CSSProperties) : undefined}
         >
           <LiveBook symbol={symbol} mark={Number.isFinite(mark ?? token.price) ? (mark ?? token.price) : 0} liquidity={token.liqN} />
         </div>
-        <div className="order-3 lg:col-start-3 lg:row-span-2 lg:row-start-1 lg:self-stretch">
+        <div className="border-t border-line lg:col-start-3 lg:row-span-2 lg:row-start-1 lg:self-stretch lg:border-t-0">
           <Ticket token={token} mode={mode} quickUsd={quickUsd} scanning={scanning} onMode={onMode} onFlash={onFlash} />
         </div>
+        </div>
         <section className="book-hinge order-4 border-t border-line lg:col-span-2 lg:col-start-1 lg:row-start-2 lg:self-stretch lg:border-r lg:border-t-0">
-          <div className="scroll-x flex gap-1 border-b border-line bg-bg px-2 py-1.5 sm:px-3">
+          <div className="scroll-x flex gap-3 border-b border-line bg-bg px-3 py-0 sm:gap-1 sm:px-3 sm:py-1.5">
             {BOOKS.map((item) => (
               <button
                 key={item}
                 type="button"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => setBook(item)}
-                className={`h-8 shrink-0 rounded-full px-3 text-xs font-semibold sm:flex-1 sm:text-sm ${book === item ? "bg-surface-2 text-fg shadow-[inset_0_0_0_1px_var(--color-line)]" : "text-muted"}`}
+                className={`h-9 shrink-0 border-b-2 px-1 text-xs font-semibold sm:h-8 sm:flex-1 sm:rounded-full sm:border-b-0 sm:px-3 sm:text-sm ${book === item ? "border-primary text-fg sm:bg-surface-2 sm:shadow-[inset_0_0_0_1px_var(--color-line)]" : "border-transparent text-muted"}`}
               >
-                {item}
+                {item === "Orders" ? "Open Orders" : item === "History" ? "Assets" : item}
               </button>
             ))}
           </div>
@@ -325,7 +344,10 @@ function TokenMenu({ token, mode, onPick }: { token: Token; scanning: boolean; m
         <TokenIcon token={token} className="size-9 rounded-lg sm:size-10" />
         <span className="min-w-0">
           <span className="flex items-center gap-1.5 font-semibold">
-            <span className="truncate">{displayName(token)}</span>
+            <span className="truncate">
+              {displayName(token)}
+              <span className="font-normal text-muted">/USDT</span>
+            </span>
             {token.verified && <VerifiedMark />}
             <ChevronDown className={`size-4 text-muted ${open ? "rotate-180" : ""}`} />
           </span>
@@ -798,9 +820,9 @@ function Ticket({
   }
 
   return (
-    <aside className="px-2 py-1 lg:p-4">
-      <div className="deck panel p-1.5 sm:p-3">
-      <div className="mb-2 hidden grid-cols-4 gap-1 text-center font-mono text-xs sm:grid">
+    <aside className="px-1.5 py-2 lg:p-4">
+      <div className="lg:deck lg:panel lg:p-3">
+      <div className="mb-2 hidden grid-cols-4 gap-1 text-center font-mono text-xs lg:grid">
         {windows.map(([label, value]) => (
           <div key={label}>
             <p className="text-muted">{label}</p>
@@ -809,7 +831,7 @@ function Ticket({
         ))}
       </div>
       {listed ? (
-        <div className="grid grid-cols-2 gap-1 rounded-xl bg-bg p-1">
+        <div className="mb-2 hidden grid-cols-2 gap-1 rounded-xl bg-bg p-1 lg:grid">
           <button type="button" onClick={() => onMode("spot")} className={`h-9 rounded-lg text-sm font-semibold ${viewMode === "spot" ? "bg-surface-2 text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}>
             Spot
           </button>
@@ -818,7 +840,7 @@ function Ticket({
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-1 rounded-xl bg-bg p-1" aria-label="Spot only">
+        <div className="mb-2 hidden grid-cols-2 gap-1 rounded-xl bg-bg p-1 lg:grid" aria-label="Spot only">
           <div className="grid h-9 place-items-center rounded-lg bg-surface-2 text-sm font-semibold text-fg shadow-[inset_0_-2px_0_var(--color-primary)]">Spot</div>
           <div className="grid h-9 place-items-center rounded-lg text-sm text-muted/45" title="Perps are not listed for this token">
             Perps
@@ -843,6 +865,16 @@ function Ticket({
           <button type="button" onClick={() => setPerpSide("short")} className={`h-8 rounded-lg text-sm font-semibold sm:h-11 ${perpSide === "short" ? "bg-danger text-bg" : "text-muted"}`}>
             Short
           </button>
+        </div>
+      )}
+
+      {viewMode === "perp" && (
+        <div className="mt-2 flex gap-3 text-xs lg:hidden">
+          {(["market", "limit"] as const).map((item) => (
+            <button key={item} type="button" onClick={() => setPerpType(item)} className={perpType === item ? "font-semibold text-fg" : "text-muted"}>
+              {item === "market" ? "Market" : "Limit"}
+            </button>
+          ))}
         </div>
       )}
 
@@ -884,7 +916,7 @@ function Ticket({
           <span className="text-xs text-muted">USD</span>
         </label>
       )}
-      <div className="mt-2 grid grid-cols-4 gap-1">
+      <div className="mt-2 hidden grid-cols-4 gap-1 lg:grid">
         {PRESETS.map((preset) => (
           <button
             key={preset}
@@ -912,8 +944,14 @@ function Ticket({
         <span className="shrink-0">Balance</span>
       </label>
 
+      <div className="mt-2 space-y-1 text-[11px] text-muted lg:hidden">
+        <div className="flex justify-between"><span>Avbl</span><span className="font-mono text-fg">{bal(viewMode === "perp" ? (balances.USDC ?? 0) : balance)} {viewMode === "perp" || side === "buy" ? "USDT" : token.symbol}</span></div>
+        <div className="flex justify-between"><span>Max</span><span className="font-mono text-fg">{bal(viewMode === "perp" ? (balances.USDC ?? 0) * lev : balance)}</span></div>
+        <div className="flex justify-between"><span>Est. fee</span><span className="font-mono text-fg">{picked ? `${(picked.feeBps / 100).toFixed(2)}%` : "—"}</span></div>
+      </div>
+
       {viewMode === "perp" ? (
-        <div className="mt-3 space-y-2">
+        <div className="mt-3 hidden space-y-2 lg:block">
           <div className="flex gap-3 text-xs">
             {(["market", "limit"] as const).map((item) => (
               <button key={item} type="button" onClick={() => setPerpType(item)} className={perpType === item ? "font-semibold text-fg" : "text-muted"}>
@@ -1008,7 +1046,7 @@ function Ticket({
           </dl>
         </div>
       ) : (
-        <div className="mt-3">
+        <div className="mt-3 hidden lg:block">
           <div className="flex items-center justify-between text-xs text-muted">
             <span className="font-mono">Bal {bal(balance)} {pay.symbol}</span>
             <button type="button" onClick={() => setSlip(SLIPS[(SLIPS.indexOf(slip) + 1) % SLIPS.length])}>
@@ -1058,7 +1096,7 @@ function Ticket({
         </div>
       )}
 
-      <div className={`relative mt-1.5 overflow-hidden rounded-lg px-2 py-1 text-xs sm:mt-3 sm:block sm:p-3 sm:text-sm ${blocked ? "bg-surface-2" : "bg-surface"}`}>
+      <div className={`relative mt-1.5 hidden overflow-hidden rounded-lg px-2 py-1 text-xs lg:block sm:p-3 sm:text-sm ${blocked ? "bg-surface-2" : "bg-surface"}`}>
         {scanning && <span className="scan-shutter" aria-hidden />}
         {scanning ? (
           <p className="text-muted">Scanning {token.symbol}…</p>
@@ -1085,9 +1123,9 @@ function Ticket({
         type="button"
         disabled={scanning || busy || blocked}
         onClick={submit}
-        className="press mt-1.5 h-9 w-full rounded-xl bg-primary text-sm font-semibold text-primary-fg disabled:opacity-50 sm:mt-3 sm:h-12"
+        className="press mt-2 h-10 w-full rounded-full bg-primary text-sm font-semibold text-primary-fg disabled:opacity-50 lg:rounded-xl lg:h-12"
       >
-        {blocked ? "Swap blocked" : scanning || busy ? "Scanning" : connected ? (viewMode === "perp" ? `Open ${perpSide}` : side === "buy" ? "Buy via Intents" : "Sell via Intents") : "Connect to trade"}
+        {blocked ? "Swap blocked" : scanning || busy ? "Scanning" : connected ? (viewMode === "perp" ? `Open ${perpSide}` : side === "buy" ? "Buy" : "Sell") : "Enable Trading"}
       </button>
 
       <dl className="mt-3 hidden grid-cols-2 gap-2 font-mono text-xs sm:grid">
