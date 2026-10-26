@@ -97,7 +97,6 @@ export function TokenTrade({
           <Stat k="Price" v={px(token.price)} accent />
           <Stat k="Liq" v={token.liquidity} />
           <Stat k="Vol" v={token.volume} />
-          <Stat k="Supply" v={token.supply} />
           <Stat k="FDV" v={token.fdv} />
           <Stat k="Txns" v={token.txns} />
           <SafetyStat token={token} />
