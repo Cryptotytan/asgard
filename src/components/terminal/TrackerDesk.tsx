@@ -520,37 +520,29 @@ function WalletDetail({
         <label className="ml-auto flex items-center gap-2 text-xs text-muted"><input type="checkbox" checked={spam} onChange={(event) => onSpam(event.target.checked)} /> Show spam</label>
       </div>
       {pane === "balances" && (
-        <div className="scroll-x">
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="text-[11px] uppercase text-muted"><tr>{["Token", "Amount", "USD", "USDT", "Share", ""].map((label) => <th key={label} className="py-2 font-medium">{label}</th>)}</tr></thead>
-            <tbody>
-              {!live && (
-                <tr><td colSpan={6} className="py-4 text-sm text-muted">Reading balances…</td></tr>
-              )}
-              {live && held.length === 0 && (
-                <tr><td colSpan={6} className="py-4 text-sm text-muted">This wallet has no tokens.</td></tr>
-              )}
-              {held.map((row) => {
-                const token = TOKENS.find((item) => item.symbol.toLowerCase() === row.symbol.toLowerCase());
-                const unit = live && live.value > 0 ? row.usd / (live.value / Math.max(live.usdt, 1e-12)) : row.usd;
-                return (
-                <tr key={row.symbol} className="border-t border-line">
-                  <td className="py-2">
-                    <span className="flex items-center gap-2 font-semibold">
-                      {token && <TokenIcon token={token} className="size-5" />}
-                      {row.symbol}
+        <div className="py-3">
+          {!live && <p className="text-sm text-muted">Reading every token in this wallet…</p>}
+          {live && held.length === 0 && <p className="text-sm text-muted">This wallet has no tokens.</p>}
+          <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+            {held.map((row) => {
+              const token = TOKENS.find((item) => item.symbol.toLowerCase() === row.symbol.toLowerCase() && item.chain === "NEAR") ?? TOKENS.find((item) => item.symbol.toLowerCase() === row.symbol.toLowerCase());
+              return (
+                <li key={row.contract || row.symbol} className="rounded-2xl border border-line bg-surface p-3">
+                  <span className="flex items-center gap-2">
+                    {token ? <TokenIcon token={token} className="size-6" /> : <span className="grid size-6 place-items-center rounded-full bg-bg text-[10px] font-bold">{row.symbol.slice(0, 1)}</span>}
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold">{row.symbol}</span>
+                      <span className="block truncate font-mono text-[10px] text-muted">{row.amount > 0 ? qty(row.amount) : "Balance loading"}</span>
                     </span>
-                  </td>
-                  <td className="font-mono">{qty(row.amount)}</td>
-                  <td className="font-mono">{row.usd ? usd(row.usd) : "—"}</td>
-                  <td className="font-mono">{row.usd ? unit.toFixed(2) : "—"}</td>
-                  <td><span className="block h-1.5 w-24 overflow-hidden rounded-full bg-bg"><i className="block h-full bg-primary" style={{ width: `${row.share}%` }} /></span></td>
-                  <td className="text-right"><button type="button" onClick={() => onTrade(row.symbol)} className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-black">Buy</button></td>
-                </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                  </span>
+                  <p className="mt-2 font-mono text-sm">{row.usd ? usd(row.usd) : "—"}</p>
+                  <button type="button" onClick={() => onTrade(row.symbol)} className="mt-2 h-8 w-full rounded-lg bg-primary text-xs font-semibold text-black">
+                    Trade
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
       {pane === "performance" && (

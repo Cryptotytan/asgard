@@ -20,7 +20,7 @@ function read(): TradeLog[] {
   if (typeof window === "undefined") return [];
   try {
     const parsed = JSON.parse(localStorage.getItem(KEY) || "[]") as TradeLog[];
-    return Array.isArray(parsed) ? parsed.filter((row) => row && row.id && row.bucket && row.account) : [];
+    return Array.isArray(parsed) ? parsed.filter((row) => row && row.id && row.bucket) : [];
   } catch {
     return [];
   }
@@ -31,9 +31,9 @@ function emit() {
 }
 
 export function logTrade(entry: Omit<TradeLog, "id" | "time" | "account"> & { account?: string | null; time?: number }) {
-  if (!entry.account) return;
-  const next: TradeLog = { ...entry, account: entry.account, time: entry.time ?? Date.now(), id: `${entry.bucket}-${entry.symbol}-${Date.now()}` };
-  rows = [next, ...rows].slice(0, 200);
+  const account = entry.account || "desk";
+  const next: TradeLog = { ...entry, account, time: entry.time ?? Date.now(), id: `${entry.bucket}-${entry.symbol}-${Date.now()}` };
+  rows = [next, ...rows].slice(0, 500);
   if (typeof window !== "undefined") localStorage.setItem(KEY, JSON.stringify(rows));
   emit();
 }

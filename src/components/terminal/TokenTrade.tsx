@@ -457,7 +457,7 @@ function baseOf(symbol: string) {
 
 function WalletTrades({ symbol }: { symbol: string }) {
   const accountId = useDesk((state) => (state.connected ? state.accountId : null));
-  const rows = useTradeLog().filter((row) => accountId && row.account === accountId && row.bucket === "trade" && baseOf(row.symbol) === baseOf(symbol));
+  const rows = useTradeLog().filter((row) => accountId && (row.account === accountId || row.account === "desk" || !row.account) && row.bucket === "trade" && baseOf(row.symbol) === baseOf(symbol));
   if (!accountId) return <BookNote>Connect a wallet to see its trades.</BookNote>;
   if (rows.length === 0) return <BookNote>No trades from the connected wallet on {symbol} yet.</BookNote>;
   return (
@@ -477,7 +477,7 @@ function WalletTrades({ symbol }: { symbol: string }) {
 
 function OrderHistory({ symbol }: { symbol: string }) {
   const accountId = useDesk((state) => (state.connected ? state.accountId : null));
-  const rows = useTradeLog().filter((row) => accountId && row.account === accountId && row.bucket === "order" && baseOf(row.symbol) === baseOf(symbol) && row.status !== "open");
+  const rows = useTradeLog().filter((row) => accountId && (row.account === accountId || row.account === "desk" || !row.account) && row.bucket === "order" && baseOf(row.symbol) === baseOf(symbol) && row.status !== "open");
   if (!accountId) return <BookNote>Connect a wallet to see its orders.</BookNote>;
   if (rows.length === 0) return <BookNote>No filled or canceled orders from this wallet on {symbol} yet.</BookNote>;
   return (

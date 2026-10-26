@@ -301,8 +301,24 @@ export function LiveBook({ symbol, mark, liquidity }: { symbol: string; mark: nu
     return () => media.removeEventListener("change", apply);
   }, []);
 
-  const groupedAsks = bucket(asks, step, "ask").slice(narrow ? -7 : -16);
-  const groupedBids = bucket(bids, step, "bid").slice(0, narrow ? 7 : 16);
+  const body = useRef<HTMLDivElement>(null);
+  const [slots, setSlots] = useState(6);
+  useEffect(() => {
+    const node = body.current;
+    if (!node) return;
+    const measure = () => {
+      const room = Math.max(0, node.clientHeight - 44);
+      const next = Math.max(3, Math.floor(room / 2 / 20));
+      setSlots(next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [tab, view]);
+
+  const groupedAsks = bucket(asks, step, "ask").slice(-slots);
+  const groupedBids = bucket(bids, step, "bid").slice(0, slots);
   const askRows = withTotal(groupedAsks, "ask");
   const bidRows = withTotal(groupedBids, "bid");
   const spread = (askRows[askRows.length - 1]?.price ?? last) - (bidRows[0]?.price ?? last);
@@ -365,12 +381,12 @@ export function LiveBook({ symbol, mark, liquidity }: { symbol: string; mark: nu
               )}
             </div>
           </div>
-          <div className="relative z-10 grid h-7 shrink-0 grid-cols-2 items-center bg-bg px-2 text-[10px] uppercase tracking-wide text-muted lg:grid-cols-[1.15fr_1fr_1fr]">
-            <span className="truncate">Price</span>
-            <span className="truncate text-right">Size ({unit === "quote" ? "USDT" : base})</span>
-            <span className="hidden truncate text-right lg:block">Total (USDT)</span>
+          <div className="grid h-6 shrink-0 grid-cols-[1.1fr_1fr_1fr] items-end bg-bg px-2 pb-1 text-[10px] uppercase tracking-wide text-muted">
+            <span>Price</span>
+            <span className="text-right">Size</span>
+            <span className="text-right">Total</span>
           </div>
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div ref={body} className="flex min-h-0 flex-1 flex-col overflow-hidden pb-1">
             {view !== "buy" && (
               <div className="min-h-0 flex-1 overflow-hidden">
                 <Ladder rows={askRows} side="ask" step={step} unit={unit} edge="end" />
@@ -427,14 +443,14 @@ function Ladder({ rows, side, step, unit, edge }: { rows: { price: number; qty: 
       {rows.map((row) => {
         const size = unit === "quote" ? row.qty * row.price : row.qty;
         return (
-          <div key={`${side}-${row.price}`} className="relative grid h-5 shrink-0 grid-cols-2 items-center px-2 font-mono text-[11px] lg:grid-cols-[1.15fr_1fr_1fr]">
+          <div key={`${side}-${row.price}`} className="relative grid h-5 shrink-0 grid-cols-[1.1fr_1fr_1fr] items-center px-2 font-mono text-[11px]">
             <span
-              className="absolute inset-y-0 right-0"
-              style={{ width: `${Math.max(6, (row.total / max) * 100)}%`, background: side === "ask" ? "rgba(255,121,102,0.22)" : "rgba(0,236,151,0.18)" }}
+              className="absolute inset-y-0 right-0 -z-10"
+              style={{ width: `${Math.min(70, Math.max(4, (row.total / max) * 70))}%`, background: side === "ask" ? "rgba(255,121,102,0.18)" : "rgba(0,236,151,0.16)" }}
             />
-            <span className={`relative truncate ${side === "ask" ? "text-danger" : "text-primary"}`}>{priceText(row.price, step)}</span>
-            <span className="relative truncate text-right">{sizeText(size)}</span>
-            <span className="relative hidden truncate text-right text-fg/75 lg:block">{sizeText(row.total)}</span>
+            <span className={`truncate ${side === "ask" ? "text-danger" : "text-primary"}`}>{priceText(row.price, step)}</span>
+            <span className="truncate text-right">{sizeText(size)}</span>
+            <span className="truncate text-right text-fg/80">{sizeText(row.total)}</span>
           </div>
         );
       })}

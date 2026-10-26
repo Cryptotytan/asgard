@@ -141,7 +141,7 @@ export function fillsOf(wallets: TrackedWallet[]): Fill[] {
   return rows.sort((a, b) => AGOS.indexOf(a.ago) - AGOS.indexOf(b.ago));
 }
 
-export type ChainHolding = { symbol: string; amount: number; usd: number; share: number };
+export type ChainHolding = { symbol: string; amount: number; usd: number; share: number; contract?: string };
 export type ChainFill = { id: string; symbol: string; incoming: boolean; amount: number; ago: string; kind: string; detail: string; time: number };
 export type ChainWallet = { value: number; usdt: number; holdings: ChainHolding[]; trades: number; txCount: number; ago: string; fills: ChainFill[] };
 
@@ -226,79 +226,142 @@ function tokenPrice(symbol: string, contract?: string) {
   return bySymbol?.price ?? 0;
 }
 
+type FtMeta = { symbol: string; decimals: number };
+
+let metaBook: Map<string, FtMeta> | null = null;
+let metaJob: Promise<Map<string, FtMeta>> | null = null;
+
+function seedMeta() {
+  const map = new Map<string, FtMeta>();
+  for (const token of TOKENS) {
+    if (token.chain === "NEAR" && token.address) map.set(token.address.toLowerCase(), { symbol: token.symbol, decimals: token.decimals ?? 24 });
+  }
+  return map;
+}
+
+function loadMeta() {
+  if (metaBook) return Promise.resolve(metaBook);
+  if (metaJob) return metaJob;
+  metaJob = (async () => {
+    const map = seedMeta();
+    try {
+      const raw = localStorage.getItem("asgard-ft-meta");
+      if (raw) {
+        const saved = JSON.parse(raw) as [string, FtMeta][];
+        for (const [id, row] of saved) if (row?.symbol) map.set(id, row);
+      }
+    } catch {
+      /* ignore a bad cache */
+    }
+    metaBook = map;
+    const response = await fetch("https://indexer.ref.finance/list-token").catch(() => null);
+    if (response?.ok) {
+      const data = (await response.json()) as Record<string, { symbol?: string; decimals?: number }>;
+      for (const [id, row] of Object.entries(data)) {
+        if (!row?.symbol) continue;
+        map.set(id.toLowerCase(), { symbol: row.symbol, decimals: Number(row.decimals) || 0 });
+      }
+      metaBook = map;
+      try {
+        localStorage.setItem("asgard-ft-meta", JSON.stringify([...map.entries()]));
+      } catch {
+        /* private mode */
+      }
+    }
+    return map;
+  })();
+  return metaJob;
+}
+
+if (typeof window !== "undefined") void loadMeta();
+
+function contractLabel(id: string) {
+  const head = id.split(".")[0]?.replace(/[^a-zA-Z0-9]/g, "") || "FT";
+  return head.slice(0, 12).toUpperCase();
+}
+
+function holdingsFrom(tokens: { contract_id?: string; balance?: string }[], near: number, meta: Map<string, FtMeta>) {
+  const holdings: ChainHolding[] = [];
+  if (near > 0) holdings.push({ symbol: "NEAR", amount: near, usd: near * (tokenPrice("NEAR") || 0), share: 0, contract: "near" });
+  for (const token of tokens) {
+    const id = token.contract_id?.toLowerCase() || "";
+    const raw = token.balance ?? "0";
+    if (!id || !/^\d+$/.test(raw) || raw === "0") continue;
+    const known = meta.get(id);
+    const decimals = known?.decimals ?? 0;
+    const amount = decimals > 0 ? Number(raw) / 10 ** decimals : 0;
+    if (decimals > 0 && (!Number.isFinite(amount) || amount <= 0)) continue;
+    const symbol = known?.symbol || contractLabel(id);
+    const price = tokenPrice(symbol, id);
+    holdings.push({ symbol, amount, usd: amount > 0 && price > 0 ? amount * price : 0, share: 0, contract: id });
+  }
+  return priced(holdings);
+}
+
 function priced(holdings: ChainHolding[]) {
   const value = holdings.reduce((sum, row) => sum + row.usd, 0);
   const unit = tokenPrice("USDT") || 1;
   for (const row of holdings) row.share = value > 0 ? (row.usd / value) * 100 : 0;
   holdings.sort((a, b) => b.usd - a.usd || b.amount - a.amount);
-  return { value, usdt: value / unit };
+  return { value, usdt: value / unit, holdings };
 }
 
 async function fetchChain(account: string): Promise<ChainWallet> {
   const id = encodeURIComponent(account);
-  const accountJob = fetch(`https://api.nearblocks.io/v1/account/${id}`);
-  const inventoryJob = fetch(`https://api.nearblocks.io/v1/account/${id}/inventory`);
-  const countJob = fetch(`https://api.nearblocks.io/v1/account/${id}/txns/count`);
-  const txJob = fetch(`https://api.nearblocks.io/v1/account/${id}/txns?per_page=50`);
-  const ftJob = fetch(`https://api.nearblocks.io/v1/account/${id}/ft-txns?per_page=50`);
-  const nftJob = fetch(`https://api.nearblocks.io/v1/account/${id}/nft-txns?per_page=50`);
-  const rpcJob = fetch("https://rpc.mainnet.near.org", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: "asgard", method: "query", params: { request_type: "view_account", finality: "final", account_id: account } }),
-  }).catch(() => null);
-  const [accountRes, inventoryRes, countRes, rpcRes] = await Promise.all([accountJob, inventoryJob, countJob, rpcJob]);
-  const accountBody = accountRes.ok ? ((await accountRes.json()) as { account?: { amount?: string }[] | { amount?: string } }) : {};
-  const inventoryBody = inventoryRes.ok
-    ? ((await inventoryRes.json()) as { inventory?: { fts?: { contract?: string; amount?: string; ft_meta?: { symbol?: string; decimals?: number; price?: number | string | null } }[] } })
-    : {};
-  const countBody = countRes.ok ? ((await countRes.json()) as { txns?: { count?: string }[] }) : {};
-  const txCount = Number(countBody.txns?.[0]?.count ?? 0) || 0;
-  const rpcBody = rpcRes && rpcRes.ok ? ((await rpcRes.json()) as { result?: { amount?: string } }) : {};
-  const accountRow = Array.isArray(accountBody.account) ? accountBody.account[0] : accountBody.account;
-  const inventoryTrusted = inventoryRes.ok && Array.isArray(inventoryBody.inventory?.fts);
-  const listedNear = accountRes.ok && accountRow?.amount != null ? Number(accountRow.amount) / 1e24 : null;
-  const rpcNear = rpcBody.result?.amount != null ? Number(rpcBody.result.amount) / 1e24 : null;
-  const near = listedNear ?? rpcNear;
-  const holdings: ChainHolding[] = [];
-  if (near != null && near > 0) holdings.push({ symbol: "NEAR", amount: near, usd: near * (tokenPrice("NEAR") || 0), share: 0 });
-  if (inventoryTrusted) {
-    for (const row of inventoryBody.inventory?.fts ?? []) {
-      const symbol = row.ft_meta?.symbol || "FT";
-      const decimals = row.ft_meta?.decimals ?? 0;
-      const amount = Number(row.amount ?? "0") / 10 ** Math.max(decimals, 0);
-      if (!Number.isFinite(amount) || amount <= 0) continue;
-      const metaPrice = Number(row.ft_meta?.price);
-      const price = (Number.isFinite(metaPrice) && metaPrice > 0 ? metaPrice : 0) || tokenPrice(symbol, row.contract);
-      const known = TOKENS.find((token) => token.chain === "NEAR" && row.contract && token.address?.toLowerCase() === row.contract.toLowerCase());
-      holdings.push({ symbol: known?.symbol || symbol, amount, usd: price > 0 ? amount * price : 0, share: 0 });
-    }
-  }
   const previous = chainCache.get(account) ?? peekChain(account);
-  const kept = holdings.length > 0 ? holdings : !inventoryTrusted && near == null ? previous?.holdings ?? [] : holdings;
-  const pricedRows = kept.map((row) => {
-    if (row.usd > 0) return row;
-    const old = previous?.holdings.find((item) => item.symbol === row.symbol);
-    return old && old.usd > 0 ? { ...row, usd: old.amount === row.amount ? old.usd : old.usd * (row.amount / Math.max(old.amount, 1e-12)) } : row;
-  });
-  const money = priced(pricedRows);
-  const partial: ChainWallet = {
-    value: money.value > 0 ? money.value : previous && pricedRows.length === 0 ? previous.value : money.value,
-    usdt: money.value > 0 ? money.usdt : previous && pricedRows.length === 0 ? previous.usdt ?? previous.value : money.usdt,
-    holdings: pricedRows,
-    trades: txCount || previous?.trades || 0,
-    txCount: txCount || previous?.txCount || 0,
+  const fastJob = fetch(`https://api.fastnear.com/v1/account/${id}/full`).catch(() => null);
+  const countJob = fetch(`https://api.nearblocks.io/v1/account/${id}/txns/count`).catch(() => null);
+  const txJob = fetch(`https://api.nearblocks.io/v1/account/${id}/txns?per_page=25`).catch(() => null);
+  const ftJob = fetch(`https://api.nearblocks.io/v1/account/${id}/ft-txns?per_page=25`).catch(() => null);
+  const fastRes = await fastJob;
+  const fast = fastRes?.ok
+    ? ((await fastRes.json()) as { tokens?: { contract_id?: string; balance?: string }[]; state?: { balance?: string } })
+    : null;
+  let near = Number(fast?.state?.balance ?? "0") / 1e24;
+  let tokenRows = fast?.tokens ?? [];
+  if (!fast) {
+    const rpc = await fetch("https://rpc.mainnet.near.org", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: "asgard", method: "query", params: { request_type: "view_account", finality: "final", account_id: account } }),
+    }).catch(() => null);
+    const rpcBody = rpc?.ok ? ((await rpc.json()) as { result?: { amount?: string } }) : {};
+    if (rpcBody.result?.amount) near = Number(rpcBody.result.amount) / 1e24;
+  }
+  const quick = holdingsFrom(tokenRows, Number.isFinite(near) ? near : 0, metaBook ?? seedMeta());
+  const seeded: ChainWallet = {
+    value: quick.value,
+    usdt: quick.usdt,
+    holdings: quick.holdings.length ? quick.holdings : previous?.holdings ?? [],
+    trades: previous?.trades ?? quick.holdings.length,
+    txCount: previous?.txCount ?? 0,
     ago: previous?.ago ?? "…",
     fills: previous?.fills ?? [],
   };
+  if (seeded.holdings.length) remember(account, seeded);
+  const meta = await loadMeta();
+  const named = holdingsFrom(tokenRows, Number.isFinite(near) ? near : 0, meta);
+  const holdings = named.holdings.length ? named.holdings : seeded.holdings;
+  const money = named.holdings.length ? named : { value: seeded.value, usdt: seeded.usdt };
+  const counted = await countJob;
+  const countBody = counted?.ok ? ((await counted.json()) as { txns?: { count?: string }[] }) : {};
+  const txCount = Number(countBody.txns?.[0]?.count ?? 0) || seeded.txCount;
+  const partial: ChainWallet = {
+    value: money.value,
+    usdt: money.usdt,
+    holdings,
+    trades: txCount || holdings.length,
+    txCount,
+    ago: seeded.ago,
+    fills: seeded.fills,
+  };
   remember(account, partial);
-  const [txRes, ftRes, nftRes] = await Promise.all([txJob, ftJob, nftJob]);
-  const txBody = txRes.ok ? ((await txRes.json()) as { txns?: ReceiptTxn[] }) : {};
-  const ftBody = ftRes.ok ? ((await ftRes.json()) as { txns?: FtTxn[] }) : {};
-  const nftBody = nftRes.ok ? ((await nftRes.json()) as { txns?: NftTxn[] }) : {};
-  const freshFills = txRes.ok || ftRes.ok || nftRes.ok ? mergeActivity(txBody.txns ?? [], ftBody.txns ?? [], nftBody.txns ?? []) : [];
-  const fills = freshFills.length > 0 ? freshFills : previous?.fills ?? [];
-  const next: ChainWallet = { ...partial, trades: partial.txCount || fills.length, ago: fills[0]?.ago ?? previous?.ago ?? "—", fills };
+  const [txRes, ftRes] = await Promise.all([txJob, ftJob]);
+  const txBody = txRes?.ok ? ((await txRes.json()) as { txns?: ReceiptTxn[] }) : {};
+  const ftBody = ftRes?.ok ? ((await ftRes.json()) as { txns?: FtTxn[] }) : {};
+  const freshFills = txRes?.ok || ftRes?.ok ? mergeActivity(txBody.txns ?? [], ftBody.txns ?? [], []) : [];
+  const fills = freshFills.length ? freshFills : previous?.fills ?? [];
+  const next: ChainWallet = { ...partial, ago: fills[0]?.ago ?? partial.ago, fills };
   remember(account, next);
   return next;
 }

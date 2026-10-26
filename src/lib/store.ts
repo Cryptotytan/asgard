@@ -108,7 +108,7 @@ function worth(symbol: string, amount: number, marks: Book) {
 }
 
 function push(activity: Activity[], title: string, detail: string, value: number): Activity[] {
-  return [{ id: `${Date.now()}-${title}`, title, detail, value }, ...activity].slice(0, 24);
+  return [{ id: `${Date.now()}-${title}`, title, detail, value }, ...activity].slice(0, 200);
 }
 
 function take(book: Book, symbol: string, amount: number) {
