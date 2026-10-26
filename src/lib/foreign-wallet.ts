@@ -130,30 +130,146 @@ export function addressFor(label: string, wallets: { near?: string | null; evm?:
   return "";
 }
 
-async function switchEvm(provider: Eip, meta: ChainMeta) {
-  if (!meta.chainId) return;
-  const chainId = `0x${meta.chainId.toString(16)}`;
-  try {
-    await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
-  } catch (error) {
-    const code = (error as { code?: number })?.code;
-    if (code !== 4902 || !meta.rpc) throw error;
-    await provider.request({
-      method: "wallet_addEthereumChain",
-      params: [{ chainId, chainName: meta.label, nativeCurrency: { name: meta.label, symbol: "ETH", decimals: 18 }, rpcUrls: [meta.rpc] }],
-    });
-  }
-  emit({ evmChainId: meta.chainId });
+const NATIVE = "0x0000000000000000000000000000000000000000";
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function hex(amount: string) {
+function padAddress(address: string) {
+  return address.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+}
+
+function isEvmAddress(value: string) {
+  return /^0x[a-fA-F0-9]{40}$/.test(value);
+}
+
+function hexAmount(amount: string) {
   return `0x${BigInt(amount).toString(16)}`;
 }
 
+function hexValue(value: unknown) {
+  if (value == null || value === "" || value === 0 || value === "0" || value === "0x" || value === "0x0") return "0x0";
+  const raw = String(value);
+  if (raw.startsWith("0x")) return raw;
+  return `0x${BigInt(raw).toString(16)}`;
+}
+
+function hexData(data?: string) {
+  if (!data || data === "0x") return "0x";
+  return data.startsWith("0x") ? data : `0x${data}`;
+}
+
+function nativeCoin(chainId: number) {
+  const known: Record<number, { name: string; symbol: string }> = {
+    56: { name: "BNB", symbol: "BNB" },
+    137: { name: "POL", symbol: "POL" },
+    43114: { name: "Avalanche", symbol: "AVAX" },
+    100: { name: "xDAI", symbol: "XDAI" },
+    196: { name: "OKB", symbol: "OKB" },
+  };
+  return known[chainId] ?? { name: "Ether", symbol: "ETH" };
+}
+
+async function ensureChain(provider: Eip, meta: ChainMeta) {
+  if (!meta.chainId) return;
+  const chainId = `0x${meta.chainId.toString(16)}`;
+  const current = (await provider.request({ method: "eth_chainId" }).catch(() => "0x0")) as string;
+  if (Number(current) !== meta.chainId) {
+    try {
+      await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
+    } catch (error) {
+      const code = (error as { code?: number })?.code;
+      if (code !== 4902 || !meta.rpc) throw error;
+      const coin = nativeCoin(meta.chainId);
+      await provider.request({
+        method: "wallet_addEthereumChain",
+        params: [{ chainId, chainName: meta.label, nativeCurrency: { name: coin.name, symbol: coin.symbol, decimals: 18 }, rpcUrls: [meta.rpc] }],
+      });
+    }
+  }
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const now = (await provider.request({ method: "eth_chainId" }).catch(() => "0x0")) as string;
+    if (Number(now) === meta.chainId) {
+      emit({ evmChainId: meta.chainId });
+      return;
+    }
+    await sleep(150);
+  }
+  throw new Error(`Switch the wallet to ${meta.label}. Nothing was sent.`);
+}
+
+async function assertCanPay(provider: Eip, meta: ChainMeta, from: string, tx: { from: string; to: string; data?: string; value?: string; chainId?: string }) {
+  let units = 100_000n;
+  try {
+    const estimate = (await provider.request({ method: "eth_estimateGas", params: [tx] })) as string;
+    units = (BigInt(estimate) * 12n) / 10n;
+  } catch {
+    throw new Error("The wallet simulated this and the contract rejects it. Nothing was sent.");
+  }
+  const balance = BigInt(((await provider.request({ method: "eth_getBalance", params: [from, "latest"] })) as string) || "0x0");
+  const gasPrice = BigInt(((await provider.request({ method: "eth_gasPrice" }).catch(() => "0x0")) as string) || "0x0");
+  const value = BigInt(tx.value && tx.value !== "0x" ? tx.value : "0x0");
+  if (balance < value + gasPrice * units) {
+    const coin = nativeCoin(meta.chainId ?? 1).symbol;
+    throw new Error(`Not enough ${coin} on ${meta.label} to pay gas. Nothing was sent.`);
+  }
+}
+
+async function tokenBalance(provider: Eip, token: string, owner: string) {
+  const data = `0x70a08231${padAddress(owner)}`;
+  const raw = (await provider.request({ method: "eth_call", params: [{ to: token, data }, "latest"] })) as string;
+  return BigInt(raw || "0x0");
+}
+
+async function tokenAllowance(provider: Eip, token: string, owner: string, spender: string) {
+  const data = `0xdd62ed3e${padAddress(owner)}${padAddress(spender)}`;
+  const raw = (await provider.request({ method: "eth_call", params: [{ to: token, data }, "latest"] })) as string;
+  return BigInt(raw || "0x0");
+}
+
+async function waitReceipt(provider: Eip, hash: string) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const receipt = (await provider.request({ method: "eth_getTransactionReceipt", params: [hash] })) as { status?: string } | null;
+    if (receipt) {
+      if (receipt.status === "0x0") throw new Error("The approval was rejected on chain. Nothing else was sent.");
+      return;
+    }
+    await sleep(1500);
+  }
+  throw new Error("The approval is still pending. Nothing else was sent.");
+}
+
+async function sendApprove(provider: Eip, meta: ChainMeta, from: string, token: string, spender: string, amount: bigint) {
+  const data = `0x095ea7b3${padAddress(spender)}${amount.toString(16).padStart(64, "0")}`;
+  const tx = { from, to: token, data, value: "0x0", chainId: `0x${(meta.chainId ?? 1).toString(16)}` };
+  await assertCanPay(provider, meta, from, tx);
+  const hash = (await provider.request({ method: "eth_sendTransaction", params: [tx] })) as string;
+  if (!hash) throw new Error("The wallet did not approve the token. Nothing else was sent.");
+  await waitReceipt(provider, hash);
+}
+
+export async function ensureEvmAllowance(chainLabel: string, token: string, spender: string, amount: string) {
+  const meta = chainByLabel(chainLabel);
+  if (!meta || meta.kind !== "evm") throw new Error(`No EVM wallet can sign ${chainLabel}. Nothing was sent.`);
+  if (!isEvmAddress(token) || token.toLowerCase() === NATIVE || !isEvmAddress(spender)) return;
+  const need = BigInt(amount);
+  if (need <= 0n) return;
+  const provider = ethereum();
+  if (!provider) throw new Error("Install MetaMask or Rabby. Nothing was sent.");
+  const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
+  const from = accounts[0];
+  if (!from) throw new Error("The EVM wallet has no account. Nothing was sent.");
+  await ensureChain(provider, meta);
+  const allowed = await tokenAllowance(provider, token, from, spender);
+  if (allowed >= need) return;
+  const usdt = token.toLowerCase() === "0xdac17f958d2ee523a2206206994597c13d831ec7";
+  if (usdt && allowed > 0n) await sendApprove(provider, meta, from, token, spender, 0n);
+  await sendApprove(provider, meta, from, token, spender, need);
+}
+
 function encodeTransfer(to: string, amount: string) {
-  const addr = to.toLowerCase().replace(/^0x/, "").padStart(64, "0");
-  const value = BigInt(amount).toString(16).padStart(64, "0");
-  return `0xa9059cbb${addr}${value}`;
+  return `0xa9059cbb${padAddress(to)}${BigInt(amount).toString(16).padStart(64, "0")}`;
 }
 
 export async function sendOriginDeposit(input: { blockchain: string; contract: string | null; depositAddress: string; amount: string }) {
@@ -171,11 +287,24 @@ async function sendEvm(meta: ChainMeta, token: string | null, to: string, amount
   const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
   const from = accounts[0];
   if (!from) throw new Error("The EVM wallet has no account. Nothing was sent.");
+  if (!isEvmAddress(to)) throw new Error("The deposit address is not an EVM address. Nothing was sent.");
   emit({ evm: from });
-  await switchEvm(provider, meta);
-  const tx = token
-    ? { from, to: token, data: encodeTransfer(to, amount), value: "0x0" }
-    : { from, to, value: hex(amount) };
+  await ensureChain(provider, meta);
+  const native = !token || token.toLowerCase() === NATIVE;
+  const chainId = `0x${(meta.chainId ?? 1).toString(16)}`;
+  if (native) {
+    const value = hexAmount(amount);
+    const tx = { from, to, value, chainId };
+    await assertCanPay(provider, meta, from, tx);
+    const hash = (await provider.request({ method: "eth_sendTransaction", params: [tx] })) as string;
+    if (!hash) throw new Error("The wallet did not return a transaction. Nothing else was sent.");
+    return hash;
+  }
+  if (!isEvmAddress(token)) throw new Error("That token address is not an EVM contract. Nothing was sent.");
+  const held = await tokenBalance(provider, token, from);
+  if (held < BigInt(amount)) throw new Error(`Not enough of this token on ${meta.label}. Nothing was sent.`);
+  const tx = { from, to: token, data: encodeTransfer(to, amount), value: "0x0", chainId };
+  await assertCanPay(provider, meta, from, tx);
   const hash = (await provider.request({ method: "eth_sendTransaction", params: [tx] })) as string;
   if (!hash) throw new Error("The wallet did not return a transaction. Nothing else was sent.");
   return hash;
@@ -184,18 +313,18 @@ async function sendEvm(meta: ChainMeta, token: string | null, to: string, amount
 export async function sendEvmCall(chainLabel: string, tx: { to: string; data?: string; value?: string }) {
   const meta = chainByLabel(chainLabel);
   if (!meta || meta.kind !== "evm") throw new Error(`No EVM wallet can sign ${chainLabel}. Nothing was sent.`);
+  if (!isEvmAddress(tx.to)) throw new Error("The route did not return an EVM address. Nothing was sent.");
   const provider = ethereum();
   if (!provider) throw new Error("Install MetaMask or Rabby. Nothing was sent.");
   const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
   const from = accounts[0];
   if (!from) throw new Error("The EVM wallet has no account. Nothing was sent.");
   emit({ evm: from });
-  await switchEvm(provider, meta);
-  const value = !tx.value || tx.value === "0" || tx.value === "0x0" ? "0x0" : tx.value.startsWith("0x") ? tx.value : `0x${BigInt(tx.value).toString(16)}`;
-  const hash = (await provider.request({
-    method: "eth_sendTransaction",
-    params: [{ from, to: tx.to, data: tx.data ?? "0x", value }],
-  })) as string;
+  await ensureChain(provider, meta);
+  const value = hexValue(tx.value);
+  const call = { from, to: tx.to, data: hexData(tx.data), value, chainId: `0x${(meta.chainId ?? 1).toString(16)}` };
+  await assertCanPay(provider, meta, from, call);
+  const hash = (await provider.request({ method: "eth_sendTransaction", params: [call] })) as string;
   if (!hash) throw new Error("The wallet did not return a transaction. Nothing else was sent.");
   return hash;
 }

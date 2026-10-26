@@ -1,5 +1,5 @@
 import { chainByLabel, validAddress } from "@/lib/chains";
-import { sendEvmCall, sendSolanaSerialized } from "@/lib/foreign-wallet";
+import { ensureEvmAllowance, sendEvmCall, sendSolanaSerialized } from "@/lib/foreign-wallet";
 import { executeIntent, parseUnits, quoteIntent } from "@/lib/intents";
 import type { Token } from "@/lib/market";
 
@@ -23,8 +23,8 @@ export type LiveRoute = {
 type LifiStep = {
   id?: string;
   tool?: string;
-  action?: { fromChainId?: number; fromAmount?: string };
-  estimate?: { toAmount?: string; toAmountUSD?: string; feeCosts?: { amountUSD?: string }[]; gasCosts?: { amountUSD?: string }[] };
+  action?: { fromChainId?: number; fromAmount?: string; fromToken?: { address?: string } };
+  estimate?: { approvalAddress?: string; toAmount?: string; toAmountUSD?: string; feeCosts?: { amountUSD?: string }[]; gasCosts?: { amountUSD?: string }[] };
 };
 
 type LifiRoute = {
@@ -126,7 +126,12 @@ async function runLifi(steps: LifiStep[], fallback: string) {
     if (fromChain === SOL_CHAIN) hash = await sendSolanaSerialized(tx.data);
     else {
       if (!tx.to) throw new Error("The route did not return a transaction. Nothing was sent.");
-      hash = await sendEvmCall(chainOf(fromChain) || fallback, { to: tx.to, data: tx.data, value: tx.value });
+      const chain = chainOf(fromChain) || fallback;
+      const spender = step.estimate?.approvalAddress;
+      const token = step.action?.fromToken?.address;
+      const amount = step.action?.fromAmount;
+      if (spender && token && amount) await ensureEvmAllowance(chain, token, spender, amount);
+      hash = await sendEvmCall(chain, { to: tx.to, data: tx.data, value: tx.value });
     }
   }
   return hash || "SENT";
