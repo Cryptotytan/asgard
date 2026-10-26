@@ -351,7 +351,7 @@ function TokenMenu({ token, mode, onPick }: { token: Token; scanning: boolean; m
           <span className="flex items-center gap-1.5 font-semibold">
             <span className="truncate">
               {displayName(token)}
-              <span className="font-normal text-muted">/USDT</span>
+              {mode === "perp" && <span className="font-normal text-muted">/USDT</span>}
             </span>
             {token.verified && <VerifiedMark />}
             <ChevronDown className={`size-4 text-muted ${open ? "rotate-180" : ""}`} />
@@ -682,6 +682,7 @@ function Ticket({
   const foreign = useForeign();
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [perpSide, setPerpSide] = useState<Side>("long");
+  const [perpUnit, setPerpUnit] = useState<"usdt" | "base">("usdt");
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
   const [limitPrice, setLimitPrice] = useState("");
   const [amount, setAmount] = useState(String(quickUsd));
@@ -749,6 +750,8 @@ function Ticket({
   const receive = picked?.receive ?? 0;
   const blocked = isHoneypot(token);
   const balance = balances[pay.symbol] ?? 0;
+  const usdtFree = balances.USDT ?? 0;
+  const perpNotional = perpUnit === "usdt" ? qty : qty * token.price;
   const windows = [
     ["5M", token.windows.m5],
     ["1H", token.windows.h1],
@@ -773,14 +776,14 @@ function Ticket({
     }
     if (viewMode === "perp") {
       const limit = perpType === "limit" ? Number(limitPrice) || token.price : undefined;
-      const ok = useDesk.getState().openPerp(`${token.symbol}-PERP`, token.symbol, perpSide, qty, lev, {
+      const ok = useDesk.getState().openPerp(`${token.symbol}-PERP`, token.symbol, perpSide, perpNotional, lev, {
         tp: Number(tp) || undefined,
         sl: Number(sl) || undefined,
         reduceOnly,
         limit,
       });
       const guards = [tp && `TP ${tp}`, sl && `SL ${sl}`, reduceOnly && "reduce-only"].filter(Boolean).join(" · ");
-      onFlash(ok ? `${limit ? "Limit " : ""}${perpSide} ${token.symbol} ${lev}x ${marginMode}${guards ? ` · ${guards}` : ""}. USDC margin is locked until this position closes.` : "Not enough USDC margin");
+      onFlash(ok ? `${limit ? "Limit " : ""}${perpSide} ${token.symbol}/USDT ${lev}x ${marginMode}${guards ? ` · ${guards}` : ""}. USDT margin is locked until this position closes.` : "Not enough USDT margin");
       return;
     }
     if (orderType === "limit") {
@@ -924,8 +927,17 @@ function Ticket({
           className="min-w-0 flex-1 bg-transparent font-mono text-base outline-none"
         />
         <span className="flex items-center gap-1 text-sm">
-          <TokenIcon token={viewMode === "perp" || side === "buy" ? tokenBySymbol("USDC") : token} className="size-4" />
-          {viewMode === "perp" ? "USD" : side === "buy" ? "USDC" : token.symbol}
+          {viewMode === "perp" ? (
+            <button type="button" onClick={() => setPerpUnit((current) => (current === "usdt" ? "base" : "usdt"))} className="flex items-center gap-1">
+              <TokenIcon token={perpUnit === "usdt" ? tokenBySymbol("USDT") : token} className="size-4" />
+              {perpUnit === "usdt" ? "USDT" : token.symbol}
+            </button>
+          ) : (
+            <>
+              <TokenIcon token={side === "buy" ? tokenBySymbol("USDC") : token} className="size-4" />
+              {side === "buy" ? "USDC" : token.symbol}
+            </>
+          )}
         </span>
       </label>
       {viewMode === "spot" && orderType === "limit" && (
@@ -947,7 +959,7 @@ function Ticket({
           <button
             key={preset}
             type="button"
-            onClick={() => setAmount(String(viewMode === "perp" || side === "buy" ? preset : Number((preset / token.price).toPrecision(6))))}
+            onClick={() => setAmount(String(viewMode === "perp" ? (perpUnit === "usdt" ? preset : Number((preset / Math.max(token.price, 1e-12)).toPrecision(6))) : side === "buy" ? preset : Number((preset / token.price).toPrecision(6))))}
             className="h-8 rounded-lg bg-surface-2 text-xs sm:h-10 sm:text-sm"
           >
             {preset}
@@ -963,7 +975,7 @@ function Ticket({
           aria-label="Percent of balance"
           onChange={(event) => {
             const pct = Number(event.target.value) / 100;
-            const base = viewMode === "perp" ? (balances.USDC ?? 0) * lev : balance;
+            const base = viewMode === "perp" ? (perpUnit === "usdt" ? usdtFree * lev : (usdtFree * lev) / Math.max(token.price, 1e-12)) : balance;
             setAmount(String(Number((base * pct).toPrecision(6))));
           }}
         />
@@ -971,8 +983,8 @@ function Ticket({
       </label>
 
       <div className="mt-2 space-y-1 text-[11px] text-muted lg:hidden">
-        <div className="flex justify-between"><span>Avbl</span><span className="font-mono text-fg">{bal(viewMode === "perp" ? (balances.USDC ?? 0) : balance)} {viewMode === "perp" || side === "buy" ? "USDT" : token.symbol}</span></div>
-        <div className="flex justify-between"><span>Max</span><span className="font-mono text-fg">{bal(viewMode === "perp" ? (balances.USDC ?? 0) * lev : balance)}</span></div>
+        <div className="flex justify-between"><span>Avbl</span><span className="font-mono text-fg">{bal(viewMode === "perp" ? usdtFree : balance)} {viewMode === "perp" ? "USDT" : side === "buy" ? "USDC" : token.symbol}</span></div>
+        <div className="flex justify-between"><span>Max</span><span className="font-mono text-fg">{bal(viewMode === "perp" ? (perpUnit === "usdt" ? usdtFree * lev : (usdtFree * lev) / Math.max(token.price, 1e-12)) : balance)} {viewMode === "perp" ? (perpUnit === "usdt" ? "USDT" : token.symbol) : ""}</span></div>
         <div className="flex justify-between"><span>Est. fee</span><span className="font-mono text-fg">{picked ? `${(picked.feeBps / 100).toFixed(2)}%` : "—"}</span></div>
       </div>
 
@@ -1151,12 +1163,12 @@ function Ticket({
         onClick={submit}
         className="press mt-2 h-10 w-full rounded-full bg-primary text-sm font-semibold text-primary-fg disabled:opacity-50 lg:rounded-xl lg:h-12"
       >
-        {blocked ? "Swap blocked" : scanning || busy ? "Scanning" : connected ? (viewMode === "perp" ? `Open ${perpSide}` : side === "buy" ? "Buy" : "Sell") : "Enable Trading"}
+        {blocked ? "Swap blocked" : scanning || busy ? "Scanning" : connected ? (viewMode === "perp" ? `Open ${perpSide} ${token.symbol}/USDT` : side === "buy" ? "Buy" : "Sell") : "Enable Trading"}
       </button>
 
       <dl className="mt-3 hidden grid-cols-2 gap-2 font-mono text-xs sm:grid">
         <Stat k="Holding" v={usd((balances[token.symbol] ?? 0) * token.price)} />
-        <Stat k="USDC" v={usd(balances.USDC ?? 0)} />
+        <Stat k={viewMode === "perp" ? "USDT" : "USDC"} v={usd(viewMode === "perp" ? usdtFree : (balances.USDC ?? 0))} />
         <Stat k="Bought" v={usd(fills.bought)} />
         <Stat k="Sold" v={usd(fills.sold)} />
       </dl>

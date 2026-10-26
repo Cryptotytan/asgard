@@ -253,8 +253,8 @@ export const useDesk = create<Desk>((set, get) => ({
     const copy = cloneBook(chain);
     const state = get();
     const locked = lockedMargin(state.positions, state.orders);
-    const usdc = Math.max(0, (copy.USDC ?? 0) - locked);
-    set({ chain: copy, balances: { ...copy, USDC: usdc } });
+    const usdt = Math.max(0, (copy.USDT ?? 0) - locked);
+    set({ chain: copy, balances: { ...copy, USDT: usdt } });
   },
   setLending: (supplied, loans) => set({ supplied: cloneBook(supplied), loans: cloneBook(loans) }),
   log: (title, detail, value) => set({ activity: push(get().activity, title, detail, value) }),
@@ -278,7 +278,7 @@ export const useDesk = create<Desk>((set, get) => ({
     if ((balances[order.pay] ?? 0) + 1e-9 < order.amount && order.kind === "spot") return false;
     if (order.kind === "perp") {
       const margin = order.amount / Math.max(order.leverage ?? 1, 1);
-      if ((balances.USDC ?? 0) + 1e-9 < margin) return false;
+      if ((balances.USDT ?? 0) + 1e-9 < margin) return false;
     }
     set({ orders: [{ ...order, id: `${order.symbol}-${Date.now()}` }, ...orders].slice(0, 20) });
     return true;
@@ -299,7 +299,7 @@ export const useDesk = create<Desk>((set, get) => ({
         side,
         amount: notional,
         limit: limit ?? mark,
-        pay: "USDC",
+        pay: "USDT",
         receive: base,
         base,
         leverage,
@@ -310,7 +310,7 @@ export const useDesk = create<Desk>((set, get) => ({
     if (extra?.reduceOnly) return reducePosition(base, side, notional);
     const entry = limit && marketable ? limit : mark;
     const margin = notional / leverage;
-    const nextBal = take(state.balances, "USDC", margin);
+    const nextBal = take(state.balances, "USDT", margin);
     if (!nextBal) return false;
     const size = notional / entry;
     const existing = state.positions.find((position) => position.base === base && position.side === side);
@@ -359,7 +359,7 @@ export const useDesk = create<Desk>((set, get) => ({
     const pnl = position.side === "long" ? (mark - position.entry) * position.size : (position.entry - mark) * position.size;
     const back = position.margin;
     set({
-      balances: add(state.balances, "USDC", back),
+      balances: add(state.balances, "USDT", back),
       positions: state.positions.filter((item) => item.id !== id),
       realized: state.realized + pnl,
       wins: state.wins + (pnl >= 0 ? 1 : 0),
@@ -504,7 +504,7 @@ export const useDesk = create<Desk>((set, get) => ({
         continue;
       }
       const margin = order.amount / Math.max(order.leverage ?? 1, 1);
-      const paid = take(balances, "USDC", margin);
+      const paid = take(balances, "USDT", margin);
       if (!paid) {
         kept.push(order);
         continue;
@@ -540,7 +540,7 @@ export const useDesk = create<Desk>((set, get) => ({
         continue;
       }
       const pnl = position.side === "long" ? (mark - position.entry) * position.size : (position.entry - mark) * position.size;
-      balances = add(balances, "USDC", position.margin);
+      balances = add(balances, "USDT", position.margin);
       realized += pnl;
       wins += pnl >= 0 ? 1 : 0;
       closes += 1;
@@ -610,7 +610,7 @@ function reducePosition(base: string, side: Side, notional: number) {
       ? state.positions.filter((item) => item.id !== position.id)
       : state.positions.map((item) => (item.id === position.id ? { ...item, size: left, margin: item.margin - released } : item));
   useDesk.setState({
-    balances: add(state.balances, "USDC", released),
+    balances: add(state.balances, "USDT", released),
     positions,
     realized: state.realized + pnl,
     wins: state.wins + (left <= position.size * 0.001 && pnl >= 0 ? 1 : 0),
