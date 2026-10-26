@@ -215,8 +215,8 @@ const tails = new Map<string, Promise<unknown>>();
 const firstSeen = new Map<string, number>();
 
 function historyPlan(frame: string) {
-  // DefiLlama has no regular 1-minute book. 1m rides the finest real series, which is 5m.
-  if (frame === "1m" || frame === "5m") return { period: "5m", step: 300, search: 1_800 };
+  if (frame === "1m") return { period: "1m", step: 60, search: 180 };
+  if (frame === "5m") return { period: "5m", step: 300, search: 1_800 };
   if (frame === "15m") return { period: "15m", step: 900, search: 3_600 };
   if (frame === "1H") return { period: "1h", step: 3600, search: 7_200 };
   if (frame === "4H") return { period: "4h", step: 4 * 3600, search: 86_400 };
@@ -329,9 +329,8 @@ function remember(symbol: string, bars: Candle[], step: number) {
   sources.set(symbol, list);
   for (const frame of ALL_FRAMES) {
     const frameStep = bucket(frame);
-    const ride = frame === "1m" && step === 300;
-    if (step > frameStep && !ride) continue;
-    const agg = step === frameStep || ride ? bars : aggregateBars(bars, frameStep);
+    if (step > frameStep) continue;
+    const agg = step === frameStep ? bars : aggregateBars(bars, frameStep);
     if (agg.length < 2) continue;
     const key = `${symbol}:${frame}`;
     const have = candles.get(key);
@@ -347,6 +346,7 @@ export function warmCharts(symbol: string) {
   warming.add(symbol);
   void (async () => {
     await loadCandles(symbol, "15m").catch(() => undefined);
+    await loadCandles(symbol, "1m").catch(() => undefined);
     await loadCandles(symbol, "5m").catch(() => undefined);
     await loadCandles(symbol, "1H").catch(() => undefined);
   })().finally(() => {

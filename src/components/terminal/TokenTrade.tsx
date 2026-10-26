@@ -10,6 +10,7 @@ import {
   fmt,
   isHoneypot,
   qualityScore,
+  qty as bal,
   scoreLabel,
   signedPct,
   tokenBySymbol,
@@ -414,7 +415,7 @@ function Positions({ symbol, mark }: { symbol: string; mark: number }) {
         <span>
           <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted">Spot</span>
           <span className="mt-0.5 block font-mono text-sm">
-            {fmt(held)} {symbol}
+            {bal(held)} {symbol}
           </span>
         </span>
         <span className="font-mono text-sm">{usd(held * mark)}</span>
@@ -540,7 +541,7 @@ function Holders({ token }: { token: Token }) {
                 <td className="truncate py-2 pr-3 text-left" title={row.account}>
                   {row.account}
                 </td>
-                <td className="whitespace-nowrap py-2 text-right">{fmt(row.amount)}</td>
+                <td className="whitespace-nowrap py-2 text-right">{bal(row.amount)}</td>
                 <td className="whitespace-nowrap py-2 text-right text-muted">{row.share == null ? "—" : `${row.share.toFixed(2)}%`}</td>
               </tr>
             ))}
@@ -945,7 +946,7 @@ function Ticket({
       ) : (
         <div className="mt-3">
           <div className="flex items-center justify-between text-xs text-muted">
-            <span className="font-mono">Bal {fmt(balance)} {pay.symbol}</span>
+            <span className="font-mono">Bal {bal(balance)} {pay.symbol}</span>
             <button type="button" onClick={() => setSlip(SLIPS[(SLIPS.indexOf(slip) + 1) % SLIPS.length])}>
               Slippage {slip}
             </button>

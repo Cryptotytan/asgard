@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { borrowRoom, fmt, healthFactor, LEND_MARKETS, tokenBySymbol, TOKENS, usd } from "@/lib/market";
+import { borrowRoom, fmt, healthFactor, LEND_MARKETS, qty, tokenBySymbol, TOKENS, usd } from "@/lib/market";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { borrowFromBurrow, repayOnBurrow, supplyOnBurrow, withdrawFromBurrow } from "@/lib/burrow";
 import { syncWallet } from "@/lib/near-wallet";
@@ -49,7 +49,7 @@ export function LendDesk() {
     const wallet = useDesk.getState().accountId;
     if (!wallet) return;
     if ((kind === "supply" || kind === "repay") && (kind === "repay" ? loans[key] ?? 0 : chain[key] ?? 0) + 1e-8 < n) {
-      setNote(kind === "repay" ? "This account does not owe that much." : `This wallet holds ${fmt(chain[key] ?? 0)} ${key}.`);
+      setNote(kind === "repay" ? "This account does not owe that much." : `This wallet holds ${qty(chain[key] ?? 0)} ${key}.`);
       return;
     }
     if (kind === "withdraw" && (supplied[key] ?? 0) + 1e-8 < n) {
@@ -113,7 +113,7 @@ export function LendDesk() {
                       <div className="min-w-0">
                         <p className="font-semibold">{key}</p>
                         <p className="truncate font-mono text-[10px] text-muted">
-                          wallet {fmt(chain[key] ?? 0)} · {fmt(supplied[key] ?? 0)} supplied · {fmt(loans[key] ?? 0)} debt
+                          wallet {qty(chain[key] ?? 0)} · {qty(supplied[key] ?? 0)} supplied · {qty(loans[key] ?? 0)} debt
                         </p>
                       </div>
                     </div>

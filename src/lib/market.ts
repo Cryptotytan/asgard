@@ -527,6 +527,13 @@ export function fmt(n: number, digits = 4) {
   return n.toLocaleString("en-US", { maximumFractionDigits: fraction, minimumFractionDigits: abs >= 100 ? 2 : 0 });
 }
 
+export function qty(n: number) {
+  if (!Number.isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  if (abs > 0 && abs < 0.005) return n < 0 ? ">-0.01" : "<0.01";
+  return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
 export function usd(n: number) {
   if (!Number.isFinite(n)) return "—";
   return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });

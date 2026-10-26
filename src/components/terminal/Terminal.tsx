@@ -9,7 +9,7 @@ import { SwapDesk } from "@/components/terminal/SwapDesk";
 import { TokenTrade } from "@/components/terminal/TokenTrade";
 import { TrackerDesk } from "@/components/terminal/TrackerDesk";
 import { VaultDesk } from "@/components/terminal/VaultDesk";
-import { canPerp, fmt, money, sealMajors, tokenBySymbol, TOKENS } from "@/lib/market";
+import { canPerp, qty, sealMajors, tokenBySymbol, TOKENS, usd } from "@/lib/market";
 import { setWalletOpener, useDesk } from "@/lib/store";
 import { startLiveFeed } from "@/lib/live";
 import { visitToken } from "@/lib/watch";
@@ -310,9 +310,9 @@ export function Terminal() {
             <span className="font-mono text-sm text-primary">{positions.length}</span>
           </button>
           <div className="flex min-w-0 flex-1 items-center justify-evenly gap-2 sm:justify-center sm:gap-10">
-            <FooterStat token={tokenBySymbol("USDC")} value={connected ? money(balances.USDC ?? 0) : "—"} />
-            <FooterStat token={tokenBySymbol("NEAR")} value={connected ? fmt(balances.NEAR ?? 0, 2) : "—"} />
-            <FooterStat label="Wallet" value={connected ? money(walletUsd) : "—"} className="hidden sm:flex" />
+            <FooterStat token={tokenBySymbol("USDC")} value={connected ? usd(balances.USDC ?? 0) : "—"} />
+            <FooterStat token={tokenBySymbol("NEAR")} value={connected ? qty(balances.NEAR ?? 0) : "—"} />
+            <FooterStat label="Wallet" value={connected ? usd(walletUsd) : "—"} className="hidden sm:flex" />
           </div>
           <button type="button" onClick={() => setView("swap")} className="h-10 shrink-0 rounded-xl bg-primary px-3 text-xs font-semibold text-primary-fg sm:px-4">
             <span className="sm:hidden">Route</span>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { TokenIcon, ChainBadge } from "@/components/terminal/TokenIcon";
 import { PnlCard } from "@/components/terminal/PnlCard";
 import { linkedWallets, useForeign, WALLET_MARK, type LinkedWallet } from "@/lib/foreign-wallet";
-import { fmt, money, TOKENS, usd, type Token } from "@/lib/market";
+import { money, qty, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 import { useHoldings } from "@/lib/wallet-holdings";
 import { loadChainHistory, useWalletHistory, type WalletTx } from "@/lib/wallet-history";
@@ -284,7 +284,7 @@ function Holdings({
               </span>
               <span className="mt-0.5 flex items-baseline justify-between gap-2 text-xs text-muted">
                 <span className="truncate">{row.token.chain} · {row.wallet}</span>
-                <span className="shrink-0 font-mono">{fmt(row.amount)}</span>
+                <span className="shrink-0 font-mono">{qty(row.amount)}</span>
               </span>
               <span className="mt-2 block h-1 overflow-hidden rounded-full bg-bg">
                 <span className="block h-full rounded-full bg-primary" style={{ width: `${share}%` }} />
@@ -323,7 +323,7 @@ function Book({
               {token && <TokenIcon token={token} />}
               <span className="flex-1 font-semibold">{row.symbol}</span>
               <span className={`text-right font-mono text-xs ${debt ? "text-danger" : ""}`}>
-                <span className="block">{fmt(row.amount)}</span>
+                <span className="block">{qty(row.amount)}</span>
                 <span className="text-muted">{usd(row.usd)}</span>
               </span>
             </li>

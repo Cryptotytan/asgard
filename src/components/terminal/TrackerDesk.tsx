@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Bell, Eye, EyeOff, Pencil, Plus, Search, Trash2, Wallet, X } from "lucide-react";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
-import { signedPct, scoreLabel, TOKENS, usd, type Token } from "@/lib/market";
+import { qty, signedPct, scoreLabel, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 import {
   EMPTY_TRACKER,
@@ -517,7 +517,7 @@ function WalletDetail({
               {held.map((row) => (
                 <tr key={row.symbol} className="border-t border-line">
                   <td className="py-2 font-semibold">{row.symbol}</td>
-                  <td className="font-mono">{row.amount.toFixed(4)}</td>
+                  <td className="font-mono">{qty(row.amount)}</td>
                   <td className="font-mono">{row.usd ? `$${row.usd.toFixed(2)}` : "—"}</td>
                   <td><span className="block h-1.5 w-24 overflow-hidden rounded-full bg-bg"><i className="block h-full bg-primary" style={{ width: `${row.share}%` }} /></span></td>
                   <td className="text-right"><button type="button" onClick={() => onTrade(row.symbol)} className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-black">Buy</button></td>

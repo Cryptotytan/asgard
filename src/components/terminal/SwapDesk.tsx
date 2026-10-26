@@ -3,7 +3,7 @@ import { ArrowDownUp, ChevronDown, LoaderCircle, ShieldAlert } from "lucide-reac
 import { TokenIcon, TokenPicker, VerifiedMark, ChainBadge } from "@/components/terminal/TokenIcon";
 import { linkedWallets, useForeign, WALLET_MARK, type LinkedWallet } from "@/lib/foreign-wallet";
 import { canSign, chainByLabel, validAddress } from "@/lib/chains";
-import { fmt, scoreLabel, tokenBySymbol, tokenLabel, usd } from "@/lib/market";
+import { fmt, qty, scoreLabel, tokenBySymbol, tokenLabel, usd } from "@/lib/market";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 import { useDesk } from "@/lib/store";
 import { refreshBalances, useHoldings } from "@/lib/wallet-holdings";
@@ -266,7 +266,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
         <h2 className="text-base font-semibold tracking-tight sm:text-xl">Swap your assets</h2>
         <p className="mt-1 hidden text-sm text-muted lg:block">Pick a connected wallet on each side. You sign on the chain you sell.</p>
         <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-muted sm:mt-3 sm:text-xs">
-          <span className="min-w-0 truncate font-mono">{sellHold.loading ? "Reading wallet…" : sellActive ? `Bal ${fmt(held)} · ${usd(held * sell.price)}` : "No wallet"}</span>
+          <span className="min-w-0 truncate font-mono">{sellHold.loading ? "Reading wallet…" : sellActive ? `Bal ${qty(held)} · ${usd(held * sell.price)}` : "No wallet"}</span>
           <span className="flex gap-1">
             {[
               [0.25, "25%"],

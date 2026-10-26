@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fmt, tokenBySymbol, usd } from "@/lib/market";
+import { fmt, qty, tokenBySymbol, usd } from "@/lib/market";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { executeIntent, parseUnits } from "@/lib/intents";
 import { stakeNear, syncWallet } from "@/lib/near-wallet";
@@ -34,15 +34,15 @@ export function VaultDesk() {
     if (kind === "in" && symbol === "NEAR") {
       const liquid = nearYocto ? Number(nearYocto) / 1e24 : 0;
       if (liquid + 1e-8 < n + 0.05) {
-        setNote(`This account has ${fmt(liquid)} liquid NEAR. Leave about 0.05 NEAR for gas.`);
+        setNote(`This account has ${qty(liquid)} liquid NEAR. Leave about 0.05 NEAR for gas.`);
         return;
       }
     } else if (kind === "in" && (chain[symbol] ?? 0) + 1e-8 < n) {
-      setNote(`This wallet holds ${fmt(chain[symbol] ?? 0)} ${symbol}.`);
+      setNote(`This wallet holds ${qty(chain[symbol] ?? 0)} ${symbol}.`);
       return;
     }
     if (kind === "out" && staked + 1e-8 < n) {
-      setNote(`This account holds ${fmt(staked)} stNEAR.`);
+      setNote(`This account holds ${qty(staked)} stNEAR.`);
       return;
     }
     setBusy(true);
@@ -110,7 +110,7 @@ export function VaultDesk() {
                     <TokenIcon token={token} className="size-5 sm:size-6" />
                     <div>
                       <p className="text-sm font-semibold">{token.symbol}</p>
-                      <p className="font-mono text-[10px] text-muted sm:text-xs">{item === "STNEAR" ? `${fmt(held)} staked` : "pay with this"} · wallet {fmt(chain[item] ?? 0)}</p>
+                      <p className="font-mono text-[10px] text-muted sm:text-xs">{item === "STNEAR" ? `${qty(held)} staked` : "pay with this"} · wallet {qty(chain[item] ?? 0)}</p>
                     </div>
                   </div>
                   <p className="font-mono text-xs sm:text-sm">{usd(held * token.price)}</p>

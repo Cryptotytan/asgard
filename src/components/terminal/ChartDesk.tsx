@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Check, ShieldAlert } from "lucide-react";
 import { CandleChart } from "@/components/terminal/CandleChart";
 import { TokenIcon, TokenPicker } from "@/components/terminal/TokenIcon";
-import { fmt, scoreLabel, tokenBySymbol, usd, type Print } from "@/lib/market";
+import { fmt, qty, scoreLabel, tokenBySymbol, usd, type Print } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
 import { candleMeta, liveCandles, livePrints, loadOlderCandles, loadPrints, watchCandles } from "@/lib/live";
 import { executeIntent } from "@/lib/intents";
@@ -157,7 +157,7 @@ function Positions({ mode, symbol, mark }: { mode: "spot" | "perp"; symbol: stri
     const held = balances[symbol] ?? 0;
     return (
       <p className="py-4 font-mono text-sm">
-        Holding {fmt(held)} {symbol} · {usd(held * mark)}
+        Holding {qty(held)} {symbol} · {usd(held * mark)}
       </p>
     );
   }
