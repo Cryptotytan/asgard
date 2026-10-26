@@ -477,9 +477,12 @@ export const MARKETS = [
 
 export function canPerp(symbol: string) {
   const token = TOKENS.find((item) => item.symbol === symbol);
-  if (!token || !token.listed || !(token.price > 0) || token.kind === "meme") return false;
-  const base = token.symbol.split(".")[0];
-  return MARKETS.some((market) => market.base === token.symbol || market.base === base);
+  if (!token || token.kind === "meme") return false;
+  const base = token.symbol.split(".")[0].toUpperCase();
+  const known = MARKETS.some((market) => market.base === token.symbol.toUpperCase() || market.base === base);
+  if (!known) return false;
+  if (MARKETS.some((market) => market.base === token.symbol.toUpperCase())) return true;
+  return Boolean(token.listed && token.price > 0);
 }
 
 export const LEND_MARKETS: { symbol: string; token?: string; supplyApy: number; borrowApy: number }[] = [];

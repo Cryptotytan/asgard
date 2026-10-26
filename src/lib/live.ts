@@ -695,12 +695,35 @@ function contractOf(symbol: string, address?: string) {
   return { token, raw };
 }
 
+async function evmHolders(address: string, decimals: number): Promise<HolderRow[]> {
+  const [listRes, infoRes] = await Promise.all([
+    fetch(`https://api.ethplorer.io/getTopTokenHolders/${address}?apiKey=freekey&limit=15`),
+    decimals > 0 ? Promise.resolve(null) : fetch(`https://api.ethplorer.io/getTokenInfo/${address}?apiKey=freekey`),
+  ]);
+  if (!listRes.ok) return [];
+  const list = (await listRes.json()) as { holders?: { address?: string; balance?: number; share?: number }[] };
+  let places = decimals;
+  if (!(places > 0) && infoRes && infoRes.ok) {
+    const info = (await infoRes.json()) as { decimals?: string | number };
+    places = Number(info.decimals) || 0;
+  }
+  return (list.holders ?? [])
+    .map((row) => {
+      const balance = Number(row.balance) || 0;
+      const amount = places > 0 && balance > 1e12 ? balance / 10 ** places : balance;
+      const share = Number(row.share);
+      return { account: row.address || "—", amount, share: Number.isFinite(share) ? share : null };
+    })
+    .filter((row) => row.amount > 0 || (row.share ?? 0) > 0)
+    .slice(0, 15);
+}
+
 export async function loadHolders(symbol: string, address?: string): Promise<{ rows: HolderRow[]; top10: number | null; count: number | null; bands: HolderBand[] }> {
   const { token, raw } = contractOf(symbol, address);
   const near = token?.chain === "NEAR" || (!token && Boolean(raw));
   const network = token ? GECKO_NET[token.chain] : "";
   const [holdersRes, supply, decimals, info] = await Promise.all([
-    near && raw ? fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(raw)}/holders?page=1&per_page=10`).catch(() => null) : Promise.resolve(null),
+    near && raw ? fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(raw)}/holders?page=1&per_page=15`).catch(() => null) : Promise.resolve(null),
     near && raw ? ftSupplyRaw(raw) : Promise.resolve("0"),
     near && raw ? ftDecimals(raw) : Promise.resolve(0),
     network && raw ? geckoGet(`https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${encodeURIComponent(raw)}/info`) : Promise.resolve(null),
@@ -711,7 +734,12 @@ export async function loadHolders(symbol: string, address?: string): Promise<{ r
       const rawAmount = (row.amount ?? "0").replace(/\D/g, "") || "0";
       return { account: row.account || "—", amount: humanRaw(rawAmount, decimals), share: sharePct(rawAmount, supply) };
     })
-    .filter((row) => row.amount > 0);
+    .filter((row) => row.amount > 0)
+    .slice(0, 15);
+  if (rows.length === 0 && raw.startsWith("0x")) {
+    const evm = await evmHolders(raw, token?.decimals ?? 0).catch(() => [] as HolderRow[]);
+    if (evm.length) rows.push(...evm);
+  }
   const holders = (info as { data?: { attributes?: { holders?: { count?: number; distribution_percentage?: Record<string, string> } } } } | null)?.data?.attributes?.holders;
   const dist = holders?.distribution_percentage ?? {};
   const bands = [

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Search, ShieldAlert } from "lucide-react";
+import { ChevronDown, Copy, Search, ShieldAlert } from "lucide-react";
 import { CandleChart, type ChartHover } from "@/components/terminal/CandleChart";
+import { TradingViewChart } from "@/components/terminal/TradingViewChart";
+import { LiveBook } from "@/components/terminal/LiveBook";
 import { SecurityGate } from "@/components/terminal/SecurityGate";
 import { TokenIcon, VerifiedMark, ChainBadge } from "@/components/terminal/TokenIcon";
 import { PnlCard } from "@/components/terminal/PnlCard";
@@ -9,6 +11,7 @@ import {
   displayName,
   fmt,
   isHoneypot,
+  money,
   qualityScore,
   qty as bal,
   scoreLabel,
@@ -16,13 +19,13 @@ import {
   tokenBySymbol,
   usd,
   px,
+  MARKETS,
   TOKENS,
   type Print,
   type Token,
 } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
-import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, warmCharts, watchCandles, type HolderBand, type HolderRow } from "@/lib/live";
-import { searchTokens } from "@/lib/dex";
+import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, warmCharts, watchCandles, type HolderRow } from "@/lib/live";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 import { linkedWallets, foreignWallets } from "@/lib/foreign-wallet";
 import { refreshBalances } from "@/lib/wallet-holdings";
@@ -67,6 +70,7 @@ export function TokenTrade({
     if (!canPerp(symbol) && mode === "perp") onMode("spot");
   }, [symbol, mode, onMode]);
 
+  const tvChart = canPerp(symbol);
   const last = scale === "price" ? (mark ?? token.price) : token.mcapN;
   const series = scale === "price" ? liveCandles(symbol, frame) : undefined;
   const history = candleMeta(symbol, frame);
@@ -94,7 +98,14 @@ export function TokenTrade({
   return (
     <div className="flex flex-col lg:block">
       <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 sm:flex-col sm:items-stretch sm:px-4 lg:flex-row lg:items-center lg:justify-between">
-        <TokenMenu token={token} scanning={scanning} onPick={onSymbol} />
+        <TokenMenu
+          token={token}
+          scanning={scanning}
+          onPick={(next) => {
+            onMode("perp");
+            onSymbol(next);
+          }}
+        />
         <p className="ml-auto shrink-0 font-mono text-sm sm:hidden">{px(token.price)}</p>
         <dl className="scroll-x hidden max-w-full items-stretch self-end overflow-x-auto sm:flex lg:ml-auto lg:self-center">
           <Stat k="Mcap" v={token.mcap} />
@@ -107,8 +118,12 @@ export function TokenTrade({
         </dl>
       </header>
 
-      <div className="flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[auto_minmax(0,1fr)] lg:items-start">
+      <div className="flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_18rem_22rem] lg:grid-rows-[auto_minmax(0,1fr)] lg:items-start">
         <section className="relative order-1 lg:col-start-1 lg:row-start-1 lg:self-start lg:border-r lg:border-line">
+          {tvChart ? (
+            <TradingViewChart symbol={symbol} />
+          ) : (
+            <>
           <div className="flex items-center gap-2 px-3 pt-3 sm:px-4 sm:py-2">
             <div className="grid min-w-0 flex-1 grid-cols-6 gap-1">
               {FRAMES.map((item) => (
@@ -172,11 +187,16 @@ export function TokenTrade({
               onNeedHistory={scale === "price" ? needOlder : undefined}
             />
           </div>
+            </>
+          )}
         </section>
-        <div className="order-2 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-stretch">
+        <div className="order-2 min-h-[28rem] border-t border-line lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:min-h-[36rem] lg:border-r lg:border-t-0">
+          <LiveBook symbol={symbol} mark={Number.isFinite(mark ?? token.price) ? (mark ?? token.price) : 0} liquidity={token.liqN} />
+        </div>
+        <div className="order-3 lg:col-start-3 lg:row-span-2 lg:row-start-1 lg:self-stretch">
           <Ticket token={token} mode={mode} quickUsd={quickUsd} scanning={scanning} onMode={onMode} onFlash={onFlash} />
         </div>
-        <section className="book-hinge order-3 border-t border-line lg:col-start-1 lg:row-start-2 lg:self-stretch lg:border-r lg:border-t-0">
+        <section className="book-hinge order-4 border-t border-line lg:col-start-1 lg:row-start-2 lg:self-stretch lg:border-r lg:border-t-0">
           <div className="scroll-x flex gap-1 border-b border-line bg-bg px-2 py-1.5 sm:px-3">
             {BOOKS.map((item) => (
               <button
@@ -229,37 +249,21 @@ function SafetyStat({ token }: { token: Token }) {
   );
 }
 
-function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolean; onPick: (symbol: string) => void }) {
+function TokenMenu({ token, onPick }: { token: Token; scanning: boolean; onPick: (symbol: string) => void }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [searching, setSearching] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const clock = useDesk((state) => state.clock);
   const list = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return TOKENS.filter((item) => item.listed && Number.isFinite(item.price) && item.price > 0 && (!needle || `${item.symbol} ${item.name} ${item.address ?? ""}`.toLowerCase().includes(needle))).slice(0, 16);
+    return MARKETS.flatMap((market) => {
+      const match = TOKENS.find((item) => item.symbol.toUpperCase() === market.base) ?? TOKENS.find((item) => item.symbol.split(".")[0].toUpperCase() === market.base);
+      if (!match) return [];
+      const hay = `${match.symbol} ${match.name} ${market.label} ${market.id} perp`.toLowerCase();
+      if (needle && !hay.includes(needle)) return [];
+      return [{ market, token: match }];
+    });
   }, [clock, query]);
-
-  useEffect(() => {
-    const needle = query.trim();
-    if (!open || needle.length < 2) {
-      setSearching(false);
-      return;
-    }
-    let cancel = false;
-    setSearching(true);
-    const timer = window.setTimeout(() => {
-      void searchTokens(needle)
-        .catch(() => undefined)
-        .finally(() => {
-          if (!cancel) setSearching(false);
-        });
-    }, 280);
-    return () => {
-      cancel = true;
-      window.clearTimeout(timer);
-    };
-  }, [open, query]);
 
   useEffect(() => {
     if (!open) return;
@@ -294,13 +298,13 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
               autoFocus
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Name or symbol"
+              placeholder="Perp market"
               className="min-w-0 flex-1 bg-transparent text-sm outline-none"
             />
           </label>
-          <ul className="max-h-72 overflow-y-auto">
-            {list.map((item) => (
-              <li key={`${item.symbol}-${item.address ?? ""}`}>
+          <ul className="max-h-72 overflow-y-auto" role="listbox">
+            {list.map(({ market, token: item }) => (
+              <li key={market.id}>
                 <button
                   type="button"
                   onClick={() => {
@@ -313,23 +317,19 @@ function TokenMenu({ token, scanning, onPick }: { token: Token; scanning: boolea
                 >
                   <TokenIcon token={item} />
                   <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1 font-semibold">
-                      {displayName(item)}
-                      {item.verified && <VerifiedMark />}
+                    <span className="flex items-center gap-1.5 font-semibold">
+                      {market.label}
+                      <span className="rounded bg-surface px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-muted">PERP</span>
                     </span>
                     <span className="flex items-center gap-1 truncate text-xs text-muted">
                       <ChainBadge chain={item.chain} />
-                      {item.chain}
+                      {displayName(item)} · {item.chain}
                     </span>
                   </span>
                 </button>
               </li>
             ))}
-            {list.length === 0 && (
-              <li className="px-2 py-6 text-center text-sm text-muted">
-                {searching ? "Looking up that token…" : query.trim() ? "No token matches that name or contract." : "Loading live markets…"}
-              </li>
-            )}
+            {list.length === 0 && <li className="px-2 py-6 text-center text-sm text-muted">No perp market matches that name.</li>}
           </ul>
         </div>
       )}
@@ -456,14 +456,12 @@ function Orders({ symbol }: { symbol: string }) {
 
 function Holders({ token }: { token: Token }) {
   const [rows, setRows] = useState<HolderRow[] | null>(null);
-  const [bands, setBands] = useState<HolderBand[]>([]);
   const [top10, setTop10] = useState<number | null>(null);
   const [count, setCount] = useState<number | null>(null);
   const [miss, setMiss] = useState(false);
   useEffect(() => {
     let cancel = false;
     setRows(null);
-    setBands([]);
     setTop10(null);
     setCount(null);
     setMiss(false);
@@ -471,10 +469,9 @@ function Holders({ token }: { token: Token }) {
       .then((result) => {
         if (cancel) return;
         setRows(result.rows);
-        setBands(result.bands);
         setTop10(result.top10);
         setCount(result.count);
-        setMiss(result.rows.length === 0 && result.bands.length === 0 && result.count == null);
+        setMiss(result.rows.length === 0 && result.count == null);
       })
       .catch(() => {
         if (!cancel) {
@@ -487,68 +484,83 @@ function Holders({ token }: { token: Token }) {
     };
   }, [token.address, token.symbol]);
   if (!rows) return <BookNote>Reading holders…</BookNote>;
-  if (miss) return <BookNote>No holder list has been published for this token.</BookNote>;
-  const tones = ["var(--color-primary)", "color-mix(in srgb, var(--color-primary) 62%, white)", "var(--color-muted)", "var(--color-line)"];
+  if (miss || rows.length === 0) return <BookNote>No holder list has been published for this token.</BookNote>;
+  const price = Number.isFinite(token.price) ? token.price : 0;
+  const maxShare = Math.max(...rows.map((row) => row.share ?? 0), 0.01);
   return (
-    <div className="py-2">
-      <div className="mb-3 grid grid-cols-2 gap-2">
-        <div className="rounded-xl border border-line bg-surface px-3 py-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">Holders</p>
-          <p className="mt-0.5 font-mono text-sm">{count == null ? "—" : count.toLocaleString("en-US")}</p>
-        </div>
-        <div className="rounded-xl border border-line bg-surface px-3 py-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">Top 10</p>
-          <p className="mt-0.5 font-mono text-sm">{top10 == null || top10 > 100 ? "—" : `${top10.toFixed(1)}%`}</p>
-        </div>
+    <div className="py-1">
+      <div className="mb-2 flex items-center justify-between px-1 text-[11px] text-muted">
+        <span>{count == null ? "Holders" : `${count.toLocaleString("en-US")} holders`}</span>
+        <span>{top10 == null || top10 > 100 ? "" : `Top 10 ${top10.toFixed(1)}%`}</span>
       </div>
-      {bands.length > 0 && (
-        <>
-          <div className="mb-2 flex h-2 overflow-hidden rounded-full bg-surface-2">
-            {bands.map((band, index) => (
-              <span key={band.label} className="h-full" style={{ width: `${Math.max(band.pct, 0)}%`, background: tones[index % tones.length] }} />
-            ))}
-          </div>
-          <ul className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {bands.map((band, index) => (
-              <li key={band.label} className="rounded-lg border border-line px-2 py-1.5">
-                <p className="flex items-center gap-1.5 text-[10px] uppercase text-muted">
-                  <span className="size-1.5 rounded-full" style={{ background: tones[index % tones.length] }} />
-                  {band.label}
-                </p>
-                <p className="font-mono text-sm">{band.pct.toFixed(1)}%</p>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {rows.length > 0 && (
-        <table className="w-full table-fixed border-collapse text-xs">
-          <colgroup>
-            <col />
-            <col className="w-[7.5rem] sm:w-[9.5rem]" />
-            <col className="w-[4.25rem]" />
-          </colgroup>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[52rem] border-collapse text-[12px]">
           <thead>
-            <tr className="text-[10px] uppercase tracking-wide text-muted">
-              <th className="border-b border-line py-1.5 pr-3 text-left font-normal">Account</th>
-              <th className="border-b border-line py-1.5 text-right font-normal">Balance</th>
-              <th className="border-b border-line py-1.5 text-right font-normal">Share</th>
+            <tr className="text-[10px] uppercase tracking-[0.14em] text-muted">
+              <th className="w-8 border-b border-line py-2 text-left font-medium">#</th>
+              <th className="border-b border-line py-2 text-left font-medium">Wallet</th>
+              <th className="border-b border-line py-2 text-left font-medium">Share</th>
+              <th className="border-b border-line py-2 text-right font-medium">Avg buy mc</th>
+              <th className="border-b border-line py-2 text-right font-medium">Avg sell mc</th>
+              <th className="border-b border-line py-2 text-right font-medium">PnL</th>
+              <th className="border-b border-line py-2 text-right font-medium">Funded by</th>
             </tr>
           </thead>
           <tbody className="font-mono tabular-nums">
-            {rows.map((row) => (
-              <tr key={row.account} className="border-t border-line">
-                <td className="truncate py-2 pr-3 text-left" title={row.account}>
-                  {row.account}
-                </td>
-                <td className="whitespace-nowrap py-2 text-right">{bal(row.amount)}</td>
-                <td className="whitespace-nowrap py-2 text-right text-muted">{row.share == null ? "—" : `${row.share.toFixed(2)}%`}</td>
-              </tr>
-            ))}
+            {rows.map((row, index) => {
+              const share = row.share;
+              const value = share != null && token.mcapN > 0 ? (share / 100) * token.mcapN : row.amount * price;
+              const whale = (share ?? 0) >= 1;
+              return (
+                <tr key={row.account} className="border-b border-line/60 hover:bg-white/[0.03]">
+                  <td className="py-2.5 pr-2 text-muted">{index + 1}</td>
+                  <td className="py-2.5 pr-3">
+                    <span className="flex items-center gap-1.5">
+                      <span title={row.account}>{shortWallet(row.account)}</span>
+                      <CopyButton value={row.account} />
+                      {whale && <span className="rounded border border-line px-1 text-[10px] font-sans font-medium tracking-normal text-muted">Whale</span>}
+                    </span>
+                  </td>
+                  <td className="py-2.5 pr-3">
+                    <span className="flex items-center gap-2">
+                      <span className="w-11 text-fg">{share == null ? "—" : `${share.toFixed(1)}%`}</span>
+                      <span className="h-[3px] w-14 overflow-hidden rounded-full bg-white/10">
+                        <span className="block h-full rounded-full bg-[#8b7cff]" style={{ width: `${Math.max(8, ((share ?? 0) / maxShare) * 100)}%` }} />
+                      </span>
+                      <span className="text-fg/90">{value > 0 ? money(value) : "—"}</span>
+                    </span>
+                  </td>
+                  <td className="py-2.5 text-right text-muted">—</td>
+                  <td className="py-2.5 text-right text-muted">—</td>
+                  <td className="py-2.5 text-right text-muted">—</td>
+                  <td className="py-2.5 text-right text-muted">—</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
-      )}
+      </div>
     </div>
+  );
+}
+
+function shortWallet(id: string) {
+  if (!id || id === "—") return "—";
+  if (id.length <= 12) return id;
+  return `${id.slice(0, 6)}…${id.slice(-4)}`;
+}
+
+function CopyButton({ value }: { value: string }) {
+  return (
+    <button
+      type="button"
+      aria-label="Copy wallet"
+      title="Copy"
+      onClick={() => void navigator.clipboard?.writeText(value)}
+      className="text-muted hover:text-fg"
+    >
+      <Copy className="size-3" />
+    </button>
   );
 }
 
