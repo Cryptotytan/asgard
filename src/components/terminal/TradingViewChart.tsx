@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { tradingViewPerp, tradingViewSpot } from "@/lib/tv";
 
 const SCRIPT = "https://widgets.tradingview-widget.com/w/en/tv-advanced-chart.js";
@@ -15,14 +15,6 @@ function ensureScript() {
 export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; market?: "spot" | "perp" }) {
   const host = useRef<HTMLDivElement>(null);
   const plotted = market === "spot" ? tradingViewSpot(symbol) : tradingViewPerp(symbol);
-  const [compact, setCompact] = useState(false);
-  useEffect(() => {
-    const media = window.matchMedia("(max-width: 1023px)");
-    const apply = () => setCompact(media.matches);
-    apply();
-    media.addEventListener("change", apply);
-    return () => media.removeEventListener("change", apply);
-  }, []);
 
   useEffect(() => {
     if (!plotted) return;
@@ -37,11 +29,8 @@ export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; 
     chart.setAttribute("timezone", "Etc/UTC");
     chart.setAttribute("allow-symbol-change", "false");
     chart.setAttribute("autosize", "");
-    if (compact) chart.setAttribute("hide-legend", "");
-    if (!compact) {
-      chart.setAttribute("show-drawing-toolbar", "");
-      chart.setAttribute("show-date-ranges", "");
-    }
+    chart.setAttribute("hide-legend", "");
+    chart.setAttribute("hide-top-toolbar", "");
     chart.style.display = "block";
     chart.style.position = "absolute";
     chart.style.inset = "0";
@@ -49,7 +38,7 @@ export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; 
     chart.style.height = "100%";
     node.replaceChildren(chart);
     return () => node.replaceChildren();
-  }, [plotted, compact]);
+  }, [plotted]);
 
   if (!plotted) {
     return <p className="px-3 py-8 text-sm text-muted sm:px-4">{symbol} is not on TradingView.</p>;

@@ -286,7 +286,7 @@ export const TOKENS: Token[] = [
   return token;
 });
 
-const CANONICAL_SYMBOLS = new Set(["NEAR", "WNEAR", "USDC", "USDC.E", "USDT", "USDT.E", "ETH", "WETH", "WBTC", "BTC", "DAI", "FRAX", "AURORA", "STNEAR"]);
+const CANONICAL_SYMBOLS = new Set(["NEAR", "WNEAR", "USDC", "USDC.E", "USDT", "USDT.E", "ETH", "WETH", "WBTC", "BTC", "DAI", "FRAX", "AURORA", "STNEAR", "SOL", "BNB", "AVAX", "POL", "MATIC", "ARB", "OP", "LINK", "UNI", "AAVE"]);
 const CANONICAL_ADDR = new Set([
   "wrap.near",
   "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
@@ -302,7 +302,8 @@ const CANONICAL_ADDR = new Set([
 ]);
 
 export function isCanonical(token: { symbol: string; address?: string }) {
-  if (CANONICAL_SYMBOLS.has(token.symbol.toUpperCase())) return true;
+  const base = token.symbol.split(".")[0]?.toUpperCase() ?? "";
+  if (CANONICAL_SYMBOLS.has(base) || CANONICAL_SYMBOLS.has(token.symbol.toUpperCase())) return true;
   const address = token.address?.toLowerCase();
   return Boolean(address && CANONICAL_ADDR.has(address));
 }
@@ -342,6 +343,7 @@ const MAJOR_HOME: Record<string, "*" | readonly string[]> = {
 
 export function isMajorAsset(symbol: string, chain: string) {
   const base = symbol.split(".")[0].toUpperCase();
+  if (["USDC", "USDC.E", "USDT", "USDT.E", "DAI", "FRAX", "BTC", "WBTC", "ETH", "WETH", "SOL", "BNB", "NEAR", "WNEAR"].includes(base)) return true;
   const home = MAJOR_HOME[base];
   if (!home) return false;
   return home === "*" || home.includes(chain);

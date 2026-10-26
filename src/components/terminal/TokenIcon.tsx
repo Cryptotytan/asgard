@@ -37,8 +37,10 @@ export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "s
     const local = token.icon?.startsWith("/logos/") ? token.icon : knownLogo(token.symbol) || knownLogo(token.symbol.split(".")[0] ?? token.symbol);
     const booked = logoOf(token.symbol);
     const coin = coinIcon(token.symbol);
+    const base = (token.symbol.split(".")[0] ?? token.symbol).toLowerCase();
+    const pack = /^[a-z0-9]{2,12}$/.test(base) ? `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/${base}.png` : "";
     const extra = logoFallback(token);
-    const list = [iconCache.get(key), booked, local, remote, coin, extra].filter((src): src is string => Boolean(src && !src.startsWith("data:image/svg+xml;utf8,")));
+    const list = [iconCache.get(key), booked, local, remote, coin, pack, extra].filter((src): src is string => Boolean(src && !src.startsWith("data:image/svg+xml;utf8,")));
     return [...new Set(list)];
   }, [key, token.icon, token.symbol]);
   useEffect(() => {
@@ -61,6 +63,23 @@ export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "s
         onError={() => setStep((current) => current + 1)}
         className={cn("size-6 shrink-0 rounded-full bg-surface-2 object-cover", className)}
       />
+    </span>
+  );
+}
+
+export function AllChainsMark({ className = "size-5" }: { className?: string }) {
+  const icons = ["/tokens/near.jpg", "/tokens/eth.png", "/chains/solana.png", "/chains/bitcoin.png"];
+  return (
+    <span className={cn("relative inline-block shrink-0", className)} aria-hidden>
+      {icons.map((src, index) => (
+        <img
+          key={src}
+          src={src}
+          alt=""
+          className="absolute size-[62%] rounded-full bg-bg object-cover ring-1 ring-bg"
+          style={{ left: `${index * 16}%`, top: index % 2 === 0 ? "0%" : "34%" }}
+        />
+      ))}
     </span>
   );
 }
@@ -174,7 +193,7 @@ export function TokenPicker({
                 onClick={() => setChain(item.id)}
                 className={`flex h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-left text-sm sm:h-11 sm:w-full ${chain === item.id ? "bg-surface-2 text-fg" : "text-muted"}`}
               >
-                {item.icon ? <img src={item.icon} alt="" className="size-5 rounded-full object-cover" /> : <span className="size-5 rounded-full bg-surface-2" />}
+                {item.id === "All" ? <AllChainsMark /> : item.icon ? <img src={item.icon} alt="" className="size-5 rounded-full object-cover" /> : <span className="size-5 rounded-full bg-surface-2" />}
                 {item.label}
               </button>
             ))}

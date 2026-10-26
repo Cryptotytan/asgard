@@ -361,18 +361,26 @@ export function LiveBook({ symbol, mark, liquidity }: { symbol: string; mark: nu
               )}
             </div>
           </div>
-          <div className="grid grid-cols-2 px-2 pb-1 pt-1.5 text-[10px] uppercase tracking-wide text-muted lg:grid-cols-[1.15fr_1fr_1fr] lg:pt-0">
-            <span>Price (USDT)</span>
-            <span className="text-right">Size ({unit === "quote" ? "USDT" : base})</span>
-            <span className="hidden text-right lg:block">Total (USDT)</span>
+          <div className="relative z-10 grid h-7 shrink-0 grid-cols-2 items-center bg-bg px-2 text-[10px] uppercase tracking-wide text-muted lg:grid-cols-[1.15fr_1fr_1fr]">
+            <span className="truncate">Price</span>
+            <span className="truncate text-right">Size ({unit === "quote" ? "USDT" : base})</span>
+            <span className="hidden truncate text-right lg:block">Total (USDT)</span>
           </div>
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-            {view !== "buy" && <Ladder rows={askRows} side="ask" step={step} unit={unit} edge="end" />}
-            <div className="flex items-baseline gap-2 border-y border-line/70 px-2 py-1.5">
-              <span className={`font-mono text-[15px] font-semibold ${up ? "text-primary" : "text-danger"}`}>{priceText(mid, step >= 1 ? 1 : 0.01)}</span>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            {view !== "buy" && (
+              <div className="min-h-0 flex-1 overflow-hidden">
+                <Ladder rows={askRows} side="ask" step={step} unit={unit} edge="end" />
+              </div>
+            )}
+            <div className="flex shrink-0 items-baseline gap-2 border-y border-line/70 bg-bg px-2 py-1.5">
+              <span className={`font-mono text-[15px] font-semibold ${view === "sell" ? "text-danger" : view === "buy" ? "text-primary" : up ? "text-primary" : "text-danger"}`}>{priceText(mid, step >= 1 ? 1 : 0.01)}</span>
               <span className="font-mono text-[11px] text-muted">{spread > 0 && Number.isFinite(spread) ? `$${priceText(mid, 0.01)}` : "—"}</span>
             </div>
-            {view !== "sell" && <Ladder rows={bidRows} side="bid" step={step} unit={unit} edge="start" />}
+            {view !== "sell" && (
+              <div className="min-h-0 flex-1 overflow-hidden">
+                <Ladder rows={bidRows} side="bid" step={step} unit={unit} edge="start" />
+              </div>
+            )}
           </div>
         </>
       ) : (
@@ -409,20 +417,26 @@ function withTotal(rows: Level[], side: "ask" | "bid") {
 }
 
 function Ladder({ rows, side, step, unit, edge }: { rows: { price: number; qty: number; total: number }[]; side: "ask" | "bid"; step: number; unit: Unit; edge: "start" | "end" }) {
+  const scroller = useRef<HTMLDivElement>(null);
   const max = Math.max(...rows.map((row) => row.total), 1);
+  useEffect(() => {
+    const node = scroller.current;
+    if (!node || edge !== "end") return;
+    node.scrollTop = node.scrollHeight;
+  }, [edge, rows]);
   return (
-    <div className={`flex min-h-0 flex-1 flex-col ${edge === "end" ? "justify-end" : ""}`}>
+    <div ref={scroller} className="h-full overflow-y-auto">
       {rows.map((row) => {
         const size = unit === "quote" ? row.qty * row.price : row.qty;
         return (
-          <div key={`${side}-${row.price}`} className="relative grid grid-cols-2 px-2 py-[3px] font-mono text-[11px] lg:grid-cols-[1.15fr_1fr_1fr]">
+          <div key={`${side}-${row.price}`} className="relative grid h-5 grid-cols-2 items-center px-2 font-mono text-[11px] lg:grid-cols-[1.15fr_1fr_1fr]">
             <span
               className="absolute inset-y-0 right-0"
               style={{ width: `${Math.max(6, (row.total / max) * 100)}%`, background: side === "ask" ? "rgba(255,121,102,0.22)" : "rgba(0,236,151,0.18)" }}
             />
-            <span className={`relative ${side === "ask" ? "text-danger" : "text-primary"}`}>{priceText(row.price, step)}</span>
-            <span className="relative text-right">{sizeText(size)}</span>
-            <span className="relative hidden text-right text-fg/75 lg:block">{sizeText(row.total)}</span>
+            <span className={`relative truncate ${side === "ask" ? "text-danger" : "text-primary"}`}>{priceText(row.price, step)}</span>
+            <span className="relative truncate text-right">{sizeText(size)}</span>
+            <span className="relative hidden truncate text-right text-fg/75 lg:block">{sizeText(row.total)}</span>
           </div>
         );
       })}

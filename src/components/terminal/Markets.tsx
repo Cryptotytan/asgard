@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Search, Star, X } from "lucide-react";
-import { TokenIcon, VerifiedMark, ChainBadge } from "@/components/terminal/TokenIcon";
+import { TokenIcon, VerifiedMark, ChainBadge, AllChainsMark } from "@/components/terminal/TokenIcon";
 import {
   ageLabel,
   CHAIN_ICON,
@@ -116,7 +116,7 @@ export function Markets({
                 }}
                 className="flex h-8 items-center gap-1.5 rounded-full bg-surface px-2.5 text-xs font-semibold"
               >
-                {chain !== "All" && <ChainLogo id={chain} className="size-4" />}
+                {chain === "All" ? <AllChainsMark className="size-4" /> : <ChainLogo id={chain} className="size-4" />}
                 <span className="max-w-28 truncate">{chain === "All" ? "Chains" : chain}</span>
                 <ChevronDown className={`size-3.5 shrink-0 text-muted ${chainOpen ? "rotate-180" : ""}`} />
               </button>
@@ -150,7 +150,7 @@ export function Markets({
                             }}
                             className={`flex h-10 w-full items-center gap-2 px-3 text-left text-sm ${chain === id ? "bg-bg text-fg" : "text-muted"}`}
                           >
-                            {id !== "All" && <ChainLogo id={id} />}
+                            {id === "All" ? <AllChainsMark /> : <ChainLogo id={id} />}
                             <span className="truncate">{id === "All" ? "Chains" : id}</span>
                           </button>
                         </li>
@@ -330,7 +330,7 @@ function completeStats(token: Token) {
 function ChainLogo({ id, className = "size-4" }: { id: string; className?: string }) {
   const [failed, setFailed] = useState(false);
   const icon = id === "All" ? "" : CHAIN_ICON[id] || chainIcon(id);
-  if (id === "All") return <span className={`${className} shrink-0 rounded-full border border-line bg-surface-2`} />;
+  if (id === "All") return <AllChainsMark className={className} />;
   if (!icon || failed) return <span className={`grid ${className} shrink-0 place-items-center rounded-full bg-surface-2 text-[9px] font-semibold`}>{id.slice(0, 1)}</span>;
   return <img src={icon} alt="" onError={() => setFailed(true)} className={`${className} shrink-0 rounded-full bg-bg object-cover`} />;
 }

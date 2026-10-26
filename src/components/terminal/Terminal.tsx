@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { ChevronDown, Search, Unplug } from "lucide-react";
+import { ChevronDown, Search, Unplug, Wallet } from "lucide-react";
 import { ChainBadge, TokenIcon } from "@/components/terminal/TokenIcon";
 import { LendDesk } from "@/components/terminal/LendDesk";
 import { Markets } from "@/components/terminal/Markets";
@@ -537,7 +537,9 @@ function WalletButton({ compact = false, onConnectNew }: { compact?: boolean; on
           </>
         ) : (
           <>
-            <img src="/tokens/near.jpg" alt="" className="size-8 rounded-full object-cover" />
+            <span className="grid size-8 place-items-center rounded-full bg-black/20">
+              <Wallet className="size-4" />
+            </span>
             {compact ? "Connect" : "Connect wallet"}
           </>
         )}

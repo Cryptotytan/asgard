@@ -33,10 +33,11 @@ import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 import { chainByLabel, validAddress } from "@/lib/chains";
 import { linkedWallets, foreignWallets, useForeign, type ForeignWallets } from "@/lib/foreign-wallet";
 import { refreshBalances } from "@/lib/wallet-holdings";
-import { rememberTx } from "@/lib/wallet-history";
+import { loadChainHistory, rememberTx, useWalletHistory, type WalletTx } from "@/lib/wallet-history";
+import { logTrade, useTradeLog } from "@/lib/trade-log";
 
 const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"] as const;
-const BOOKS = ["Trades", "Positions", "Orders", "Holders", "History"] as const;
+const BOOKS = ["Trades", "Positions", "Orders", "Order history", "Trade history", "Transactions"] as const;
 let stampedId = "";
 const PRESETS = [25, 50, 100, 250];
 const SLIPS = ["Auto", "0.5%", "1%", "3%"];
@@ -244,16 +245,17 @@ export function TokenTrade({
                 onClick={() => setBook(item)}
                 className={`h-9 shrink-0 border-b-2 px-1 text-xs font-semibold sm:h-8 sm:flex-1 sm:rounded-full sm:border-b-0 sm:px-3 sm:text-sm ${book === item ? "border-primary text-fg sm:bg-surface-2 sm:shadow-[inset_0_0_0_1px_var(--color-line)]" : "border-transparent text-muted"}`}
               >
-                {item === "Orders" ? "Open Orders" : item === "History" ? "Assets" : item}
+                {item === "Orders" ? "Open orders" : item}
               </button>
             ))}
           </div>
           <div key={book} className="book-page px-3 pb-3 pt-1 sm:px-4 lg:min-h-[26rem]">
-            {book === "Trades" && <Trades prints={prints} symbol={token.symbol} />}
+            {book === "Trades" && <WalletTrades symbol={token.symbol} />}
             {book === "Positions" && <Positions symbol={token.symbol} mark={token.price} mode={deskMode} />}
             {book === "Orders" && <Orders symbol={token.symbol} />}
-            {book === "Holders" && <Holders token={token} />}
-            {book === "History" && <SessionHistory />}
+            {book === "Order history" && <OrderHistory symbol={token.symbol} />}
+            {book === "Trade history" && <WalletTrades symbol={token.symbol} />}
+            {book === "Transactions" && <TxHistory />}
           </div>
         </section>
       </div>
@@ -443,6 +445,73 @@ function SessionHistory() {
             <span className="block truncate text-xs text-muted">{item.detail}</span>
           </span>
           <span className={`shrink-0 rounded-full bg-bg px-2 py-1 font-mono text-xs ${item.value < 0 ? "text-danger" : "text-fg"}`}>{usd(item.value)}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function baseOf(symbol: string) {
+  return symbol.split(".")[0]?.toUpperCase() ?? symbol.toUpperCase();
+}
+
+function WalletTrades({ symbol }: { symbol: string }) {
+  const rows = useTradeLog().filter((row) => row.bucket === "trade" && baseOf(row.symbol) === baseOf(symbol));
+  if (rows.length === 0) return <BookNote>No trades from the connected wallet on {symbol} yet.</BookNote>;
+  return (
+    <ul className="divide-y divide-line">
+      {rows.map((row) => (
+        <li key={row.id} className="flex items-center gap-3 py-2.5">
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">{row.title}</span>
+            <span className="block truncate text-[11px] text-muted">{row.detail} · {row.status}</span>
+          </span>
+          <span className={`font-mono text-xs ${row.value < 0 ? "text-danger" : "text-fg"}`}>{usd(row.value)}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function OrderHistory({ symbol }: { symbol: string }) {
+  const rows = useTradeLog().filter((row) => row.bucket === "order" && baseOf(row.symbol) === baseOf(symbol) && row.status !== "open");
+  if (rows.length === 0) return <BookNote>No filled or canceled orders from this wallet on {symbol} yet.</BookNote>;
+  return (
+    <ul className="divide-y divide-line">
+      {rows.map((row) => (
+        <li key={row.id} className="flex items-center gap-3 py-2.5">
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">{row.title}</span>
+            <span className="block truncate text-[11px] text-muted">{row.detail}</span>
+          </span>
+          <span className="text-xs capitalize text-muted">{row.status}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function TxHistory() {
+  const saved = useWalletHistory();
+  const accountId = useDesk((state) => state.accountId);
+  const foreign = useForeign();
+  const [chain, setChain] = useState<WalletTx[]>([]);
+  useEffect(() => {
+    const wallets = linkedWallets(accountId, foreign);
+    if (!wallets.length) return;
+    void loadChainHistory(wallets).then(setChain).catch(() => undefined);
+  }, [accountId, foreign]);
+  const rows = [...saved, ...chain].sort((a, b) => b.time - a.time);
+  if (rows.length === 0) return <BookNote>No transactions from the connected wallets yet.</BookNote>;
+  return (
+    <ul className="divide-y divide-line">
+      {rows.map((row) => (
+        <li key={row.id} className="flex items-center gap-3 py-2.5">
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">{row.title}</span>
+            <span className="block truncate text-[11px] text-muted">{row.detail || row.chain}</span>
+          </span>
+          <span className="font-mono text-xs">{row.value ? usd(row.value) : row.chain}</span>
         </li>
       ))}
     </ul>
@@ -835,6 +904,7 @@ function Ticket({
           });
         }
         state.log(`${side === "buy" ? "Buy" : "Sell"} via ${picked.name}`, `${pay.symbol} → ${receiveToken.symbol}`, qty);
+        logTrade({ bucket: "trade", symbol: token.symbol, title: `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}/USDT`, detail: picked.name, value: qty, status: "filled" });
         await refreshBalances(wallets);
         setFills((prev) => (side === "buy" ? { ...prev, bought: prev.bought + qty } : { ...prev, sold: prev.sold + qty }));
         onFlash(`${side === "buy" ? "Bought" : "Sold"} ${token.symbol} via ${picked.name} · ${fmt(result.amountOutHuman)} ${receiveToken.symbol} · ${result.status}`);

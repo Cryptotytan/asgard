@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { LEND_MARKETS, canPerp, isHoneypot, tokenBySymbol } from "@/lib/market";
+import { logTrade } from "@/lib/trade-log";
 
 export type Side = "long" | "short";
 
@@ -281,9 +282,11 @@ export const useDesk = create<Desk>((set, get) => ({
       const next = take(balances, "USDT", margin);
       if (!next) return false;
       set({ balances: next, orders: [{ ...order, id: `${order.symbol}-${Date.now()}` }, ...orders].slice(0, 20) });
+      logTrade({ bucket: "order", symbol: order.base ?? order.symbol, title: `Limit ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "open" });
       return true;
     }
     set({ orders: [{ ...order, id: `${order.symbol}-${Date.now()}` }, ...orders].slice(0, 20) });
+    logTrade({ bucket: "order", symbol: order.symbol, title: `Limit ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "open" });
     return true;
   },
 
@@ -293,10 +296,12 @@ export const useDesk = create<Desk>((set, get) => ({
     if (!order) return;
     const orders = state.orders.filter((item) => item.id !== id);
     if (order.kind !== "perp") {
+      logTrade({ bucket: "order", symbol: order.symbol, title: `Canceled ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "canceled" });
       set({ orders });
       return;
     }
     const margin = order.amount / Math.max(order.leverage ?? 1, 1);
+    logTrade({ bucket: "order", symbol: order.base ?? order.symbol, title: `Canceled ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "canceled" });
     set({ orders, balances: add(state.balances, "USDT", margin) });
   },
 
@@ -363,6 +368,7 @@ export const useDesk = create<Desk>((set, get) => ({
       positions,
       activity: push(state.activity, `${side === "long" ? "Long" : "Short"} ${market}`, `${leverage}x`, notional),
     });
+    logTrade({ bucket: "trade", symbol: base, title: `${side === "long" ? "Long" : "Short"} ${base}/USDT`, detail: `${leverage}x`, value: notional, status: "open" });
     return true;
   },
 
@@ -381,6 +387,7 @@ export const useDesk = create<Desk>((set, get) => ({
       closes: state.closes + 1,
       activity: push(state.activity, `${reason} ${position.market}`, position.side, pnl),
     });
+    logTrade({ bucket: "trade", symbol: position.base, title: `${reason} ${position.base}/USDT`, detail: position.side, value: pnl, status: "closed" });
     return true;
   },
 
@@ -535,6 +542,8 @@ export const useDesk = create<Desk>((set, get) => ({
         ...positions,
       ];
       activity = push(activity, `Limit ${order.side}`, `${order.base}-PERP`, order.amount);
+      logTrade({ bucket: "order", symbol: order.base, title: `Filled ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "filled" });
+      logTrade({ bucket: "trade", symbol: order.base, title: `${order.side} ${order.base}/USDT`, detail: `${order.leverage ?? 1}x`, value: order.amount, status: "filled" });
     }
     orders = kept;
     const still: Position[] = [];

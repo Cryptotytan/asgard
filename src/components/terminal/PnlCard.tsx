@@ -10,6 +10,7 @@ export function PnlCard({ position, mark, onClose }: { position: Position; mark:
   const liq = position.side === "long" ? position.entry * (1 - 0.9 / position.leverage) : position.entry * (1 + 0.9 / position.leverage);
   const half = Math.min(48, Math.abs(roe) / 2);
   const [share, setShare] = useState(false);
+  const [confirm, setConfirm] = useState(false);
 
   return (
     <article className="rounded-xl border border-line bg-bg p-3">
@@ -47,12 +48,25 @@ export function PnlCard({ position, mark, onClose }: { position: Position; mark:
         <button type="button" onClick={() => setShare(true)} className="h-9 rounded-lg border border-line text-xs">
           Share
         </button>
-        {onClose && (
-          <button type="button" onClick={onClose} className="h-9 rounded-lg border border-line text-xs">
+        {onClose && !confirm && (
+          <button type="button" onClick={() => setConfirm(true)} className="h-9 rounded-lg border border-line text-xs">
             Close
           </button>
         )}
+        {onClose && confirm && (
+          <button type="button" onClick={onClose} className="h-9 rounded-lg bg-danger text-xs font-semibold text-bg">
+            Confirm close
+          </button>
+        )}
       </div>
+      {confirm && onClose && (
+        <p className="mt-2 text-xs text-muted">
+          Close this {position.side} {position.market}?{" "}
+          <button type="button" onClick={() => setConfirm(false)} className="text-fg underline">
+            Keep it open
+          </button>
+        </p>
+      )}
       {share && (
         <PnlPoster
           data={{ market: position.market, side: position.side, leverage: position.leverage, pnl, roe, entry: position.entry, mark }}
