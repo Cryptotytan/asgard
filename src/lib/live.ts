@@ -1,5 +1,6 @@
 import { ensureToken, isCanonical, isMajorAsset, LEND_MARKETS, money, qualityScore, TOKENS, type Candle, type Print } from "@/lib/market";
 import { iconFor, geckoIdFor, knownPool, loadIconBook, refreshDexMarkets, syncNearMarkets, applyIconBook } from "@/lib/dex";
+import { syncPerpMarkets } from "@/lib/perps";
 import { useDesk } from "@/lib/store";
 
 const LLAMA = "https://coins.llama.fi";
@@ -1011,7 +1012,9 @@ export function startLiveFeed() {
   window.setInterval(run, 10_000);
   window.setInterval(() => {
     void refreshDexMarkets().catch(() => undefined);
+    void syncPerpMarkets().catch(() => undefined);
   }, 30_000);
+  void syncPerpMarkets().catch(() => undefined);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") run();
   });

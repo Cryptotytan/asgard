@@ -327,14 +327,22 @@ export async function quoteRoutes(input: {
 }) {
   const slip = input.slippageBps ?? 100;
   const purpose = input.purpose ?? "Swap";
-  const sameEvm = input.from.chain === input.to.chain && chainByLabel(input.from.chain)?.kind === "evm";
-  const intentsJob = sameEvm
-    ? Promise.resolve({ route: null as LiveRoute | null, error: "" })
-    : timeout(intentsRoute(input.from, input.to, input.amount, input.accountId || input.refundTo, input.refundTo, input.recipient, slip, purpose), 16000)
-        .then((route) => ({ route, error: "" }))
-        .catch((error: unknown) => ({ route: null, error: error instanceof Error ? error.message : "NEAR Intents has no quote for this pair." }));
+  const cross = input.from.chain !== input.to.chain;
+  const intentsJob = () =>
+    timeout(intentsRoute(input.from, input.to, input.amount, input.accountId || input.refundTo, input.refundTo, input.recipient, slip, purpose), 16000)
+      .then((route) => ({ route, error: "" }))
+      .catch((error: unknown) => ({ route: null, error: error instanceof Error && error.message !== "timeout" ? error.message : "NEAR Intents has no quote for this pair." }));
+
+  if (cross) {
+    const intents = await intentsJob();
+    if (intents.route) return [intents.route];
+    if (intents.error) throw new Error(intents.error);
+    return [];
+  }
+
+  const sameEvm = chainByLabel(input.from.chain)?.kind === "evm";
   const jobs = [
-    intentsJob,
+    sameEvm ? Promise.resolve({ route: null as LiveRoute | null, error: "" }) : intentsJob(),
     sameEvm
       ? timeout(evmDexRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => [])
       : timeout(lifiRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => []),

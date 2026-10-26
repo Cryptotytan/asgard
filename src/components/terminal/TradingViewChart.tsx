@@ -2,17 +2,23 @@ import { useEffect, useRef } from "react";
 
 const SCRIPT = "https://widgets.tradingview-widget.com/w/en/tv-advanced-chart.js";
 
-/** USDT-margined perpetuals. Spot pairs stay off this terminal. */
 const PERPS: Record<string, string> = {
   NEAR: "BINANCE:NEARUSDT.P",
   WNEAR: "BINANCE:NEARUSDT.P",
   ETH: "BINANCE:ETHUSDT.P",
   WETH: "BINANCE:ETHUSDT.P",
+  BTC: "BINANCE:BTCUSDT.P",
+  WBTC: "BINANCE:BTCUSDT.P",
 };
+
+const SKIP = new Set(["SPX500", "NAS100", "XAU", "XAG", "CL", "EURUSD", "USDJPY", "NVDA", "TSLA", "GOOGL"]);
 
 export function tradingViewPerp(symbol: string) {
   const base = symbol.split(".")[0]?.toUpperCase() ?? "";
-  return PERPS[base] ?? PERPS[symbol.toUpperCase()] ?? "";
+  if (!base || SKIP.has(base)) return "";
+  if (PERPS[base]) return PERPS[base];
+  if (!/^[A-Z0-9]{2,15}$/.test(base)) return "";
+  return `BINANCE:${base}USDT.P`;
 }
 
 function ensureScript() {
@@ -24,9 +30,10 @@ function ensureScript() {
   document.head.append(script);
 }
 
-export function TradingViewChart({ symbol }: { symbol: string }) {
+export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; market?: "spot" | "perp" }) {
   const host = useRef<HTMLDivElement>(null);
-  const plotted = tradingViewPerp(symbol);
+  const perp = tradingViewPerp(symbol);
+  const plotted = market === "spot" ? perp.replace(/\.P$/, "") : perp;
 
   useEffect(() => {
     if (!plotted) return;
@@ -42,7 +49,6 @@ export function TradingViewChart({ symbol }: { symbol: string }) {
     chart.setAttribute("allow-symbol-change", "false");
     chart.setAttribute("show-drawing-toolbar", "true");
     chart.setAttribute("show-date-ranges", "true");
-    chart.setAttribute("show-details", "true");
     chart.setAttribute("hide-top-toolbar", "false");
     chart.style.display = "block";
     chart.style.width = "100%";

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Copy, Search, ShieldAlert } from "lucide-react";
 import { CandleChart, type ChartHover } from "@/components/terminal/CandleChart";
-import { TradingViewChart } from "@/components/terminal/TradingViewChart";
+import { TradingViewChart, tradingViewPerp } from "@/components/terminal/TradingViewChart";
 import { LiveBook } from "@/components/terminal/LiveBook";
 import { SecurityGate } from "@/components/terminal/SecurityGate";
 import { TokenIcon, VerifiedMark, ChainBadge } from "@/components/terminal/TokenIcon";
@@ -26,6 +26,7 @@ import {
 } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
 import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, warmCharts, watchCandles, type HolderRow } from "@/lib/live";
+import { searchTokens, syncNearMarkets } from "@/lib/dex";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 import { linkedWallets, foreignWallets } from "@/lib/foreign-wallet";
 import { refreshBalances } from "@/lib/wallet-holdings";
@@ -62,6 +63,8 @@ export function TokenTrade({
   const [book, setBook] = useState<(typeof BOOKS)[number]>("Trades");
   const scanning = false;
   const [hover, setHover] = useState<ChartHover | null>(null);
+  const chartPane = useRef<HTMLElement>(null);
+  const [chartH, setChartH] = useState(0);
 
   useEffect(() => setFrame("15m"), [symbol]);
   useEffect(() => setHover(null), [frame, scale]);
@@ -69,8 +72,25 @@ export function TokenTrade({
   useEffect(() => {
     if (!canPerp(symbol) && mode === "perp") onMode("spot");
   }, [symbol, mode, onMode]);
+  useEffect(() => {
+    if (mode !== "perp" || !canPerp(symbol)) return;
+    const base = symbol.split(".")[0]?.toUpperCase() ?? "";
+    const near = TOKENS.find((item) => item.chain === "NEAR" && item.symbol.split(".")[0].toUpperCase() === base);
+    if (near && near.symbol !== symbol) onSymbol(near.symbol);
+  }, [mode, symbol, onSymbol]);
 
-  const tvChart = canPerp(symbol);
+  const deskMode: TicketMode = canPerp(symbol) ? mode : "spot";
+  const plotted = deskMode === "perp" ? tradingViewPerp(symbol) : tradingViewPerp(symbol).replace(/\.P$/, "");
+  const tvChart = Boolean(plotted);
+  useEffect(() => {
+    const node = chartPane.current;
+    if (!node) return;
+    const measure = () => setChartH(Math.round(node.getBoundingClientRect().height));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [symbol, tvChart]);
   const last = scale === "price" ? (mark ?? token.price) : token.mcapN;
   const series = scale === "price" ? liveCandles(symbol, frame) : undefined;
   const history = candleMeta(symbol, frame);
@@ -98,14 +118,7 @@ export function TokenTrade({
   return (
     <div className="flex flex-col lg:block">
       <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 sm:flex-col sm:items-stretch sm:px-4 lg:flex-row lg:items-center lg:justify-between">
-        <TokenMenu
-          token={token}
-          scanning={scanning}
-          onPick={(next) => {
-            onMode("perp");
-            onSymbol(next);
-          }}
-        />
+        <TokenMenu token={token} mode={deskMode} scanning={scanning} onPick={onSymbol} />
         <p className="ml-auto shrink-0 font-mono text-sm sm:hidden">{px(token.price)}</p>
         <dl className="scroll-x hidden max-w-full items-stretch self-end overflow-x-auto sm:flex lg:ml-auto lg:self-center">
           <Stat k="Mcap" v={token.mcap} />
@@ -119,9 +132,9 @@ export function TokenTrade({
       </header>
 
       <div className="flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_18rem_22rem] lg:grid-rows-[auto_minmax(0,1fr)] lg:items-start">
-        <section className="relative order-1 lg:col-start-1 lg:row-start-1 lg:self-start lg:border-r lg:border-line">
+        <section ref={chartPane} className="relative order-1 lg:col-start-1 lg:row-start-1 lg:self-start lg:border-r lg:border-line">
           {tvChart ? (
-            <TradingViewChart symbol={symbol} />
+            <TradingViewChart symbol={symbol} market={deskMode} />
           ) : (
             <>
           <div className="flex items-center gap-2 px-3 pt-3 sm:px-4 sm:py-2">
@@ -190,13 +203,16 @@ export function TokenTrade({
             </>
           )}
         </section>
-        <div className="order-2 min-h-[28rem] border-t border-line lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:min-h-[36rem] lg:border-r lg:border-t-0">
+        <div
+          className={`order-2 flex flex-col overflow-hidden border-t border-line lg:col-start-2 lg:row-start-1 lg:border-r lg:border-t-0 ${chartH > 0 ? "min-h-0" : "min-h-[28rem]"}`}
+          style={chartH > 0 ? { height: chartH } : undefined}
+        >
           <LiveBook symbol={symbol} mark={Number.isFinite(mark ?? token.price) ? (mark ?? token.price) : 0} liquidity={token.liqN} />
         </div>
         <div className="order-3 lg:col-start-3 lg:row-span-2 lg:row-start-1 lg:self-stretch">
           <Ticket token={token} mode={mode} quickUsd={quickUsd} scanning={scanning} onMode={onMode} onFlash={onFlash} />
         </div>
-        <section className="book-hinge order-4 border-t border-line lg:col-start-1 lg:row-start-2 lg:self-stretch lg:border-r lg:border-t-0">
+        <section className="book-hinge order-4 border-t border-line lg:col-span-2 lg:col-start-1 lg:row-start-2 lg:self-stretch lg:border-r lg:border-t-0">
           <div className="scroll-x flex gap-1 border-b border-line bg-bg px-2 py-1.5 sm:px-3">
             {BOOKS.map((item) => (
               <button
@@ -212,7 +228,7 @@ export function TokenTrade({
           </div>
           <div key={book} className="book-page px-3 pb-3 pt-1 sm:px-4 lg:min-h-[26rem]">
             {book === "Trades" && <Trades prints={prints} symbol={token.symbol} />}
-            {book === "Positions" && <Positions symbol={token.symbol} mark={token.price} />}
+            {book === "Positions" && <Positions symbol={token.symbol} mark={token.price} mode={deskMode} />}
             {book === "Orders" && <Orders symbol={token.symbol} />}
             {book === "Holders" && <Holders token={token} />}
             {book === "History" && <SessionHistory />}
@@ -249,21 +265,50 @@ function SafetyStat({ token }: { token: Token }) {
   );
 }
 
-function TokenMenu({ token, onPick }: { token: Token; scanning: boolean; onPick: (symbol: string) => void }) {
+function TokenMenu({ token, mode, onPick }: { token: Token; scanning: boolean; mode: TicketMode; onPick: (symbol: string) => void }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const box = useRef<HTMLDivElement>(null);
   const clock = useDesk((state) => state.clock);
   const list = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return MARKETS.flatMap((market) => {
-      const match = TOKENS.find((item) => item.symbol.toUpperCase() === market.base) ?? TOKENS.find((item) => item.symbol.split(".")[0].toUpperCase() === market.base);
-      if (!match) return [];
-      const hay = `${match.symbol} ${match.name} ${market.label} ${market.id} perp`.toLowerCase();
-      if (needle && !hay.includes(needle)) return [];
-      return [{ market, token: match }];
-    });
-  }, [clock, query]);
+    if (mode === "perp") {
+      const bases = new Set(MARKETS.map((market) => market.base));
+      return TOKENS.filter((item) => item.chain === "NEAR" && bases.has(item.symbol.split(".")[0].toUpperCase()))
+        .map((item) => {
+          const base = item.symbol.split(".")[0].toUpperCase();
+          const market = MARKETS.find((entry) => entry.base === base);
+          return { id: item.symbol, label: market?.label ?? `${base}-USD`, token: item };
+        })
+        .filter((row) => !needle || `${row.token.symbol} ${row.token.name} near perp`.toLowerCase().includes(needle) || row.label.toLowerCase().includes(needle))
+        .sort((a, b) => b.token.volN - a.token.volN || a.label.localeCompare(b.label));
+    }
+    return TOKENS.filter((item) => {
+      if (item.notes.includes("NEAR perp") && !item.assetId) return false;
+      const spot = Boolean(item.assetId) || Boolean(item.listed && item.price > 0);
+      if (!spot) return false;
+      const hay = `${item.symbol} ${item.name} ${item.chain} ${item.address ?? ""}`.toLowerCase();
+      return !needle || hay.includes(needle);
+    })
+      .sort((a, b) => a.chain.localeCompare(b.chain) || b.volN - a.volN || a.symbol.localeCompare(b.symbol))
+      .slice(0, needle ? 120 : 160)
+      .map((item) => ({ id: `${item.chain}:${item.symbol}`, label: displayName(item), token: item }));
+  }, [clock, mode, query]);
+
+  useEffect(() => {
+    if (!open || mode !== "spot") return;
+    void syncNearMarkets().catch(() => undefined);
+  }, [mode, open]);
+
+  useEffect(() => {
+    if (mode !== "spot") return;
+    const clean = query.trim();
+    if (clean.length < 2) return;
+    const timer = window.setTimeout(() => {
+      void searchTokens(clean).catch(() => undefined);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [mode, query]);
 
   useEffect(() => {
     if (!open) return;
@@ -298,38 +343,38 @@ function TokenMenu({ token, onPick }: { token: Token; scanning: boolean; onPick:
               autoFocus
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Perp market"
+              placeholder={mode === "spot" ? "Spot Market" : "Perp Market"}
               className="min-w-0 flex-1 bg-transparent text-sm outline-none"
             />
           </label>
           <ul className="max-h-72 overflow-y-auto" role="listbox">
-            {list.map(({ market, token: item }) => (
-              <li key={market.id}>
+            {list.map((row) => (
+              <li key={row.id}>
                 <button
                   type="button"
                   onClick={() => {
-                    onPick(item.symbol);
+                    onPick(row.token.symbol);
                     setOpen(false);
                     setQuery("");
                   }}
                   className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-surface-2"
-                  onPointerDown={() => warmCharts(item.symbol)}
+                  onPointerDown={() => warmCharts(row.token.symbol)}
                 >
-                  <TokenIcon token={item} />
+                  <TokenIcon token={row.token} />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-1.5 font-semibold">
-                      {market.label}
-                      <span className="rounded bg-surface px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-muted">PERP</span>
+                      {row.label}
+                      <span className="rounded bg-surface px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-muted">{mode === "spot" ? "SPOT" : "PERP"}</span>
                     </span>
                     <span className="flex items-center gap-1 truncate text-xs text-muted">
-                      <ChainBadge chain={item.chain} />
-                      {displayName(item)} · {item.chain}
+                      <ChainBadge chain={row.token.chain} />
+                      {displayName(row.token)} · {row.token.chain}
                     </span>
                   </span>
                 </button>
               </li>
             ))}
-            {list.length === 0 && <li className="px-2 py-6 text-center text-sm text-muted">No perp market matches that name.</li>}
+            {list.length === 0 && <li className="px-2 py-6 text-center text-sm text-muted">{mode === "spot" ? "No spot market matches that name." : "No perp market matches that name."}</li>}
           </ul>
         </div>
       )}
@@ -402,24 +447,31 @@ function Trades({ prints, symbol }: { prints: Print[]; symbol: string }) {
   );
 }
 
-function Positions({ symbol, mark }: { symbol: string; mark: number }) {
+function Positions({ symbol, mark, mode }: { symbol: string; mark: number; mode: TicketMode }) {
   const balances = useDesk((s) => s.balances);
   const positions = useDesk((s) => s.positions);
   const closePerp = useDesk((s) => s.closePerp);
   const marks = useDesk((s) => s.marks);
   const held = balances[symbol] ?? 0;
   const perps = positions.filter((position) => position.base === symbol);
+  if (mode === "spot") {
+    return (
+      <div className="space-y-2 py-2">
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-3 py-3">
+          <span>
+            <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted">Spot</span>
+            <span className="mt-0.5 block font-mono text-sm">
+              {bal(held)} {symbol}
+            </span>
+          </span>
+          <span className="font-mono text-sm">{usd(held * mark)}</span>
+        </div>
+        {held <= 0 && <BookNote>No open spot balance on {symbol}.</BookNote>}
+      </div>
+    );
+  }
   return (
     <div className="space-y-2 py-2">
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-3 py-3">
-        <span>
-          <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted">Spot</span>
-          <span className="mt-0.5 block font-mono text-sm">
-            {bal(held)} {symbol}
-          </span>
-        </span>
-        <span className="font-mono text-sm">{usd(held * mark)}</span>
-      </div>
       {perps.length === 0 ? (
         <BookNote>No open perp on {symbol}.</BookNote>
       ) : (

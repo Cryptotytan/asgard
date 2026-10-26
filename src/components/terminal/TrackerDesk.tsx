@@ -10,6 +10,7 @@ import {
   nearProblem,
   peekChain,
   readTracker,
+  refreshChain,
   writeTracker,
   type AlertOn,
   type Label,
@@ -102,6 +103,7 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
       folders: next.folder && !current.folders.includes(next.folder) ? [...current.folders, next.folder] : current.folders,
     }));
     setWalletOpen(false);
+    void refreshChain(next.address).then(() => setChainRev((value) => value + 1));
     onFlash(`Wallet ${form.id ? "updated" : "added to Tracker"}\n${next.name}`);
   }
 
@@ -125,11 +127,16 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
   useEffect(() => {
     if (!data.wallets.length) return;
     let stop = false;
-    void Promise.all(data.wallets.map((item) => loadChain(item.address).catch(() => null))).then(() => {
-      if (!stop) setChainRev((value) => value + 1);
-    });
+    const pull = (fresh: boolean) => {
+      void Promise.all(data.wallets.map((item) => (fresh ? refreshChain(item.address) : loadChain(item.address)).catch(() => null))).then(() => {
+        if (!stop) setChainRev((value) => value + 1);
+      });
+    };
+    pull(false);
+    const timer = window.setInterval(() => pull(true), 20_000);
     return () => {
       stop = true;
+      window.clearInterval(timer);
     };
   }, [data.wallets]);
   const problem = form.address ? nearProblem(form.address, form.kind) : "";
@@ -296,15 +303,15 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
               <div className="scroll-x">
                 <table className="w-full min-w-[720px] text-left text-sm">
                   <thead className="text-[11px] uppercase tracking-wide text-muted">
-                    <tr className="border-b border-line">{["Type", "Wallet", "Token", "Amount", "Time", ""].map((label) => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr>
+                    <tr className="border-b border-line">{["Activity", "Wallet", "Detail", "Amount", "Time", ""].map((label) => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr>
                   </thead>
                   <tbody>
                     {liveRows.map((fill) => (
                       <tr key={`${fill.wallet}-${fill.id}`} className="border-b border-line">
-                        <td className={`px-3 py-2 font-semibold ${fill.incoming ? "text-primary" : "text-danger"}`}>{fill.incoming ? "IN" : "OUT"}</td>
+                        <td className={`px-3 py-2 font-semibold ${fill.incoming ? "text-primary" : "text-fg"}`}>{fill.kind}</td>
                         <td className="px-3">{fill.wallet}</td>
-                        <td className="px-3">{fill.symbol}</td>
-                        <td className="px-3 font-mono">{fill.amount.toPrecision(4)}</td>
+                        <td className="max-w-48 truncate px-3">{fill.symbol}</td>
+                        <td className="px-3 font-mono">{fill.amount ? fill.amount.toPrecision(4) : "—"}</td>
                         <td className="px-3 text-muted">{fill.ago}</td>
                         <td className="px-3 text-right"><button type="button" onClick={() => onTrade(fill.symbol)} className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-black">Trade</button></td>
                       </tr>
@@ -530,8 +537,15 @@ function WalletDetail({
       {pane === "performance" && <p className="py-4 text-sm text-muted">{live ? `${live.trades} recent fungible transfers on NEAR. Portfolio value is the live account balance.` : "Loading on-chain activity."}</p>}
       {pane === "activity" && (
         <ul className="divide-y divide-line text-sm">
-          {(live?.fills ?? []).map((fill) => <li key={fill.id} className="flex items-center justify-between py-2"><span className={fill.incoming ? "text-primary" : "text-danger"}>{fill.incoming ? "IN" : "OUT"} {fill.symbol}</span><span className="font-mono">{fill.amount.toPrecision(4)}</span><span className="text-muted">{fill.ago}</span></li>)}
-          {live && live.fills.length === 0 && <li className="py-3 text-muted">No recent fungible transfers.</li>}
+          {(live?.fills ?? []).map((fill) => (
+            <li key={fill.id} className="flex items-center justify-between gap-3 py-2">
+              <span className={fill.incoming ? "text-primary" : "text-fg"}>{fill.kind}</span>
+              <span className="min-w-0 flex-1 truncate">{fill.symbol}</span>
+              <span className="font-mono">{fill.amount ? fill.amount.toPrecision(4) : "—"}</span>
+              <span className="text-muted">{fill.ago}</span>
+            </li>
+          ))}
+          {live && live.fills.length === 0 && <li className="py-3 text-muted">No recent account activity.</li>}
         </ul>
       )}
       {pane === "dev" && <p className="py-4 text-sm text-muted">No NEAR contract deploy is attached to this watch. Labels: {wallet.labels.join(", ") || "none"}. {wallet.note || "No note."}</p>}

@@ -296,7 +296,7 @@ export function LiveBook({ symbol, mark, liquidity }: { symbol: string; mark: nu
   const mid = last > 0 ? last : mark;
 
   return (
-    <div ref={box} className="flex h-full min-h-[28rem] flex-col bg-bg lg:min-h-[36rem]">
+    <div ref={box} className="flex h-full min-h-0 flex-col bg-bg">
       <div className="grid grid-cols-2 border-b border-line text-[13px]">
         <button type="button" onClick={() => setTab("book")} className={`h-10 ${tab === "book" ? "bg-surface-2 font-semibold text-fg" : "text-muted"}`}>
           Order Book
@@ -357,7 +357,7 @@ export function LiveBook({ symbol, mark, liquidity }: { symbol: string; mark: nu
             <span className="text-right">Size ({unit === "quote" ? "USDT" : base})</span>
             <span className="text-right">Total (USDT)</span>
           </div>
-          <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
             {view !== "buy" && <Ladder rows={askRows} side="ask" step={step} unit={unit} edge="end" />}
             <div className="flex items-baseline gap-2 border-y border-line/70 px-2 py-1.5">
               <span className={`font-mono text-[15px] font-semibold ${up ? "text-primary" : "text-danger"}`}>{priceText(mid, step >= 1 ? 1 : 0.01)}</span>
@@ -402,7 +402,7 @@ function withTotal(rows: Level[], side: "ask" | "bid") {
 function Ladder({ rows, side, step, unit, edge }: { rows: { price: number; qty: number; total: number }[]; side: "ask" | "bid"; step: number; unit: Unit; edge: "start" | "end" }) {
   const max = Math.max(...rows.map((row) => row.total), 1);
   return (
-    <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${edge === "end" ? "justify-end" : ""}`}>
+    <div className={`flex min-h-0 flex-1 flex-col ${edge === "end" ? "justify-end" : ""}`}>
       {rows.map((row) => {
         const size = unit === "quote" ? row.qty * row.price : row.qty;
         return (

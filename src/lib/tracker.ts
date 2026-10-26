@@ -142,7 +142,7 @@ export function fillsOf(wallets: TrackedWallet[]): Fill[] {
 }
 
 export type ChainHolding = { symbol: string; amount: number; usd: number; share: number };
-export type ChainFill = { id: string; symbol: string; incoming: boolean; amount: number; ago: string };
+export type ChainFill = { id: string; symbol: string; incoming: boolean; amount: number; ago: string; kind: string; detail: string; time: number };
 export type ChainWallet = { value: number; holdings: ChainHolding[]; trades: number; ago: string; fills: ChainFill[] };
 
 const chainCache = new Map<string, ChainWallet>();
@@ -166,6 +166,12 @@ export function loadChain(address: string) {
   const key = address.trim().toLowerCase();
   const cached = chainCache.get(key);
   if (cached) return Promise.resolve(cached);
+  return refreshChain(key);
+}
+
+export function refreshChain(address: string) {
+  const key = address.trim().toLowerCase();
+  chainCache.delete(key);
   return fetchChain(key).then((row) => {
     chainCache.set(key, row);
     return row;
@@ -173,14 +179,18 @@ export function loadChain(address: string) {
 }
 
 async function fetchChain(account: string): Promise<ChainWallet> {
-  const [accountRes, inventoryRes, txRes] = await Promise.all([
+  const [accountRes, inventoryRes, txRes, ftRes, nftRes] = await Promise.all([
     fetch(`https://api.nearblocks.io/v1/account/${account}`),
     fetch(`https://api.nearblocks.io/v1/account/${account}/inventory`),
+    fetch(`https://api.nearblocks.io/v1/account/${account}/txns?per_page=25`),
     fetch(`https://api.nearblocks.io/v1/account/${account}/ft-txns?per_page=25`),
+    fetch(`https://api.nearblocks.io/v1/account/${account}/nft-txns?per_page=25`),
   ]);
   const accountBody = accountRes.ok ? ((await accountRes.json()) as { account?: { amount?: string } }) : {};
   const inventoryBody = inventoryRes.ok ? ((await inventoryRes.json()) as { inventory?: { fts?: { amount?: string; ft_meta?: { symbol?: string; decimals?: number } }[] } }) : {};
-  const txBody = txRes.ok ? ((await txRes.json()) as { txns?: { transaction_hash?: string; delta_amount?: string; block_timestamp?: string; ft?: { symbol?: string; decimals?: number } }[] }) : {};
+  const txBody = txRes.ok ? ((await txRes.json()) as { txns?: ReceiptTxn[] }) : {};
+  const ftBody = ftRes.ok ? ((await ftRes.json()) as { txns?: FtTxn[] }) : {};
+  const nftBody = nftRes.ok ? ((await nftRes.json()) as { txns?: NftTxn[] }) : {};
   const near = Number(accountBody.account?.amount ?? "0") / 1e24;
   const nearPrice = TOKENS.find((token) => token.symbol === "NEAR")?.price ?? 0;
   const holdings: ChainHolding[] = [];
@@ -196,18 +206,87 @@ async function fetchChain(account: string): Promise<ChainWallet> {
   const total = holdings.reduce((sum, row) => sum + row.usd, 0);
   for (const row of holdings) row.share = total > 0 ? (row.usd / total) * 100 : 0;
   holdings.sort((a, b) => b.usd - a.usd || b.amount - a.amount);
-  const fills: ChainFill[] = (txBody.txns ?? []).slice(0, 20).map((tx, index) => {
+  const fills = mergeActivity(txBody.txns ?? [], ftBody.txns ?? [], nftBody.txns ?? []);
+  return { value: total, holdings, trades: fills.length, ago: fills[0]?.ago ?? "—", fills };
+}
+
+type ReceiptTxn = { transaction_hash?: string; block_timestamp?: string; receiver_account_id?: string; predecessor_account_id?: string; actions?: { action?: string; method?: string }[] };
+type FtTxn = { transaction_hash?: string; delta_amount?: string; block_timestamp?: string; ft?: { symbol?: string; decimals?: number }; cause?: string };
+type NftTxn = { transaction_hash?: string; block_timestamp?: string; nft?: { token_id?: string }; token_id?: string; delta_amount?: string };
+
+function actionKind(action?: string, method?: string) {
+  if (action === "FUNCTION_CALL") return method || "Function call";
+  if (action === "TRANSFER") return "NEAR transfer";
+  if (action === "STAKE") return "Stake";
+  if (action === "ADD_KEY") return "Add key";
+  if (action === "DELETE_KEY") return "Delete key";
+  if (action === "DEPLOY_CONTRACT") return "Deploy";
+  if (action === "CREATE_ACCOUNT") return "Create account";
+  return (action || "Transaction").replaceAll("_", " ").toLowerCase();
+}
+
+function stamp(ns?: string) {
+  if (!ns) return 0;
+  const ms = Number(BigInt(ns) / 1_000_000n);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[]): ChainFill[] {
+  const rows: ChainFill[] = [];
+  for (const tx of txns) {
+    const action = tx.actions?.[0];
+    const kind = actionKind(action?.action, action?.method);
+    const time = stamp(tx.block_timestamp);
+    rows.push({
+      id: tx.transaction_hash || `${time}-${kind}`,
+      symbol: action?.action === "TRANSFER" ? "NEAR" : action?.method || tx.receiver_account_id || "NEAR",
+      incoming: false,
+      amount: 0,
+      ago: time ? agoFrom(tx.block_timestamp || "0") : "—",
+      kind,
+      detail: tx.receiver_account_id || tx.predecessor_account_id || "",
+      time,
+    });
+  }
+  for (const tx of fts) {
     const decimals = tx.ft?.decimals ?? 0;
     const raw = tx.delta_amount ?? "0";
     const amount = Number(raw.replace("-", "")) / 10 ** decimals;
-    return {
-      id: tx.transaction_hash ?? `${index}`,
+    const incoming = !raw.startsWith("-");
+    const time = stamp(tx.block_timestamp);
+    rows.push({
+      id: `${tx.transaction_hash ?? time}-ft-${tx.ft?.symbol ?? ""}`,
       symbol: tx.ft?.symbol || "FT",
-      incoming: !raw.startsWith("-"),
+      incoming,
       amount: Number.isFinite(amount) ? amount : 0,
-      ago: tx.block_timestamp ? agoFrom(tx.block_timestamp) : "—",
-    };
-  });
-  return { value: total, holdings: holdings.slice(0, 12), trades: txBody.txns?.length ?? 0, ago: fills[0]?.ago ?? "—", fills };
+      ago: time ? agoFrom(tx.block_timestamp || "0") : "—",
+      kind: incoming ? "Token in" : "Token out",
+      detail: tx.cause || "",
+      time,
+    });
+  }
+  for (const tx of nfts) {
+    const time = stamp(tx.block_timestamp);
+    const incoming = !String(tx.delta_amount ?? "").startsWith("-");
+    rows.push({
+      id: `${tx.transaction_hash ?? time}-nft`,
+      symbol: tx.nft?.token_id || tx.token_id || "NFT",
+      incoming,
+      amount: 1,
+      ago: time ? agoFrom(tx.block_timestamp || "0") : "—",
+      kind: incoming ? "NFT in" : "NFT out",
+      detail: "",
+      time,
+    });
+  }
+  const seen = new Set<string>();
+  return rows
+    .filter((row) => {
+      if (seen.has(row.id)) return false;
+      seen.add(row.id);
+      return true;
+    })
+    .sort((a, b) => b.time - a.time)
+    .slice(0, 40);
 }
 

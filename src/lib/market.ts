@@ -470,19 +470,16 @@ export const VENUES: Venue[] = [
   { id: "intents", name: "NEAR Intents", kind: "Bridge", feeBps: 0, impactBps: 0, depthUsd: 0, eta: "live" },
 ];
 
-export const MARKETS = [
-  { id: "NEAR-PERP", base: "NEAR", label: "NEAR-USD" },
-  { id: "ETH-PERP", base: "ETH", label: "ETH-USD" },
-] as const;
+export type PerpMarket = { id: string; base: string; label: string; name: string; chain: string };
+
+export const MARKETS: PerpMarket[] = [
+  { id: "NEAR-PERP", base: "NEAR", label: "NEAR-USD", name: "NEAR", chain: "NEAR" },
+  { id: "ETH-PERP", base: "ETH", label: "ETH-USD", name: "ETH", chain: "Ethereum" },
+];
 
 export function canPerp(symbol: string) {
-  const token = TOKENS.find((item) => item.symbol === symbol);
-  if (!token || token.kind === "meme") return false;
-  const base = token.symbol.split(".")[0].toUpperCase();
-  const known = MARKETS.some((market) => market.base === token.symbol.toUpperCase() || market.base === base);
-  if (!known) return false;
-  if (MARKETS.some((market) => market.base === token.symbol.toUpperCase())) return true;
-  return Boolean(token.listed && token.price > 0);
+  const base = symbol.split(".")[0]?.toUpperCase() ?? "";
+  return MARKETS.some((market) => market.base === base);
 }
 
 export const LEND_MARKETS: { symbol: string; token?: string; supplyApy: number; borrowApy: number }[] = [];
