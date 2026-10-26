@@ -1,18 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { CHAINS_META } from "@/lib/chains";
 import { TOKENS, tokenBySymbol, usd } from "@/lib/market";
 
 const FAQ = [
-  ["What sits on this desk?", "Markets, spot, NEAR and ETH perps, a cross-chain swap, a vault, lending, and every wallet you connect. One terminal."],
-  ["Which wallets can sign in?", "NEAR: Meteor, HOT, HERE, MyNearWallet, Nightly, Sender, and Intear. EVM: MetaMask, Rabby, and Zerion. Solana: Phantom, Solflare, and Backpack."],
-  ["Do trades leave my wallet?", "You confirm every send. NEAR Intents settles the deposit back to the account on the quote. EVM and Solana routes are signed in that chain’s wallet. Perp margin is locked from your USDC until the position closes."],
-  ["How does a route get picked?", "A same-chain EVM swap asks KyberSwap and ParaSwap. Solana asks Jupiter. A cross-chain swap asks NEAR Intents and Li.Fi. You sign the cheapest live quote. A missing quote is left off the ticket."],
+  ["What sits on this desk?", "Markets, spot, NEAR and ETH perps, swap, a vault, lending, and a wallet tracker. One terminal."],
+  ["Which wallets can sign in?", "Meteor, HOT, HERE, MyNearWallet, Nightly, Sender, and Intear on NEAR mainnet."],
+  ["Do trades leave my wallet?", "Swap, spot, vault, and lend do. You confirm a deposit, and NEAR Intents settles it back to the same account. Perp margin stays in the wallet."],
+  ["How does a route get picked?", "The terminal asks NEAR Intents 1-Click for a live quote. Other venues stay on the book as estimates. Only Intents is signed."],
 ];
-
-const RAILS = ["near", "eth", "base", "arb", "op", "bsc", "pol", "avax", "sol"]
-  .map((id) => CHAINS_META.find((chain) => chain.id === id))
-  .filter((chain): chain is (typeof CHAINS_META)[number] => Boolean(chain));
 
 export function Landing() {
   const stars = useRef<HTMLCanvasElement>(null);
@@ -65,9 +60,6 @@ export function Landing() {
   }, []);
 
   useEffect(() => {
-    const narrow = window.matchMedia("(max-width: 800px)").matches;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (narrow || reduce) return;
     let frame = 0;
     const tick = () => {
       const node = mock.current;
@@ -95,55 +87,39 @@ export function Landing() {
     <div className="landing">
       <canvas ref={stars} className="landing-stars" aria-hidden />
       <header className="landing-nav">
-        <div className="landing-nav-row">
-          <a href="#top" className="flex items-center gap-2">
-            <span className="mark" aria-hidden />
-            <span className="text-lg font-semibold tracking-tight">Asgard</span>
-          </a>
-          <nav className="hidden items-center gap-6 text-sm text-muted md:flex">
-            <a href="#desk">Terminal</a>
-            <a href="#routes">Routes</a>
-            <a href="#how">How it works</a>
-            <a href="#faq">FAQ</a>
-          </nav>
-          <Link to="/app" className="landing-enter">
-            Enter terminal
-          </Link>
-        </div>
-        <nav className="landing-jump" aria-label="On this page">
+        <a href="#top" className="flex items-center gap-2">
+          <span className="mark" aria-hidden />
+          <span className="text-lg font-semibold tracking-tight">Asgard</span>
+        </a>
+        <nav className="hidden items-center gap-6 text-sm text-muted md:flex">
           <a href="#desk">Terminal</a>
-          <a href="#routes">Routes</a>
+          <a href="#routes">Intents</a>
           <a href="#how">How it works</a>
           <a href="#faq">FAQ</a>
         </nav>
+        <Link to="/app" className="landing-enter">
+          Enter terminal
+        </Link>
       </header>
 
       <main id="top">
         <section className="landing-hero">
-          <p className="landing-pill">NEAR · Solana · EVM</p>
+          <p className="landing-pill">NEAR Intents · 1-Click</p>
           <h1>
             THE NEAR BOOK
             <br />
             <span>OPENS HERE</span>
           </h1>
           <p className="landing-lead">
-            Scan a market, compare a live quote, and settle it. NEAR Intents moves value across chains. Solana and EVM routes sit on the same ticket, and you sign the cheapest one.
+            Scan a market, take a live Intents quote, and settle swap, spot, the vault, and lending from the NEAR wallet you already use.
           </p>
           <div className="landing-cta">
             <Link to="/app" className="landing-enter landing-enter-lg">
               Enter the terminal
             </Link>
-            <a href="#how" className="landing-ghost">
+            <a href="#how" className="h-12 rounded-full border border-line px-6 text-sm font-semibold leading-[3rem]">
               How a fill settles
             </a>
-          </div>
-          <div className="landing-rails" aria-label="Chains you can sign">
-            {RAILS.map((chain) => (
-              <span key={chain.id}>
-                <img src={chain.icon} alt="" />
-                {chain.label}
-              </span>
-            ))}
           </div>
 
           <div id="desk" className="landing-stage" onPointerMove={lean} onPointerLeave={() => setTilt({ x: 8, y: -16 })}>
@@ -157,7 +133,7 @@ export function Landing() {
 
         <section className="landing-stats">
           <Stat k="Tokens on the desk" v={String(TOKENS.length)} />
-          <Stat k="Wallets" v="NEAR · EVM · SOL" />
+          <Stat k="NEAR wallets" v="7" />
           <Stat k="Settlement" v="1-Click" />
         </section>
 
@@ -168,8 +144,8 @@ export function Landing() {
             <article>
               <RouteFace />
               <span>01</span>
-              <h3>The cheapest live quote</h3>
-              <p>Same-chain EVM asks KyberSwap and ParaSwap. Solana asks Jupiter. Cross-chain asks NEAR Intents and Li.Fi. You sign the cheapest live quote.</p>
+              <h3>A live Intents quote</h3>
+              <p>Swap and spot ask NEAR Intents 1-Click for the price. Your wallet sends the deposit. The other venues stay on the book as estimates.</p>
             </article>
             <article>
               <ScanFace />
@@ -181,7 +157,7 @@ export function Landing() {
               <PerpFace />
               <span>03</span>
               <h3>Perps that are listed</h3>
-              <p>NEAR and ETH only. Margin is locked from your USDC until you close. Take profit, stop, and liquidation sit on that position.</p>
+              <p>NEAR and ETH only. Take profit, stop, and liquidation are on the position. Everything else stays spot.</p>
             </article>
             <article>
               <VaultFace />
@@ -192,14 +168,14 @@ export function Landing() {
             <article>
               <WalletFace />
               <span>05</span>
-              <h3>The wallet for that chain</h3>
-              <p>NEAR, EVM, and Solana each sign on their own account. The header lists every wallet that is connected, and you can disconnect one without dropping the others.</p>
+              <h3>A wallet you already have</h3>
+              <p>Meteor, HOT, HERE, MyNearWallet, Nightly, Sender, Intear. The header shows the account and its on-chain NEAR.</p>
             </article>
             <article>
               <PhoneFace />
               <span>06</span>
               <h3>The same desk on a phone</h3>
-              <p>Markets, the chart, and the ticket stack in one column. Chain filters, token choice, and the quote stay on the screen.</p>
+              <p>Markets, swap, vault, and lend fit the screen. The chart and the order ticket stay in one scroll on trade.</p>
             </article>
           </div>
         </section>
@@ -224,7 +200,7 @@ export function Landing() {
               <RouteFace />
               <span>03</span>
               <h3>Sign the quote</h3>
-              <p>KyberSwap, ParaSwap, Jupiter, Li.Fi, or NEAR Intents prices the fill. You confirm it in the wallet for that chain. Nothing is sent if the quote is missing.</p>
+              <p>NEAR Intents 1-Click prices the fill. Confirm the deposit in your wallet and the tokens come back to the same account.</p>
             </li>
           </ol>
         </section>
@@ -233,7 +209,7 @@ export function Landing() {
           <div className="faq-intro">
             <p className="landing-kicker">FAQ</p>
             <h2>Before you open it</h2>
-            <p>NEAR, EVM, and Solana can all be connected. Swap, spot, vault, and lend only move after you confirm the quote.</p>
+            <p>Sign-in is a real NEAR wallet. Swap, spot, vault, and lend settle through NEAR Intents.</p>
           </div>
           <div className="faq-list">
             {FAQ.map(([question, answer], index) => (
@@ -252,7 +228,7 @@ export function Landing() {
         <div>
           <span className="mark" aria-hidden />
           <strong>Asgard</strong>
-          <p>Cross-chain terminal. You sign the quote.</p>
+          <p>NEAR Intents terminal.</p>
         </div>
         <Link to="/app" className="landing-enter">
           Enter the terminal
@@ -296,7 +272,7 @@ function Mock() {
             NEAR
           </em>
         </label>
-        <p className="mock-route">Cheapest live route · you confirm the send</p>
+        <div className="mock-go">Enter terminal</div>
       </div>
       <aside>
         <p className="mock-k">Best route</p>
@@ -324,16 +300,17 @@ function FaceToken({ symbol }: { symbol: string }) {
 
 function RouteFace() {
   const rows = [
-    ["NEAR Intents", "1-Click"],
-    ["Li.Fi", "EVM routes"],
-    ["Jupiter", "Solana"],
+    ["NEAR Intents", "1-Click", true],
+    ["Rhea", "Estimate", false],
+    ["HEX", "Estimate", false],
   ] as const;
   return (
     <div className="viz">
-      {rows.map(([name, fee]) => (
-        <p key={name}>
+      {rows.map(([name, fee, best]) => (
+        <p key={name} className={best ? "is-best" : ""}>
           <b>{name}</b>
           <span>{fee}</span>
+          {best && <em>Best</em>}
         </p>
       ))}
     </div>
@@ -347,9 +324,9 @@ function ScanFace() {
       <img src={near.icon} alt="" />
       <div>
         <b>NEAR</b>
-        <span>Verified pool</span>
+        <span>Verified pool · honeypot clear</span>
       </div>
-      <strong>Live</strong>
+      <strong>92</strong>
     </div>
   );
 }
@@ -360,12 +337,12 @@ function PerpFace() {
       <p>
         <FaceToken symbol="NEAR" />
         <b>NEAR-PERP</b>
-        <em>Long</em>
+        <em>+4.8%</em>
       </p>
       <div>
-        <span>Margin locked</span>
-        <span>TP</span>
-        <span>SL</span>
+        <span>TP 5.40</span>
+        <span>SL 4.80</span>
+        <span>Liq 3.10</span>
       </div>
     </div>
   );
@@ -375,14 +352,14 @@ function VaultFace() {
   return (
     <div className="viz viz-vault">
       <p>
-        <span>Deposit</span>
-        <b>stNEAR</b>
+        <span>Vault</span>
+        <b>8.4%</b>
         <i style={{ width: "68%" }} />
       </p>
       <p>
-        <span>Borrow</span>
-        <b>70% line</b>
-        <i style={{ width: "70%" }} />
+        <span>Supply</span>
+        <b>12%</b>
+        <i style={{ width: "82%" }} />
       </p>
     </div>
   );
@@ -391,10 +368,10 @@ function VaultFace() {
 function WalletFace() {
   return (
     <div className="viz viz-wallets">
-      {["NEAR", "EVM", "Solana"].map((name) => (
-        <p key={name}>
+      {["Meteor", "HOT", "HERE", "Nightly"].map((name, index) => (
+        <p key={name} className={index === 0 ? "is-best" : ""}>
           <b>{name}</b>
-          <span>Connect</span>
+          <span>{index === 0 ? "Connected" : "NEAR"}</span>
         </p>
       ))}
     </div>
@@ -404,7 +381,7 @@ function WalletFace() {
 function PhoneFace() {
   return (
     <div className="viz viz-phone">
-      {["NEAR", "ETH", "SOL"].map((symbol) => {
+      {["NEAR", "ETH", "AURORA"].map((symbol) => {
         const token = tokenBySymbol(symbol);
         return (
           <p key={symbol}>
