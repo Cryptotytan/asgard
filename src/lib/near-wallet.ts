@@ -12,16 +12,19 @@ let booted: Promise<void> | null = null;
 let modalShow: (() => void) | null = null;
 let cancelPending: (() => void) | null = null;
 
+type WalletApi = {
+  signOut: () => Promise<void>;
+  signIn: (args: { contractId: string; methodNames: string[] }) => Promise<unknown>;
+  signAndSendTransaction: (tx: unknown) => Promise<unknown>;
+  signAndSendTransactions?: (input: { transactions: { signerId: string; receiverId: string; actions: Call[] }[] }) => Promise<unknown>;
+};
+let selectorPromise: Promise<Selector> | null = null;
+
 type Selector = {
   store: { getState: () => { accounts: { accountId: string }[] } };
   on: (event: "signedIn" | "signedOut", cb: () => void) => void;
-  wallet: (id?: string) => Promise<{
-    signOut: () => Promise<void>;
-    signIn: (args: { contractId: string; methodNames: string[] }) => Promise<unknown>;
-    signAndSendTransaction: (tx: unknown) => Promise<unknown>;
-  }>;
+  wallet: (id?: string) => Promise<WalletApi>;
 };
-let selectorPromise: Promise<Selector> | null = null;
 
 function stashRedirectAccount() {
   if (typeof window === "undefined") return;
@@ -299,21 +302,67 @@ export async function syncWallet(accountId: string) {
   const inventory = inventoryRes && inventoryRes.ok ? ((await inventoryRes.json()) as { inventory?: { fts?: { contract?: string; amount?: string; ft_meta?: { symbol?: string; decimals?: number } }[] } }) : {};
   const book: Record<string, number> = {};
   if (near) {
-    const native = Math.max(0, Number(near) / 1e24 - 0.05);
+    const native = Math.max(0, Number(near) / 1e24);
     if (native > 0) book.NEAR = native;
     useDesk.getState().setNearYocto(near);
   }
+  const seen = new Set<string>();
   for (const row of inventory.inventory?.fts ?? []) {
     const contract = (row.contract ?? "").toLowerCase();
-    const decimals = row.ft_meta?.decimals ?? 0;
-    const amount = Number(row.amount ?? "0") / 10 ** Math.max(0, decimals);
-    if (!Number.isFinite(amount) || amount <= 0) continue;
-    const symbol = terminalSymbol(contract, row.ft_meta?.symbol ?? "");
-    if (!symbol) continue;
-    book[symbol] = (book[symbol] ?? 0) + amount;
+    if (!contract) continue;
+    seen.add(contract);
+    const decimals = row.ft_meta?.decimals ?? decimalsOf(contract);
+    const amount = human(row.amount ?? "0", decimals);
+    if (amount <= 0) continue;
+    addBalance(book, contract, row.ft_meta?.symbol ?? "", amount);
   }
+  const extra = TOKENS.filter((token) => token.chain === "NEAR" && token.address && !seen.has(token.address.toLowerCase()));
+  await Promise.all(
+    extra.map(async (token) => {
+      const contract = token.address ?? "";
+      const raw = await ftBalance(key, contract);
+      const amount = human(raw, token.decimals ?? decimalsOf(contract));
+      if (amount <= 0) return;
+      addBalance(book, contract, token.symbol, amount);
+    }),
+  );
   if (useDesk.getState().accountId !== key) return;
   useDesk.getState().applyChain(book);
+  const { readBurrow } = await import("@/lib/burrow");
+  const lending = await readBurrow(key).catch(() => null);
+  if (lending && useDesk.getState().accountId === key) useDesk.getState().setLending(lending.supplied, lending.borrowed);
+}
+
+function addBalance(book: Record<string, number>, contract: string, raw: string, amount: number) {
+  const symbol = terminalSymbol(contract, raw);
+  if (!symbol) return;
+  book[symbol] = (book[symbol] ?? 0) + amount;
+  const token = TOKENS.find((item) => item.symbol === symbol);
+  if (token && amount > 0) token.listed = true;
+}
+
+function decimalsOf(contract: string) {
+  const known: Record<string, number> = {
+    "wrap.near": 24,
+    "meta-pool.near": 24,
+    "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": 6,
+    "usdt.tether-token.near": 6,
+    "eth.bridge.near": 18,
+    "2260fac5e5542a773aa44fbcfedf7c193bc2c599.factory.bridge.near": 8,
+    "aaaaaa20d9e0e2461697782ef11675f668207961.factory.bridge.near": 18,
+    "token.sweat": 18,
+    "token.rhealab.near": 18,
+  };
+  return known[contract] ?? TOKENS.find((token) => token.address?.toLowerCase() === contract)?.decimals ?? 24;
+}
+
+function human(raw: string, decimals: number) {
+  if (!/^\d+$/.test(raw) || raw === "0") return 0;
+  const pad = raw.padStart(decimals + 1, "0");
+  const whole = pad.slice(0, -decimals) || "0";
+  const frac = pad.slice(-decimals).slice(0, 8).replace(/0+$/, "");
+  const value = Number(frac ? `${whole}.${frac}` : whole);
+  return Number.isFinite(value) ? value : 0;
 }
 
 function terminalSymbol(contract: string, raw: string) {
@@ -344,21 +393,62 @@ export async function sendIntentDeposit(input: {
   wrap: boolean;
 }): Promise<string | null> {
   if (localStorage.getItem(READONLY_STORE)) throw new Error("This account is view-only. Connect Intear or HERE to sign.");
-  await boot();
-  const selector = await selectorPromise;
-  if (!selector) throw new Error("Wallet is not ready.");
-  const wallet = await selector.wallet();
   const registerRecipient = !(await isRegistered(input.contractId, input.depositAddress));
   const actions = input.wrap
     ? await wrapActions(input.accountId, input.depositAddress, input.amount, registerRecipient)
     : transferActions(input.depositAddress, input.amount, registerRecipient);
-  const outcome = await wallet.signAndSendTransaction({
-    signerId: input.accountId,
-    receiverId: input.contractId,
-    callbackUrl: window.location.href,
-    actions,
-  } as never);
+  const outcome = await sendNearTransactions(input.accountId, [{ receiverId: input.contractId, actions }]);
   return hashOf(outcome);
+}
+
+export async function stakeNear(accountId: string, yocto: string) {
+  if (localStorage.getItem(READONLY_STORE)) throw new Error("This account is view-only. Connect a wallet to sign.");
+  if (!/^\d+$/.test(yocto) || yocto === "0") throw new Error("Enter an amount.");
+  const outcome = await sendNearTransactions(accountId, [
+    {
+      receiverId: "meta-pool.near",
+      actions: [call("deposit_and_stake", {}, 80_000_000_000_000n, BigInt(yocto))],
+    },
+  ]);
+  return hashOf(outcome);
+}
+
+export async function sendNearTransactions(accountId: string, transactions: { receiverId: string; actions: Call[] }[]) {
+  if (localStorage.getItem(READONLY_STORE)) throw new Error("This account is view-only. Connect a wallet to sign.");
+  await boot();
+  const selector = await selectorPromise;
+  if (!selector) throw new Error("Wallet is not ready.");
+  const wallet = await selector.wallet();
+  const built = transactions.map((tx) => ({ signerId: accountId, receiverId: tx.receiverId, actions: tx.actions }));
+  const before = new URL(window.location.href).searchParams.get("transactionHashes");
+  const sent = built.length > 1 && wallet.signAndSendTransactions ? wallet.signAndSendTransactions({ transactions: built }) : sendOneByOne(wallet, built);
+  try {
+    return await Promise.race([sent, redirectHash(before)]);
+  } catch (error) {
+    const hash = new URL(window.location.href).searchParams.get("transactionHashes");
+    if (hash && hash !== before) return hash.split(",")[0] ?? hash;
+    throw error instanceof Error ? error : new Error("The NEAR wallet rejected the transaction.");
+  }
+}
+
+function sendOneByOne(wallet: WalletApi, built: { signerId: string; receiverId: string; actions: Call[] }[]) {
+  return (async () => {
+    let last: unknown = null;
+    for (const tx of built) last = await wallet.signAndSendTransaction(tx);
+    return last;
+  })();
+}
+
+function redirectHash(before: string | null) {
+  return new Promise<string>((resolve) => {
+    const timer = window.setInterval(() => {
+      const hash = new URL(window.location.href).searchParams.get("transactionHashes");
+      if (hash && hash !== before) {
+        window.clearInterval(timer);
+        resolve(hash.split(",")[0] ?? hash);
+      }
+    }, 400);
+  });
 }
 
 async function accountAmount(accountId: string) {
@@ -388,20 +478,41 @@ async function ftBalance(accountId: string, contractId: string) {
 }
 
 async function rpc(params: object) {
-  const response = await fetch("https://rpc.mainnet.near.org", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: "asgard", method: "query", params }),
-  });
-  const body = (await response.json()) as { result?: unknown; error?: { message?: string } };
-  if (body.error) throw new Error(body.error.message ?? "RPC error");
-  return body.result;
+  const urls = ["https://free.rpc.fastnear.com", "https://rpc.mainnet.near.org"];
+  let last = "NEAR RPC is unreachable.";
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "asgard", method: "query", params }),
+      });
+      const body = (await response.json()) as { result?: unknown; error?: { message?: string } };
+      if (body.error) {
+        last = body.error.message ?? last;
+        continue;
+      }
+      if (body.result !== undefined) return body.result;
+    } catch (error) {
+      last = error instanceof Error ? error.message : last;
+    }
+  }
+  throw new Error(last);
 }
 
 type Call = ReturnType<typeof actionCreators.functionCall>;
+export type NearCall = Call;
 
 function call(methodName: string, args: object, gas: bigint, deposit: bigint): Call {
   return actionCreators.functionCall(methodName, args, gas, deposit);
+}
+
+export function nearFunctionCall(methodName: string, args: object, gas: bigint, deposit: bigint): Call {
+  return call(methodName, args, gas, deposit);
+}
+
+export async function isRegisteredOn(contractId: string, accountId: string) {
+  return isRegistered(contractId, accountId);
 }
 
 async function isRegistered(contractId: string, accountId: string) {
@@ -447,8 +558,12 @@ function transfer(receiverId: string, amount: string): Call {
   return call("ft_transfer", { receiver_id: receiverId, amount }, 30_000_000_000_000n, 1n);
 }
 
-function hashOf(outcome: unknown) {
+function hashOf(outcome: unknown): string | null {
+  if (typeof outcome === "string" && outcome.length >= 20) return outcome;
+  if (Array.isArray(outcome)) return hashOf(outcome[0]);
   if (!outcome || typeof outcome !== "object") return null;
-  const row = outcome as { transaction?: { hash?: string }; transaction_outcome?: { id?: string }; txHash?: string };
+  const row = outcome as { transaction?: { hash?: string }; transaction_outcome?: { id?: string }; txHash?: string; transactionHashes?: string[] | string };
+  if (Array.isArray(row.transactionHashes)) return row.transactionHashes[0] ?? null;
+  if (typeof row.transactionHashes === "string") return row.transactionHashes.split(",")[0] || null;
   return row.transaction?.hash ?? row.transaction_outcome?.id ?? row.txHash ?? null;
 }

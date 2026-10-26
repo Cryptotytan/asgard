@@ -60,6 +60,7 @@ type Desk = {
   setAccount: (accountId: string | null) => void;
   setNearYocto: (nearYocto: string | null) => void;
   applyChain: (chain: Book) => void;
+  setLending: (supplied: Book, loans: Book) => void;
   log: (title: string, detail: string, value: number) => void;
   swap: (from: string, to: string, amountIn: number, amountOut: number, via: string) => boolean;
   placeOrder: (order: Omit<RestingOrder, "id">) => boolean;
@@ -255,6 +256,7 @@ export const useDesk = create<Desk>((set, get) => ({
     const usdc = Math.max(0, (copy.USDC ?? 0) - locked);
     set({ chain: copy, balances: { ...copy, USDC: usdc } });
   },
+  setLending: (supplied, loans) => set({ supplied: cloneBook(supplied), loans: cloneBook(loans) }),
   log: (title, detail, value) => set({ activity: push(get().activity, title, detail, value) }),
 
   swap: (from, to, amountIn, amountOut, via) => {

@@ -825,6 +825,7 @@ async function refreshMarkets() {
   const lend = [...rheaBySymbol.entries()]
     .map(([symbol, row]) => ({
       symbol,
+      token: row.token,
       supplyApy: Number(row.supply_apy) || 0,
       borrowApy: Number(row.borrow_apy) || 0,
     }))

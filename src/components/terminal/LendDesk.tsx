@@ -1,8 +1,17 @@
 import { useState } from "react";
-import { borrowRoom, fmt, healthFactor, LEND_MARKETS, tokenBySymbol, usd } from "@/lib/market";
+import { borrowRoom, fmt, healthFactor, LEND_MARKETS, tokenBySymbol, TOKENS, usd } from "@/lib/market";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
-import { executeIntent } from "@/lib/intents";
+import { borrowFromBurrow, repayOnBurrow, supplyOnBurrow, withdrawFromBurrow } from "@/lib/burrow";
+import { syncWallet } from "@/lib/near-wallet";
 import { useDesk } from "@/lib/store";
+
+const FALLBACK = [
+  { symbol: "USDC", token: "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", supplyApy: 0, borrowApy: 0 },
+  { symbol: "USDT", token: "usdt.tether-token.near", supplyApy: 0, borrowApy: 0 },
+  { symbol: "ETH", token: "eth.bridge.near", supplyApy: 0, borrowApy: 0 },
+  { symbol: "wBTC", token: "2260fac5e5542a773aa44fbcfedf7c193bc2c599.factory.bridge.near", supplyApy: 0, borrowApy: 0 },
+  { symbol: "NEAR", token: "wrap.near", supplyApy: 0, borrowApy: 0 },
+];
 
 export function LendDesk() {
   const connected = useDesk((s) => s.connected);
@@ -11,14 +20,7 @@ export function LendDesk() {
   const supplied = useDesk((s) => s.supplied);
   const loans = useDesk((s) => s.loans);
   const chain = useDesk((s) => s.chain);
-  const receipts = useDesk((s) => s.receipts);
-  const borrow = useDesk((s) => s.borrow);
-  const repay = useDesk((s) => s.repay);
-  const noteSupply = useDesk((s) => s.noteSupply);
-  const noteUnsupply = useDesk((s) => s.noteUnsupply);
-  const addReceipt = useDesk((s) => s.addReceipt);
-  const subReceipt = useDesk((s) => s.subReceipt);
-  const [picked, setPicked] = useState<string>(LEND_MARKETS[0]?.symbol ?? "USDC");
+  const [picked, setPicked] = useState<string>("USDC");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -26,6 +28,7 @@ export function LendDesk() {
   const health = healthFactor(supplied, loans);
   const room = borrowRoom(supplied, loans);
   const n = Number(amount) || 0;
+  const markets = LEND_MARKETS.length ? LEND_MARKETS : FALLBACK;
 
   async function act(kind: "supply" | "withdraw" | "borrow" | "repay", symbol: string) {
     setPicked(symbol);
@@ -35,51 +38,33 @@ export function LendDesk() {
       return;
     }
     if (n <= 0 || busy) return;
+    const market = markets.find((item) => item.symbol === symbol);
+    const token = market?.token || TOKENS.find((item) => item.symbol === symbol && item.chain === "NEAR")?.address;
+    if (!token) {
+      setNote("That market has no NEAR contract.");
+      return;
+    }
+    const key = TOKENS.find((item) => item.address?.toLowerCase() === token.toLowerCase())?.symbol ?? symbol;
+    const decimals = TOKENS.find((item) => item.symbol === key)?.decimals ?? (token === "wrap.near" || token === "meta-pool.near" ? 24 : 18);
     const wallet = useDesk.getState().accountId;
-    if (kind === "borrow") {
-      const ok = borrow(symbol, n);
-      setNote(ok ? `Borrowed ${fmt(n)} ${symbol} against this account’s collateral.` : "Not enough collateral on this account.");
+    if (!wallet) return;
+    if ((kind === "supply" || kind === "repay") && (kind === "repay" ? loans[key] ?? 0 : chain[key] ?? 0) + 1e-8 < n) {
+      setNote(kind === "repay" ? "This account does not owe that much." : `This wallet holds ${fmt(chain[key] ?? 0)} ${key}.`);
       return;
     }
-    if (kind === "repay") {
-      const ok = repay(symbol, n);
-      setNote(ok ? `Repaid ${fmt(n)} ${symbol} on this account.` : "This account does not owe that much.");
-      return;
-    }
-    if (kind === "supply" && (chain[symbol] ?? 0) + 1e-8 < n) {
-      setNote(`This wallet holds ${fmt(chain[symbol] ?? 0)} ${symbol}.`);
+    if (kind === "withdraw" && (supplied[key] ?? 0) + 1e-8 < n) {
+      setNote("That is more than this account supplied on Rhea.");
       return;
     }
     setBusy(true);
     try {
-      if (kind === "supply") {
-        setNote("Confirm the supply. NEAR Intents swaps it into stNEAR.");
-        const result = await executeIntent({ from: symbol, to: "STNEAR", amount: String(n), accountId, purpose: "Supply" });
-        if (useDesk.getState().accountId !== wallet) return;
-        noteSupply(symbol, n);
-        addReceipt(`lend:${symbol}`, "STNEAR", result.amountOutHuman);
-        setNote(result.status === "SUCCESS" ? `Supplied ${fmt(n)} ${symbol}. Receipt ${fmt(result.amountOutHuman)} stNEAR.` : `Supply ${result.status}. This account is marked supplied.`);
-      } else {
-        if ((supplied[symbol] ?? 0) + 1e-8 < n) {
-          setNote("That is more than this account supplied.");
-          return;
-        }
-        const parked = receipts[`lend:${symbol}`]?.amount ?? 0;
-        setNote("Confirm the withdraw. stNEAR swaps back on NEAR Intents.");
-        const result = await executeIntent({
-          from: "STNEAR",
-          to: symbol,
-          amount: String(n),
-          accountId,
-          purpose: "Withdraw supply",
-          swapType: "EXACT_OUTPUT",
-          maxPay: parked,
-        });
-        if (useDesk.getState().accountId !== wallet) return;
-        const removed = noteUnsupply(symbol, n);
-        if (removed) subReceipt(`lend:${symbol}`, result.amountInHuman);
-        setNote(removed ? `Withdrew ${fmt(result.amountOutHuman)} ${symbol}.` : "That is more than this account supplied.");
-      }
+      setNote("Confirm the transaction in your NEAR wallet.");
+      if (kind === "supply") await supplyOnBurrow(wallet, token, String(n), decimals);
+      else if (kind === "withdraw") await withdrawFromBurrow(wallet, token, String(n), decimals);
+      else if (kind === "borrow") await borrowFromBurrow(wallet, token, String(n), decimals);
+      else await repayOnBurrow(wallet, token, String(n), decimals);
+      await syncWallet(wallet);
+      setNote(`${kind === "supply" ? "Supplied" : kind === "withdraw" ? "Withdrew" : kind === "borrow" ? "Borrowed" : "Repaid"} ${fmt(n)} ${key} on Rhea.`);
     } catch (error) {
       setNote(error instanceof Error ? error.message : "Lending move failed.");
     } finally {
@@ -116,37 +101,37 @@ export function LendDesk() {
           />
         </label>
         <ul className="mt-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-1">
-          {LEND_MARKETS.length === 0 && <li className="rounded-xl border border-line bg-bg p-4 text-sm text-muted">Loading live supply and borrow rates from Rhea.</li>}
-          {LEND_MARKETS.map((market) => (
-            <li key={market.symbol}>
-              <div
-                onClick={() => setPicked(market.symbol)}
-                className={`rounded-xl border bg-bg p-2 ${picked === market.symbol ? "border-primary" : "border-line"}`}
-              >
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <TokenIcon token={tokenBySymbol(market.symbol)} />
-                  <div className="min-w-0">
-                    <p className="font-semibold">{market.symbol}</p>
-                    <p className="truncate font-mono text-[10px] text-muted">
-                      wallet {fmt(chain[market.symbol] ?? 0)} · {fmt(supplied[market.symbol] ?? 0)} supplied · {fmt(loans[market.symbol] ?? 0)} debt
-                    </p>
+          {markets.map((market) => {
+            const key = TOKENS.find((item) => item.address?.toLowerCase() === market.token?.toLowerCase())?.symbol ?? market.symbol;
+            const token = tokenBySymbol(key);
+            return (
+              <li key={`${market.symbol}-${market.token ?? ""}`}>
+                <div onClick={() => setPicked(market.symbol)} className={`rounded-xl border bg-bg p-2 ${picked === market.symbol ? "border-primary" : "border-line"}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <TokenIcon token={token} />
+                      <div className="min-w-0">
+                        <p className="font-semibold">{key}</p>
+                        <p className="truncate font-mono text-[10px] text-muted">
+                          wallet {fmt(chain[key] ?? 0)} · {fmt(supplied[key] ?? 0)} supplied · {fmt(loans[key] ?? 0)} debt
+                        </p>
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right font-mono text-[11px]">
+                      <p className="text-primary">{market.supplyApy.toFixed(1)}% supply</p>
+                      <p className="text-muted">{market.borrowApy.toFixed(1)}% borrow</p>
+                    </div>
+                  </div>
+                  <div className="mt-1.5 grid grid-cols-4 gap-1.5">
+                    <Mini tone="primary" onClick={() => void act("supply", market.symbol)}>Supply</Mini>
+                    <Mini onClick={() => void act("withdraw", market.symbol)}>Withdraw</Mini>
+                    <Mini onClick={() => void act("borrow", market.symbol)}>Borrow</Mini>
+                    <Mini onClick={() => void act("repay", market.symbol)}>Repay</Mini>
                   </div>
                 </div>
-                <div className="shrink-0 text-right font-mono text-[11px]">
-                  <p className="text-primary">{market.supplyApy.toFixed(1)}% supply</p>
-                  <p className="text-muted">{market.borrowApy.toFixed(1)}% borrow</p>
-                </div>
-              </div>
-              <div className="mt-1.5 grid grid-cols-4 gap-1.5">
-                <Mini tone="primary" onClick={() => void act("supply", market.symbol)}>Supply</Mini>
-                <Mini onClick={() => void act("withdraw", market.symbol)}>Withdraw</Mini>
-                <Mini onClick={() => void act("borrow", market.symbol)}>Borrow</Mini>
-                <Mini onClick={() => void act("repay", market.symbol)}>Repay</Mini>
-              </div>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
         {note && <p className="mt-2 shrink-0 text-[11px] text-muted">{note}</p>}
       </section>

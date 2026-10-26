@@ -40,7 +40,7 @@ export function useHoldings(wallet: LinkedWallet | null) {
     if (wallet.id === "near") {
       const next: Record<string, number> = {};
       for (const token of TOKENS) {
-        if (token.chain !== "NEAR" || !token.listed) continue;
+        if (token.chain !== "NEAR") continue;
         const amount = chain[token.symbol] ?? 0;
         if (amount > 0) next[token.symbol] = amount;
       }

@@ -482,7 +482,7 @@ export function canPerp(symbol: string) {
   return MARKETS.some((market) => market.base === token.symbol || market.base === base);
 }
 
-export const LEND_MARKETS: { symbol: string; supplyApy: number; borrowApy: number }[] = [];
+export const LEND_MARKETS: { symbol: string; token?: string; supplyApy: number; borrowApy: number }[] = [];
 
 const LTV = 0.7;
 
