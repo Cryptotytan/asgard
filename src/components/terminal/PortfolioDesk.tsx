@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
-import { TokenIcon } from "@/components/terminal/TokenIcon";
+import { useEffect, useMemo, useState } from "react";
+import { TokenIcon, ChainBadge } from "@/components/terminal/TokenIcon";
 import { PnlCard } from "@/components/terminal/PnlCard";
-import { linkedWallets, useForeign, WALLET_MARK } from "@/lib/foreign-wallet";
+import { linkedWallets, useForeign, WALLET_MARK, type LinkedWallet } from "@/lib/foreign-wallet";
 import { fmt, money, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 import { useHoldings } from "@/lib/wallet-holdings";
+import { loadChainHistory, useWalletHistory, type WalletTx } from "@/lib/wallet-history";
 
 const RANGES = ["1D", "7D", "30D", "1Y"] as const;
 const TABS = ["Balances", "Vault", "Lending", "Positions", "History"] as const;
@@ -25,12 +26,33 @@ export function PortfolioDesk() {
   const positions = useDesk((s) => s.positions);
   const closePerp = useDesk((s) => s.closePerp);
   const activity = useDesk((s) => s.activity);
+  const saved = useWalletHistory();
+  const [chainTxs, setChainTxs] = useState<WalletTx[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const marks = useDesk((s) => s.marks);
   const realized = useDesk((s) => s.realized);
   const wins = useDesk((s) => s.wins);
   const closes = useDesk((s) => s.closes);
   const [range, setRange] = useState<(typeof RANGES)[number]>("30D");
   const [tab, setTab] = useState<Tab>("Balances");
+  const walletKey = wallets.map((wallet) => wallet.address).join("|");
+
+  useEffect(() => {
+    if (!wallets.length) {
+      setChainTxs([]);
+      return;
+    }
+    let cancel = false;
+    setHistoryLoading(true);
+    void loadChainHistory(wallets).then((rows) => {
+      if (cancel) return;
+      setChainTxs(rows);
+      setHistoryLoading(false);
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [walletKey]);
 
   const holdings = useMemo(() => {
     const rows: { token: Token; amount: number; wallet: string }[] = [];
@@ -147,25 +169,7 @@ export function PortfolioDesk() {
                   )}
                 </div>
               )}
-              {tab === "History" && (
-                <div className="px-3 py-2 sm:px-4">
-                  {activity.length === 0 ? (
-                    <Empty title="This wallet hasn't traded yet" body="Balances are live. Trading stats fill in after the first swap, vault deposit, or loan." />
-                  ) : (
-                    <ul className="divide-y divide-line">
-                      {activity.map((item) => (
-                        <li key={item.id} className="flex items-center justify-between gap-3 py-3 text-sm">
-                          <span className="min-w-0">
-                            <span className="block font-semibold">{item.title}</span>
-                            <span className="block truncate text-xs text-muted">{item.detail}</span>
-                          </span>
-                          <span className={`shrink-0 font-mono text-xs ${item.value < 0 ? "text-danger" : ""}`}>{usd(item.value)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
+              {tab === "History" && <History rows={mergeHistory(saved, chainTxs, activity, wallets)} loading={historyLoading} />}
             </>
           )}
         </div>
@@ -175,6 +179,72 @@ export function PortfolioDesk() {
       </p>
     </div>
   );
+}
+
+function History({ rows, loading }: { rows: WalletTx[]; loading: boolean }) {
+  if (rows.length === 0) {
+    return <Empty title={loading ? "Reading transactions…" : "No transactions yet"} body={loading ? "Checking each connected wallet." : "Swaps you finalize show up here, along with recent transactions from every wallet connected to this desk."} />;
+  }
+  return (
+    <ul className="divide-y divide-line px-3 sm:px-4">
+      {rows.map((row) => {
+        const mark = row.wallet === "EVM" ? WALLET_MARK.evm : row.wallet === "Solana" ? WALLET_MARK.sol : row.wallet === "Bitcoin" ? WALLET_MARK.btc : WALLET_MARK.near;
+        return (
+          <li key={row.id} className="flex items-center gap-3 py-3 text-sm">
+            <img src={mark} alt="" className="size-9 shrink-0 rounded-full bg-bg object-cover" />
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-1.5 font-semibold">
+                {row.title}
+                <ChainBadge chain={row.chain} className="size-3.5" />
+              </span>
+              <span className="mt-0.5 block truncate text-xs text-muted">
+                {row.wallet} · {row.chain} · {when(row.time)}
+                {row.hash ? ` · ${row.hash.slice(0, 6)}…${row.hash.slice(-4)}` : ""}
+              </span>
+            </span>
+            <span className={`shrink-0 font-mono text-xs ${row.value < 0 ? "text-danger" : "text-muted"}`}>{row.value > 0 ? usd(row.value) : row.detail.slice(0, 18)}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function mergeHistory(saved: WalletTx[], chain: WalletTx[], activity: { id: string; title: string; detail: string; value: number }[], wallets: LinkedWallet[]) {
+  const near = wallets.find((wallet) => wallet.id === "near");
+  const local: WalletTx[] = activity.map((item) => ({
+    id: item.id,
+    wallet: near?.label ?? "Desk",
+    address: near?.address ?? "",
+    chain: "NEAR",
+    title: item.title,
+    detail: item.detail,
+    hash: "",
+    value: item.value,
+    time: Number(item.id.split("-")[0]) || Date.now(),
+  }));
+  const seen = new Set<string>();
+  return [...saved, ...local, ...chain]
+    .filter((row) => {
+      const key = row.hash || row.id;
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => b.time - a.time)
+    .slice(0, 40);
+}
+
+function when(time: number) {
+  const delta = Date.now() - time;
+  if (!Number.isFinite(delta) || delta < 0) return "just now";
+  const minutes = Math.floor(delta / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
 function Stat({ k, v, tone }: { k: string; v: string; tone?: "up" | "down" }) {

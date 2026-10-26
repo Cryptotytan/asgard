@@ -23,6 +23,9 @@ import { useDesk, type Side } from "@/lib/store";
 import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, warmCharts, watchCandles, type HolderBand, type HolderRow } from "@/lib/live";
 import { searchTokens } from "@/lib/dex";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
+import { linkedWallets, foreignWallets } from "@/lib/foreign-wallet";
+import { refreshBalances } from "@/lib/wallet-holdings";
+import { rememberTx } from "@/lib/wallet-history";
 
 const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"] as const;
 const BOOKS = ["Trades", "Positions", "Orders", "Holders", "History"] as const;
@@ -693,7 +696,23 @@ function Ticket({
     onFlash(`Confirm the deposit. ${picked.name} has the lowest fee inside your slippage.`);
     void picked
       .execute()
-      .then((result) => {
+      .then(async (result) => {
+        const state = useDesk.getState();
+        const wallets = linkedWallets(state.accountId, foreignWallets());
+        const signer = wallets[0];
+        if (signer) {
+          rememberTx({
+            wallet: signer.label,
+            address: signer.address,
+            chain: pay.chain,
+            title: `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}`,
+            detail: `${picked.name} · ${fmt(result.amountOutHuman)} ${receiveToken.symbol}`,
+            hash: result.status.startsWith("0x") || result.status.length > 20 ? result.status : "",
+            value: qty * pay.price,
+          });
+        }
+        state.log(`${side === "buy" ? "Buy" : "Sell"} via ${picked.name}`, `${pay.symbol} → ${receiveToken.symbol}`, qty * pay.price);
+        await refreshBalances(wallets);
         setFills((prev) => (side === "buy" ? { ...prev, bought: prev.bought + qty } : { ...prev, sold: prev.sold + qty * token.price }));
         onFlash(`${side === "buy" ? "Bought" : "Sold"} ${token.symbol} via ${picked.name} · ${fmt(result.amountOutHuman)} ${receiveToken.symbol} · ${result.status}`);
       })

@@ -1246,6 +1246,15 @@ a.landing-enter-lg {
   }
 }
 
+@keyframes flight-bar {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
 @keyframes venue-slide {
   to {
     transform: translateX(-50%);

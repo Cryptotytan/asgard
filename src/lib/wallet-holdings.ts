@@ -7,6 +7,24 @@ import type { LinkedWallet } from "@/lib/foreign-wallet";
 const cache = new Map<string, Record<string, number>>();
 const inflight = new Map<string, Promise<Record<string, number>>>();
 
+export async function refreshBalances(wallets: LinkedWallet[]) {
+  const seen = new Set<string>();
+  await Promise.all(
+    wallets.map(async (wallet) => {
+      const key = `${wallet.id}:${wallet.address.toLowerCase()}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      cache.delete(key);
+      inflight.delete(key);
+      if (wallet.id === "near") {
+        const { syncWallet } = await import("@/lib/near-wallet");
+        await syncWallet(wallet.address).catch(() => undefined);
+      }
+    }),
+  );
+  useDesk.setState({ clock: useDesk.getState().clock + 1 });
+}
+
 export function useHoldings(wallet: LinkedWallet | null) {
   const chain = useDesk((state) => state.chain);
   const clock = useDesk((state) => state.clock);

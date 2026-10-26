@@ -6,7 +6,8 @@ import { canSign, chainByLabel, validAddress } from "@/lib/chains";
 import { fmt, scoreLabel, tokenBySymbol, tokenLabel, usd } from "@/lib/market";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 import { useDesk } from "@/lib/store";
-import { useHoldings } from "@/lib/wallet-holdings";
+import { refreshBalances, useHoldings } from "@/lib/wallet-holdings";
+import { rememberTx } from "@/lib/wallet-history";
 
 export function SwapDesk({ focus }: { focus?: string }) {
   const connected = useDesk((s) => s.connected);
@@ -31,7 +32,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState("");
   const [settling, setSettling] = useState(false);
-  const [flight, setFlight] = useState<{ amount: string; sell: string; buy: string; route: string; legs: string } | null>(null);
+  const [flight, setFlight] = useState<{ amount: string; sell: string; buy: string; sellSymbol: string; buySymbol: string; route: string; legs: string; phase: "sign" | "balances" } | null>(null);
   const [flipped, setFlipped] = useState(false);
   const [turn, setTurn] = useState<"a" | "b" | null>(null);
   const turnLock = useRef(false);
@@ -184,12 +185,28 @@ export function SwapDesk({ focus }: { focus?: string }) {
       amount,
       sell: `${tokenLabel(sell)} · ${sell.chain}`,
       buy: `${tokenLabel(buy)} · ${buy.chain}`,
+      sellSymbol: sell.symbol,
+      buySymbol: buy.symbol,
       route: best.name,
       legs: best.kind,
+      phase: "sign",
     });
     setNote("Confirm the deposit in the origin wallet. A failed bridge refunds to your origin address.");
     try {
       const result = await best.execute();
+      setFlight((current) => (current ? { ...current, phase: "balances" } : current));
+      const touched = [sellActive, buyActive].filter((wallet): wallet is LinkedWallet => Boolean(wallet));
+      rememberTx({
+        wallet: sellActive.label,
+        address: sellActive.address,
+        chain: sell.chain,
+        title: `Swap ${tokenLabel(sell)} → ${tokenLabel(buy)}`,
+        detail: `${best.name} · ${sell.chain} to ${buy.chain}`,
+        hash: /^0x[a-fA-F0-9]{64}$/.test(result.status) || result.status.length > 20 ? result.status : "",
+        value: amountN * sell.price,
+      });
+      useDesk.getState().log(`Swap via ${best.name}`, `${tokenLabel(sell)} → ${tokenLabel(buy)}`, amountN * sell.price);
+      await refreshBalances(touched);
       setAmount("");
       setNote(`Settled ${fmt(result.amountOutHuman)} ${tokenLabel(buy)} on ${buy.chain}.`);
     } catch (error) {
@@ -385,43 +402,58 @@ export function SwapDesk({ focus }: { focus?: string }) {
           }
         }}
       />
-      {flight && (
-        <div className="fixed inset-0 z-[90] grid place-items-end bg-black/75 p-3 sm:place-items-center" role="presentation">
-          <div className="panel w-full max-w-sm p-5" role="dialog" aria-modal="true" aria-labelledby="swap-flight-title">
-            <div className="flex items-center gap-3">
-              <span className="grid size-11 shrink-0 place-items-center rounded-full bg-primary/15 text-primary">
-                <LoaderCircle className="size-6 animate-spin" />
-              </span>
-              <div>
-                <h2 id="swap-flight-title" className="text-base font-semibold">
-                  Transaction in progress
-                </h2>
-                <p className="text-xs text-muted">This card closes when the transfer is finalized.</p>
-              </div>
-            </div>
-            <dl className="mt-4 space-y-2 rounded-2xl border border-line bg-bg px-3 py-3 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-muted">Sending</dt>
-                <dd className="truncate font-mono">
-                  {flight.amount} {flight.sell}
-                </dd>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-muted">Receiving</dt>
-                <dd className="truncate font-mono">{flight.buy}</dd>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <dt className="text-muted">Route</dt>
-                <dd className="truncate">
-                  {flight.route}
-                  <span className="text-muted"> · {flight.legs}</span>
-                </dd>
-              </div>
-            </dl>
-            <p className="mt-3 text-xs leading-5 text-muted">Confirm the prompt in your wallet. Nothing else can be sent from this card until that transfer finishes.</p>
-          </div>
+      {flight && <SwapFlight flight={flight} />}
+    </div>
+  );
+}
+
+function SwapFlight({ flight }: { flight: { amount: string; sell: string; buy: string; sellSymbol: string; buySymbol: string; route: string; legs: string; phase: "sign" | "balances" } }) {
+  const sell = tokenBySymbol(flight.sellSymbol);
+  const buy = tokenBySymbol(flight.buySymbol);
+  const signing = flight.phase === "sign";
+  return (
+    <div className="fixed inset-0 z-[90] grid place-items-end bg-black/80 p-3 backdrop-blur-sm sm:place-items-center" role="presentation">
+      <div className="w-full max-w-md overflow-hidden rounded-3xl border border-primary/30 bg-[#0c100e] shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="swap-flight-title">
+        <div className="h-1 overflow-hidden bg-white/10">
+          <div className="h-full w-1/3 bg-primary" style={{ animation: "flight-bar 1.15s ease-in-out infinite" }} />
         </div>
-      )}
+        <div className="p-5">
+          <div className="flex items-center justify-center gap-3">
+            <TokenIcon token={sell} className="size-14 ring-2 ring-black" />
+            <span className="grid size-9 place-items-center rounded-full border border-line bg-surface text-primary">
+              <LoaderCircle className="size-4 animate-spin" />
+            </span>
+            <TokenIcon token={buy} className="size-14 ring-2 ring-black" />
+          </div>
+          <h2 id="swap-flight-title" className="mt-4 text-center text-lg font-semibold">
+            {signing ? "Confirm in your wallet" : "Updating balances"}
+          </h2>
+          <p className="mt-1 text-center text-sm text-muted">{signing ? "The card stays up until the transfer is finalized on chain." : "The fill is on chain. Reading the new balances."}</p>
+          <dl className="mt-4 space-y-2 rounded-2xl border border-line bg-black/40 px-3 py-3 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-muted">Sending</dt>
+              <dd className="truncate font-mono">
+                {flight.amount} {flight.sell}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-muted">Receiving</dt>
+              <dd className="truncate font-mono">{flight.buy}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-muted">Route</dt>
+              <dd className="truncate font-semibold text-primary">
+                {flight.route}
+                <span className="font-normal text-muted"> · {flight.legs}</span>
+              </dd>
+            </div>
+          </dl>
+          <ol className="mt-4 grid grid-cols-2 gap-2 text-[11px]">
+            <li className={`rounded-xl px-2 py-2 ${signing ? "bg-primary/15 text-primary" : "bg-white/5 text-muted"}`}>1 · Sign and wait</li>
+            <li className={`rounded-xl px-2 py-2 ${signing ? "bg-white/5 text-muted" : "bg-primary/15 text-primary"}`}>2 · Refresh balances</li>
+          </ol>
+        </div>
+      </div>
     </div>
   );
 }
