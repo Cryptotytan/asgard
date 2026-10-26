@@ -1170,11 +1170,6 @@ function Ticket({
         <Stat k="Bought" v={usd(fills.bought)} />
         <Stat k="Sold" v={usd(fills.sold)} />
       </dl>
-
-      <div className="mt-4 hidden border-t border-line pt-3 sm:block">
-        <p className="mb-2 text-sm font-semibold">Sources</p>
-        <p className="text-xs text-muted">Price and candles: DefiLlama. Liquidity and lend rates: Rhea. Transfers: NearBlocks. Quotes: NEAR Intents. Taxes, snipers, and holder share are not invented when a feed does not publish them.</p>
-      </div>
       </div>
       {gate && (
         <SecurityGate
