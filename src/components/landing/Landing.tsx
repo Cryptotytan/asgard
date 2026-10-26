@@ -13,7 +13,7 @@ export function Landing() {
   const stars = useRef<HTMLCanvasElement>(null);
   const mock = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(0);
-  const [tilt, setTilt] = useState({ x: 8, y: -16 });
+  const [tilt, setTilt] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
     const canvas = stars.current;
@@ -80,7 +80,7 @@ export function Landing() {
     const box = event.currentTarget.getBoundingClientRect();
     const x = (event.clientX - box.left) / box.width - 0.5;
     const y = (event.clientY - box.top) / box.height - 0.5;
-    setTilt({ x: 8 - y * 10, y: -16 + x * 14 });
+    setTilt({ x: -y * 10, y: x * 14 });
   }
 
   return (
@@ -122,7 +122,7 @@ export function Landing() {
             </a>
           </div>
 
-          <div id="desk" className="landing-stage" onPointerMove={lean} onPointerLeave={() => setTilt({ x: 8, y: -16 })}>
+          <div id="desk" className="landing-stage" onPointerMove={lean} onPointerLeave={() => setTilt({ x: 0, y: 0 })}>
             <div className="landing-float">
               <div ref={mock} className="landing-mock" style={{ "--rx": `${tilt.x}deg`, "--ry": `${tilt.y}deg` } as React.CSSProperties}>
                 <Mock />

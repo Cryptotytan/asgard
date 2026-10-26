@@ -551,7 +551,7 @@ a.landing-enter-lg {
 
 .landing-mock {
   --lift: 0;
-  transform: rotateX(calc(var(--rx) * (1 - var(--lift)))) rotateY(calc(var(--ry) * (1 - var(--lift))));
+  transform: rotateX(calc(8deg * (1 - var(--lift)) + var(--rx))) rotateY(calc(-16deg * (1 - var(--lift)) + var(--ry)));
   transform-style: preserve-3d;
   transition: transform 0.18s linear;
   will-change: transform;
