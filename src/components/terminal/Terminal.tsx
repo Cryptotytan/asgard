@@ -453,7 +453,7 @@ function WalletSheet({
               const address = named[group.id] || (group.connect === "evm" ? foreign.evm : group.connect === "sol" ? foreign.sol : group.connect === "btc" ? foreign.btc : "");
               return (
                 <li key={group.id} className="flex items-center gap-3 rounded-2xl px-2 py-2">
-                  <span className="flex w-[4.5rem] shrink-0 -space-x-2">
+                  <span className={`flex shrink-0 -space-x-2 ${group.logos.length > 1 ? "w-[4.5rem]" : ""}`}>
                     {group.logos.map((logo) => (
                       <img key={logo} src={logo} alt="" className="size-8 rounded-full bg-[#171b18] object-cover ring-2 ring-[#0c0f0d]" />
                     ))}
