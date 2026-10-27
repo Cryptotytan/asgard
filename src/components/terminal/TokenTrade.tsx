@@ -18,6 +18,7 @@ import {
   scoreLabel,
   signedPct,
   tokenBySymbol,
+  ensureToken,
   usd,
   px,
   MARKETS,
@@ -32,7 +33,7 @@ import { logoOf } from "@/lib/logo-book";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 import { chainByLabel, validAddress } from "@/lib/chains";
 import { linkedWallets, foreignWallets, useForeign, type ForeignWallets } from "@/lib/foreign-wallet";
-import { refreshBalances } from "@/lib/wallet-holdings";
+import { creditHolding, holdingOf, refreshBalances } from "@/lib/wallet-holdings";
 import { loadChainHistory, rememberTx, useWalletHistory, type WalletTx } from "@/lib/wallet-history";
 import { logTrade, useTradeLog } from "@/lib/trade-log";
 
@@ -714,14 +715,38 @@ function CopyButton({ value }: { value: string }) {
   );
 }
 
+const CHAIN_USDT: Record<string, { address: string; decimals: number }> = {
+  Solana: { address: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", decimals: 6 },
+  Ethereum: { address: "0xdac17f958d2ee523a2206206994597c13d831ec7", decimals: 6 },
+  Base: { address: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", decimals: 6 },
+  Arbitrum: { address: "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", decimals: 6 },
+  Optimism: { address: "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58", decimals: 6 },
+  BNB: { address: "0x55d398326f99059ff775485246999027b3197955", decimals: 18 },
+  Polygon: { address: "0xc2132d05d31c914a87c6611c10748aeb04b58e8f", decimals: 6 },
+  Avalanche: { address: "0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7", decimals: 6 },
+  NEAR: { address: "usdt.tether-token.near", decimals: 6 },
+};
+
 function stableOn(chain: string, avoid: string) {
   const usdt = (item: Token) => item.symbol.split(".")[0].toUpperCase() === "USDT" && item.symbol !== avoid;
-  return (
+  const known = CHAIN_USDT[chain];
+  const found =
     TOKENS.find((item) => item.chain === chain && usdt(item) && item.assetId) ??
-    TOKENS.find((item) => item.chain === chain && usdt(item)) ??
-    TOKENS.find((item) => usdt(item) && item.assetId) ??
-    tokenBySymbol("USDT")
-  );
+    TOKENS.find((item) => item.chain === chain && usdt(item));
+  if (found) {
+    if (known) {
+      if (!found.address) found.address = known.address;
+      if (found.decimals == null) found.decimals = known.decimals;
+    }
+    if (!(found.price > 0)) found.price = 1;
+    return found;
+  }
+  if (!known) return tokenBySymbol("USDT");
+  const created = ensureToken({ symbol: "USDT", name: "Tether", price: 1, chain, address: known.address, icon: "/logos/usdt.svg" });
+  created.decimals = known.decimals;
+  created.price = 1;
+  created.listed = true;
+  return created;
 }
 
 function walletFor(chain: string, near: string, foreign: ForeignWallets) {
@@ -907,8 +932,16 @@ function Ticket({
         }
         state.log(`${side === "buy" ? "Buy" : "Sell"} via ${picked.name}`, `${pay.symbol} → ${receiveToken.symbol}`, qty);
         logTrade({ bucket: "trade", symbol: token.symbol, title: `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}/USDT`, detail: picked.name, value: qty, status: "filled", account: state.accountId ?? "" });
+        const received = result.amountOutHuman;
+        const credited = side === "buy" ? token : stable;
+        const walletKind = chainByLabel(credited.chain)?.kind;
+        const walletAddress = walletKind === "near" ? state.accountId ?? "" : walletKind === "evm" ? foreign.evm ?? "" : walletKind === "sol" ? foreign.sol ?? "" : walletKind === "btc" ? foreign.btc ?? "" : "";
+        const keyKind = walletKind === "near" || walletKind === "evm" || walletKind === "sol" || walletKind === "btc" ? walletKind : null;
+        const before = keyKind && walletAddress ? holdingOf(keyKind, walletAddress, credited.symbol) : 0;
         await refreshBalances(wallets);
-        setFills((prev) => (side === "buy" ? { ...prev, bought: prev.bought + qty } : { ...prev, sold: prev.sold + qty }));
+        const after = keyKind && walletAddress ? holdingOf(keyKind, walletAddress, credited.symbol) : 0;
+        if (received > 0 && keyKind && walletAddress && after + 1e-8 < before + received * 0.5) creditHolding(keyKind, walletAddress, credited.symbol, received);
+        setFills((prev) => (side === "buy" ? { ...prev, bought: prev.bought + received } : { ...prev, sold: prev.sold + qty }));
         onFlash(`${side === "buy" ? "Bought" : "Sold"} ${token.symbol} via ${picked.name} · ${fmt(result.amountOutHuman)} ${receiveToken.symbol} · ${result.status}`);
       })
       .catch((error: unknown) => onFlash(error instanceof Error ? error.message : "The route rejected the trade."));

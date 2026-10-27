@@ -7,6 +7,28 @@ import type { LinkedWallet } from "@/lib/foreign-wallet";
 const cache = new Map<string, Record<string, number>>();
 const inflight = new Map<string, Promise<Record<string, number>>>();
 
+export function holdingOf(id: "near" | "evm" | "sol" | "btc", address: string, symbol: string) {
+  if (id === "near") return useDesk.getState().chain[symbol] ?? useDesk.getState().balances[symbol] ?? 0;
+  return cache.get(`${id}:${address.toLowerCase()}`)?.[symbol] ?? 0;
+}
+
+export function creditHolding(id: "near" | "evm" | "sol" | "btc", address: string, symbol: string, amount: number) {
+  if (!(amount > 0) || !symbol) return;
+  if (id === "near") {
+    const state = useDesk.getState();
+    useDesk.setState({
+      balances: { ...state.balances, [symbol]: (state.balances[symbol] ?? 0) + amount },
+      chain: { ...state.chain, [symbol]: (state.chain[symbol] ?? 0) + amount },
+      clock: state.clock + 1,
+    });
+    return;
+  }
+  const key = `${id}:${address.toLowerCase()}`;
+  const current = cache.get(key) ?? {};
+  cache.set(key, { ...current, [symbol]: (current[symbol] ?? 0) + amount });
+  useDesk.setState({ clock: useDesk.getState().clock + 1 });
+}
+
 export async function refreshBalances(wallets: LinkedWallet[]) {
   const seen = new Set<string>();
   await Promise.all(

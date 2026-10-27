@@ -413,3 +413,54 @@ async function sendBtc(to: string, amount: string) {
   if (!Number.isSafeInteger(sats) || sats <= 0) throw new Error("That Bitcoin amount cannot be sent safely. Nothing was sent.");
   return wallet.sendBitcoin(to, sats);
 }
+
+export async function connectNamed(kind: "tron" | "ton" | "sui" | "aptos" | "xrp" | "stellar" | "starknet" | "cardano") {
+  const browser = window as unknown as Record<string, unknown>;
+  if (kind === "tron") {
+    const tron = browser.tronLink as { request?: (args: { method: string }) => Promise<unknown> } | undefined;
+    if (!tron?.request) throw new Error("Install TronLink.");
+    await tron.request({ method: "tron_requestAccounts" });
+    const address = (browser.tronWeb as { defaultAddress?: { base58?: string } } | undefined)?.defaultAddress?.base58;
+    if (!address) throw new Error("TronLink did not return an address.");
+    return address;
+  }
+  if (kind === "ton") {
+    const ton = (browser.tonkeeper || browser.ton) as { connect?: () => Promise<unknown> } | undefined;
+    if (!ton?.connect) throw new Error("Install Tonkeeper.");
+    await ton.connect();
+    return "connected";
+  }
+  if (kind === "sui") {
+    const sui = (browser.suiWallet || browser.sui) as { connect?: () => Promise<unknown> } | undefined;
+    if (!sui?.connect) throw new Error("Install Sui Wallet.");
+    await sui.connect();
+    return "connected";
+  }
+  if (kind === "aptos") {
+    const aptos = (browser.aptos || browser.petra) as { connect?: () => Promise<unknown>; account?: () => Promise<{ address?: string }> } | undefined;
+    if (!aptos?.connect) throw new Error("Install Petra.");
+    await aptos.connect();
+    const account = aptos.account ? await aptos.account() : null;
+    return account?.address || "connected";
+  }
+  if (kind === "stellar") {
+    const freighter = browser.freighter as { connect?: () => Promise<unknown> } | undefined;
+    if (!freighter?.connect) throw new Error("Install Freighter.");
+    await freighter.connect();
+    return "connected";
+  }
+  if (kind === "starknet") {
+    const starknet = (browser.starknet_braavos || browser.starknet) as { request?: (args: { method: string }) => Promise<unknown>; selectedAddress?: string } | undefined;
+    if (!starknet?.request) throw new Error("Install Braavos.");
+    await starknet.request({ method: "wallet_requestAccounts" });
+    return starknet.selectedAddress || "connected";
+  }
+  if (kind === "cardano") {
+    const cardano = browser.cardano as { lace?: { enable?: () => Promise<{ getUsedAddresses?: () => Promise<string[]> }> } } | undefined;
+    if (!cardano?.lace?.enable) throw new Error("Install Lace.");
+    const api = await cardano.lace.enable();
+    const used = api.getUsedAddresses ? await api.getUsedAddresses() : [];
+    return used[0] || "connected";
+  }
+  throw new Error("Install Xaman, then connect it from the Xaman app.");
+}

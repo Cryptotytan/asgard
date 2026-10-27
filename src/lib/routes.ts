@@ -74,16 +74,30 @@ function toolName(tool: string) {
   return known[tool] ?? tool;
 }
 
+function decimalsOf(token: Token) {
+  if (token.decimals != null) return token.decimals;
+  const kind = chainByLabel(token.chain)?.kind;
+  if (kind === "sol") return token.symbol.split(".")[0]?.toUpperCase() === "SOL" ? 9 : 6;
+  if (kind === "evm") return token.symbol.split(".")[0]?.toUpperCase() === "USDT" || token.symbol.split(".")[0]?.toUpperCase() === "USDC" ? 6 : 18;
+  if (kind === "near") return 24;
+  return null;
+}
+
 function lifiAsset(token: Token) {
   const meta = chainByLabel(token.chain);
-  if (!meta || token.decimals == null) return null;
+  const decimals = decimalsOf(token);
+  if (!meta || decimals == null) return null;
   if (meta.kind === "evm" && meta.chainId) {
-    const address = token.address && /^0x[a-fA-F0-9]{40}$/.test(token.address) ? token.address : EVM_NATIVE;
-    return { chainId: meta.chainId, address, decimals: token.decimals };
+    const native = ["ETH", "BNB", "POL", "MATIC", "AVAX"].includes(token.symbol.split(".")[0]?.toUpperCase() ?? "");
+    const address = token.address && /^0x[a-fA-F0-9]{40}$/.test(token.address) ? token.address : native ? EVM_NATIVE : "";
+    if (!address) return null;
+    return { chainId: meta.chainId, address, decimals };
   }
   if (meta.kind === "sol") {
-    const address = token.address && token.address.length >= 32 && !token.address.startsWith("0x") ? token.address : SOL_MINT;
-    return { chainId: SOL_CHAIN, address, decimals: token.decimals };
+    const native = token.symbol.split(".")[0]?.toUpperCase() === "SOL";
+    const address = token.address && token.address.length >= 32 && !token.address.startsWith("0x") ? token.address : native ? SOL_MINT : "";
+    if (!address) return null;
+    return { chainId: SOL_CHAIN, address, decimals };
   }
   return null;
 }

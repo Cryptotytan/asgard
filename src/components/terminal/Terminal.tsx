@@ -13,7 +13,7 @@ import { canPerp, qty, sealMajors, tokenBySymbol, TOKENS, usd } from "@/lib/mark
 import { setWalletOpener, useDesk } from "@/lib/store";
 import { startLiveFeed } from "@/lib/live";
 import { visitToken } from "@/lib/watch";
-import { disconnectForeign, linkedWallets, useForeign, WALLET_MARK } from "@/lib/foreign-wallet";
+import { connectNamed, disconnectForeign, linkedWallets, useForeign, WALLET_MARK } from "@/lib/foreign-wallet";
 
 const NAV = [
   ["markets", "Markets"],
@@ -368,6 +368,8 @@ function WalletSheet({
 }) {
   const [account, setAccount] = useState("");
   const foreign = useForeign();
+  const [named, setNamed] = useState<Record<string, string>>({});
+  const [localError, setLocalError] = useState("");
   const wallets: { kind: "intear" | "here" | "meteor" | "hot" | "nightly" | "sender"; name: string; note: string; logo: string }[] = [
     { kind: "intear", name: "Intear Wallet", note: "Web", logo: "/wallets/intear.svg" },
     { kind: "here", name: "HERE Wallet", note: "Web", logo: "/wallets/here.png" },
@@ -376,10 +378,36 @@ function WalletSheet({
     { kind: "nightly", name: "Nightly", note: "Extension", logo: "/wallets/nightly.png" },
     { kind: "sender", name: "Sender", note: "Extension", logo: "/wallets/sender.png" },
   ];
-  const chains: { kind: "evm" | "sol"; name: string; logos: string[]; address: string | null }[] = [
-    { kind: "evm", name: "EVM", logos: ["/wallets/metamask.svg", "/wallets/zerion.svg", "/wallets/rabby.svg"], address: foreign.evm },
-    { kind: "sol", name: "Solana", logos: ["/wallets/phantom.svg", "/wallets/solflare.svg", "/wallets/backpack.svg"], address: foreign.sol },
+  const more: { id: string; name: string; note: string; logo: string; connect: "evm" | "sol" | "btc" | "tron" | "ton" | "sui" | "aptos" | "xrp" | "stellar" | "starknet" | "cardano" }[] = [
+    { id: "metamask", name: "MetaMask", note: "Extension", logo: "/wallets/metamask.svg", connect: "evm" },
+    { id: "rabby", name: "Rabby", note: "Extension", logo: "/wallets/rabby.svg", connect: "evm" },
+    { id: "zerion", name: "Zerion", note: "Extension", logo: "/wallets/zerion.svg", connect: "evm" },
+    { id: "phantom", name: "Phantom", note: "Extension", logo: "/wallets/phantom.svg", connect: "sol" },
+    { id: "solflare", name: "Solflare", note: "Extension", logo: "/wallets/solflare.svg", connect: "sol" },
+    { id: "backpack", name: "Backpack", note: "Extension", logo: "/wallets/backpack.svg", connect: "sol" },
+    { id: "unisat", name: "UniSat", note: "Extension", logo: "/wallets/unisat.png", connect: "btc" },
+    { id: "tronlink", name: "TronLink", note: "Extension", logo: "/wallets/tronlink.png", connect: "tron" },
+    { id: "tonkeeper", name: "Tonkeeper", note: "Extension", logo: "/wallets/tonkeeper.png", connect: "ton" },
+    { id: "sui", name: "Sui Wallet", note: "Extension", logo: "/wallets/sui.png", connect: "sui" },
+    { id: "petra", name: "Petra", note: "Extension", logo: "/wallets/petra.png", connect: "aptos" },
+    { id: "xaman", name: "Xaman", note: "App", logo: "/wallets/xaman.png", connect: "xrp" },
+    { id: "lace", name: "Lace", note: "Extension", logo: "/wallets/lace.png", connect: "cardano" },
+    { id: "freighter", name: "Freighter", note: "Extension", logo: "/wallets/freighter.png", connect: "stellar" },
+    { id: "braavos", name: "Braavos", note: "Extension", logo: "/wallets/braavos.png", connect: "starknet" },
   ];
+  async function openWallet(wallet: (typeof more)[number]) {
+    setLocalError("");
+    if (wallet.connect === "evm" || wallet.connect === "sol" || wallet.connect === "btc") {
+      onForeign(wallet.connect);
+      return;
+    }
+    try {
+      const address = await connectNamed(wallet.connect);
+      setNamed((current) => ({ ...current, [wallet.id]: address }));
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : "That wallet is not available in this browser.");
+    }
+  }
   return (
     <div className="fixed inset-0 z-[80] grid place-items-end bg-black/75 p-3 sm:place-items-center" onClick={onClose}>
       <section className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-[420px] flex-col overflow-hidden rounded-[22px] border border-[#2a302b] bg-[#0c0f0d] shadow-[0_24px_80px_rgba(0,0,0,0.55)]" onClick={(event) => event.stopPropagation()}>
@@ -423,31 +451,26 @@ function WalletSheet({
               </li>
             ))}
           </ul>
-          <p className="px-2 pb-1 pt-3 text-[10px] font-medium uppercase tracking-[0.18em] text-[#8d938c]">Other chains</p>
+          <p className="px-2 pb-1 pt-3 text-[10px] font-medium uppercase tracking-[0.18em] text-[#8d938c]">Wallets</p>
           <ul>
-            {chains.map((chain) => (
-              <li key={chain.kind} className="flex items-center gap-3 rounded-2xl px-2 py-2">
-                <span className="flex w-[4.5rem] shrink-0 -space-x-2">
-                  {chain.logos.map((logo) => (
-                    <img key={logo} src={logo} alt="" className="size-8 rounded-full bg-[#171b18] object-cover ring-2 ring-[#0c0f0d]" />
-                  ))}
-                </span>
-                <button type="button" onClick={() => onForeign(chain.kind)} className="min-w-0 flex-1 text-left">
-                  <span className="flex items-center gap-1.5 text-[15px] font-semibold">
-                    {chain.name}
-                    {chain.address && <span className="size-1.5 rounded-full bg-[#00ec97]" />}
-                  </span>
-                  <span className="mt-0.5 block truncate font-mono text-[11px] text-[#8d938c]">{chain.address ? midAddress(chain.address) : "Browser wallet"}</span>
-                </button>
-                {chain.address ? (
-                  <button type="button" aria-label={`Disconnect ${chain.name}`} onClick={() => disconnectForeign(chain.kind)} className="grid size-9 shrink-0 place-items-center rounded-full text-[#ff5d73] hover:bg-[#ff5d73]/10">
-                    <Unplug className="size-4" />
+            {more.map((wallet) => {
+              const address = named[wallet.id] || (wallet.connect === "evm" ? foreign.evm : wallet.connect === "sol" ? foreign.sol : wallet.connect === "btc" ? foreign.btc : "");
+              return (
+                <li key={wallet.id}>
+                  <button type="button" onClick={() => void openWallet(wallet)} className="flex h-[60px] w-full items-center gap-3 rounded-2xl px-2 text-left transition hover:bg-[#171b18]">
+                    <img src={wallet.logo} alt="" width={40} height={40} className="size-10 shrink-0 rounded-full bg-[#171b18] object-cover" />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5 truncate text-[15px] font-semibold">
+                        {wallet.name}
+                        {address && <span className="size-1.5 rounded-full bg-[#00ec97]" />}
+                      </span>
+                      {address && <span className="block truncate font-mono text-[11px] text-[#8d938c]">{midAddress(address)}</span>}
+                    </span>
+                    <span className="rounded-full bg-[#171b18] px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-[#8d938c]">{address ? "Connected" : wallet.note}</span>
                   </button>
-                ) : (
-                  <span className="rounded-full bg-[#171b18] px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-[#8d938c]">Connect</span>
-                )}
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         </div>
         <form
@@ -477,6 +500,7 @@ function WalletSheet({
           </div>
           <p className="mt-2 text-xs text-[#8d938c]">View only. Swaps still need a wallet that can sign.</p>
         </form>
+        {localError && <p className="px-5 pb-2 text-sm text-danger">{localError}</p>}
         {error && <p className="px-5 pb-4 text-sm text-danger">{error}</p>}
       </section>
     </div>
