@@ -22,10 +22,17 @@ export function PnlCard({ position, mark, onClose }: { position: Position; mark:
   const [tp, setTp] = useState(position.tp ? String(position.tp) : "");
   const [sl, setSl] = useState(position.sl ? String(position.sl) : "");
   const setGuards = useDesk((state) => state.setGuards);
+  const setLeverage = useDesk((state) => state.setLeverage);
+  const adjustMargin = useDesk((state) => state.adjustMargin);
+  const free = useDesk((state) => state.balances.USDT ?? 0);
+  const [lev, setLev] = useState(position.leverage);
+  const [marginAmt, setMarginAmt] = useState("10");
+  const [riskNote, setRiskNote] = useState("");
   useEffect(() => {
     setTp(position.tp ? String(position.tp) : "");
     setSl(position.sl ? String(position.sl) : "");
-  }, [position.id, position.tp, position.sl]);
+    setLev(position.leverage);
+  }, [position.id, position.tp, position.sl, position.leverage]);
 
   const tpPrice = Number(tp);
   const slPrice = Number(sl);
@@ -88,6 +95,32 @@ export function PnlCard({ position, mark, onClose }: { position: Position; mark:
       <button type="button" onClick={() => setGuardsOpen(true)} className="mt-2 h-8 rounded-lg border border-line px-3 text-xs">
         {position.tp || position.sl ? "Update TP / SL" : "Add TP / SL"}
       </button>
+      <div className="mt-3 rounded-lg border border-line p-2">
+        <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted">
+          <span>Leverage</span>
+          <span className="font-mono text-xs text-fg">{lev}x</span>
+        </div>
+        <input type="range" min={1} max={20} value={lev} aria-label="Position leverage" onChange={(event) => setLev(Number(event.target.value))} className="mt-1 w-full" />
+        <button
+          type="button"
+          onClick={() => setRiskNote(setLeverage(position.id, lev) ? "" : "Not enough free USDT to lower leverage.")}
+          className="mt-1 h-8 w-full rounded-lg border border-line text-xs"
+        >
+          Update leverage
+        </button>
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            inputMode="decimal"
+            value={marginAmt}
+            aria-label="Margin amount"
+            onChange={(event) => setMarginAmt(event.target.value.replace(/[^0-9.]/g, ""))}
+            className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-bg px-2 font-mono text-xs outline-none"
+          />
+          <button type="button" onClick={() => setRiskNote(adjustMargin(position.id, Number(marginAmt) || 0) ? "" : "Not enough free USDT.")} className="h-8 rounded-lg border border-line px-2 text-xs">Add</button>
+          <button type="button" onClick={() => setRiskNote(adjustMargin(position.id, -(Number(marginAmt) || 0)) ? "" : "Margin can't go below the maintenance floor.")} className="h-8 rounded-lg border border-line px-2 text-xs">Remove</button>
+        </div>
+        <p className="mt-1 text-[10px] text-muted">{riskNote || `${usd(free)} USDT free`}</p>
+      </div>
       <div className={`mt-3 grid gap-2 ${onClose ? "grid-cols-2" : "grid-cols-1"}`}>
         <button type="button" onClick={() => setShare(true)} className="h-9 rounded-lg border border-line text-xs">
           Share

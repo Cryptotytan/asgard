@@ -13,7 +13,6 @@ import { canPerp, qty, sealMajors, tokenBySymbol, TOKENS, usd } from "@/lib/mark
 import { setWalletOpener, useDesk } from "@/lib/store";
 import { startLiveFeed } from "@/lib/live";
 import { visitToken } from "@/lib/watch";
-import { chainIcon } from "@/lib/chains";
 import { disconnectForeign, linkedWallets, useForeign, WALLET_MARK } from "@/lib/foreign-wallet";
 
 const NAV = [
@@ -377,12 +376,9 @@ function WalletSheet({
     { kind: "nightly", name: "Nightly", note: "Extension", logo: "/wallets/nightly.png" },
     { kind: "sender", name: "Sender", note: "Extension", logo: "/wallets/sender.png" },
   ];
-  const evmNets = ["Ethereum", "Base", "Arbitrum", "Optimism", "BNB", "Polygon", "Avalanche", "Gnosis", "Scroll", "Aurora", "Berachain", "Abstract"];
-  const svmNets = ["Solana"];
-  const chains: { kind: "evm" | "sol" | "btc"; name: string; nets: string[]; logos: string[]; address: string | null }[] = [
-    { kind: "evm", name: "EVM", nets: evmNets, logos: ["/wallets/metamask.svg", "/wallets/zerion.svg", "/wallets/rabby.svg"], address: foreign.evm },
-    { kind: "sol", name: "SVM", nets: svmNets, logos: ["/wallets/phantom.svg", "/wallets/solflare.svg", "/wallets/backpack.svg"], address: foreign.sol },
-    { kind: "btc", name: "Bitcoin", nets: ["Bitcoin"], logos: ["/wallets/unisat.png"], address: foreign.btc },
+  const chains: { kind: "evm" | "sol"; name: string; logos: string[]; address: string | null }[] = [
+    { kind: "evm", name: "EVM", logos: ["/wallets/metamask.svg", "/wallets/zerion.svg", "/wallets/rabby.svg"], address: foreign.evm },
+    { kind: "sol", name: "Solana", logos: ["/wallets/phantom.svg", "/wallets/solflare.svg", "/wallets/backpack.svg"], address: foreign.sol },
   ];
   return (
     <div className="fixed inset-0 z-[80] grid place-items-end bg-black/75 p-3 sm:place-items-center" onClick={onClose}>
@@ -430,8 +426,7 @@ function WalletSheet({
           <p className="px-2 pb-1 pt-3 text-[10px] font-medium uppercase tracking-[0.18em] text-[#8d938c]">Other chains</p>
           <ul>
             {chains.map((chain) => (
-              <li key={chain.kind} className="rounded-2xl px-2 py-2">
-                <div className="flex items-center gap-3">
+              <li key={chain.kind} className="flex items-center gap-3 rounded-2xl px-2 py-2">
                 <span className="flex w-[4.5rem] shrink-0 -space-x-2">
                   {chain.logos.map((logo) => (
                     <img key={logo} src={logo} alt="" className="size-8 rounded-full bg-[#171b18] object-cover ring-2 ring-[#0c0f0d]" />
@@ -451,15 +446,6 @@ function WalletSheet({
                 ) : (
                   <span className="rounded-full bg-[#171b18] px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-[#8d938c]">Connect</span>
                 )}
-                </div>
-                <div className="mt-2 flex flex-wrap gap-1.5 pl-[5.2rem]">
-                  {chain.nets.map((net) => (
-                    <span key={net} className="inline-flex items-center gap-1 rounded-full bg-[#171b18] py-1 pl-1 pr-2 text-[10px] text-[#c8cdc6]">
-                      {chainIcon(net) && <img src={chainIcon(net)} alt="" className="size-3.5 rounded-full object-cover" />}
-                      {net}
-                    </span>
-                  ))}
-                </div>
               </li>
             ))}
           </ul>

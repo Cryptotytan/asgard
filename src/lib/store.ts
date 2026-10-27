@@ -76,6 +76,8 @@ type Desk = {
   ) => boolean;
   closePerp: (id: string, reason?: string) => boolean;
   setGuards: (id: string, guards: { tp?: number; sl?: number }) => void;
+  setLeverage: (id: string, leverage: number) => boolean;
+  adjustMargin: (id: string, delta: number) => boolean;
   depositVault: (symbol: string, amount: number) => boolean;
   withdrawVault: (symbol: string, amount: number) => boolean;
   supply: (symbol: string, amount: number) => boolean;
@@ -400,6 +402,53 @@ export const useDesk = create<Desk>((set, get) => ({
           : position,
       ),
     });
+  },
+
+  setLeverage: (id, leverage) => {
+    const lev = Math.min(20, Math.max(1, Math.round(leverage)));
+    const state = get();
+    const position = state.positions.find((item) => item.id === id);
+    if (!position) return false;
+    const notional = position.size * position.entry;
+    if (!(notional > 0)) return false;
+    const nextMargin = notional / lev;
+    const delta = nextMargin - position.margin;
+    const balances = delta > 0 ? take(state.balances, "USDT", delta) : add(state.balances, "USDT", -delta);
+    if (!balances) return false;
+    set({
+      balances,
+      positions: state.positions.map((item) => (item.id === id ? { ...item, leverage: lev, margin: nextMargin } : item)),
+    });
+    return true;
+  },
+
+  adjustMargin: (id, delta) => {
+    if (!Number.isFinite(delta) || delta === 0) return false;
+    const state = get();
+    const position = state.positions.find((item) => item.id === id);
+    if (!position) return false;
+    const notional = position.size * position.entry;
+    if (delta > 0) {
+      const balances = take(state.balances, "USDT", delta);
+      if (!balances) return false;
+      const margin = position.margin + delta;
+      set({
+        balances,
+        positions: state.positions.map((item) => (item.id === id ? { ...item, margin, leverage: Math.min(20, Math.max(1, notional / margin)) } : item)),
+      });
+      return true;
+    }
+    const mark = priceOf(position.base, state.marks);
+    const pnl = position.side === "long" ? (mark - position.entry) * position.size : (position.entry - mark) * position.size;
+    const floor = Math.max(notional / 20, Math.max(0, -pnl));
+    const release = Math.min(-delta, Math.max(0, position.margin - floor));
+    if (release <= 0) return false;
+    const margin = position.margin - release;
+    set({
+      balances: add(state.balances, "USDT", release),
+      positions: state.positions.map((item) => (item.id === id ? { ...item, margin, leverage: Math.min(20, Math.max(1, notional / margin)) } : item)),
+    });
+    return true;
   },
 
   depositVault: (symbol, amount) => {

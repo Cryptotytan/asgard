@@ -64,7 +64,7 @@ export function Markets({
       return [...list].sort((a, b) => rank(b) - rank(a) || (a.ageH > 0 ? a.ageH : Number.POSITIVE_INFINITY) - (b.ageH > 0 ? b.ageH : Number.POSITIVE_INFINITY));
     }
     if (tab === "All") return [...list].sort((a, b) => rank(b) - rank(a) || b.mcapN - a.mcapN || b.liqN - a.liqN);
-    return [...list].sort((a, b) => rank(b) - rank(a) || trendScore(b) - trendScore(a) || b.liqN - a.liqN);
+    return [...list].sort((a, b) => trendScore(b) - trendScore(a) || b.volN - a.volN || b.liqN - a.liqN);
   }, [chain, clock, query, tab, verifiedOnly, watch.hidden, watch.recents]);
 
   useEffect(() => {

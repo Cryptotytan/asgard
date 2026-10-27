@@ -56,7 +56,7 @@ type Pair = {
 };
 
 function frame(chain: string, pool: string) {
-  return `https://www.dextools.io/widget-chart/en/${chain}/pe-light/${pool}?theme=dark&chartType=1&chartResolution=15&drawingToolbars=false&chartInUsd=true`;
+  return `https://www.dextools.io/widget-chart/en/${chain}/pe-light/${pool}?theme=dark&chartType=1&chartResolution=15&drawingToolbars=false&chartInUsd=true&tvPlatformColor=000000&tvPaneColor=000000&headerColor=000000`;
 }
 
 function sameAddress(left: string, right: string) {
@@ -72,7 +72,7 @@ export function DexToolsChart({ token }: { token: Token }) {
 
   useEffect(() => {
     let cancel = false;
-    const key = `asgard-dextools:v2:${token.chain}:${token.address || token.symbol}`;
+    const key = `asgard-dextools:v3:${token.chain}:${token.address || token.symbol}`;
     const ready = chain && pool ? frame(chain, pool) : sessionStorage.getItem(key) || "";
     setMiss(false);
     setSrc(ready);
@@ -122,12 +122,15 @@ export function DexToolsChart({ token }: { token: Token }) {
   }
 
   return (
-    <iframe
-      key={src}
-      title={`${token.symbol} on DexTools`}
-      src={src}
-      className="h-[340px] w-full border-0 bg-black sm:h-[440px] lg:h-[560px]"
-      loading="eager"
-    />
+    <div className="relative h-[340px] overflow-hidden bg-black sm:h-[440px] lg:h-[560px]">
+      <iframe
+        key={src}
+        title={`${token.symbol} on DexTools`}
+        src={src}
+        className="absolute left-0 w-full border-0 bg-black"
+        style={{ top: -52, height: "calc(100% + 52px)" }}
+        loading="eager"
+      />
+    </div>
   );
 }

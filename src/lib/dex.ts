@@ -559,6 +559,8 @@ const DEX_LABEL_SLUG: Record<string, string> = {
   Monad: "monad",
   Plasma: "plasma",
   Abstract: "abstract",
+  Hyperliquid: "hyperevm",
+  XRP: "xrpl",
   NEAR: "near",
 };
 
@@ -639,7 +641,7 @@ function ingestForeignPairs(pairs: DexPair[], icons: Map<string, string>, loose 
     const symbol = symbolFor(base, chain, address);
     const slug = pair.chainId ?? "";
     const iconKey = `${slug}:${slug === "solana" ? address : address.toLowerCase()}`;
-    const image = safeIcon(pair.info?.imageUrl) || safeIcon(icons.get(iconKey));
+    const image = safeIcon(pair.info?.imageUrl) || safeIcon(icons.get(iconKey)) || logoFallback({ chain, address });
     const token = ensureToken({
       symbol,
       name: pair.baseToken?.name || base,
@@ -695,7 +697,7 @@ async function pullDexMarkets() {
     const id = slug === "solana" || slug === "near" || slug === "sui" || slug === "aptos" || slug === "ton" ? address : address.toLowerCase();
     if (row.icon) icons.set(`${slug}:${id}`, row.icon);
     const list = bySlug.get(slug) ?? [];
-    if (list.length < 30 && !list.some((item) => item.toLowerCase() === address.toLowerCase())) list.push(address);
+    if (list.length < 40 && !list.some((item) => item.toLowerCase() === address.toLowerCase())) list.push(address);
     bySlug.set(slug, list);
   }
   const queries = ["bonk", "wif", "pepe", "brett", "mog", "popcat", "fartcoin", "pnut", "spx", "floki"];
