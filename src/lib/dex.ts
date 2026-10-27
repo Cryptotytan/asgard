@@ -349,7 +349,8 @@ export function logoFallback(token: { chain?: string; address?: string }) {
   const slug = token.chain === "NEAR" ? "near" : DEX_LABEL_SLUG[token.chain ?? ""];
   const address = token.address ?? "";
   if (!slug || !address || address.includes(":") || address.includes(" ")) return "";
-  const id = slug === "solana" || slug === "near" ? address : address.toLowerCase();
+  const keep = slug === "solana" || slug === "near" || slug === "sui" || slug === "aptos" || slug === "ton" || slug === "xrpl";
+  const id = keep ? address : address.toLowerCase();
   return `https://dd.dexscreener.com/ds-data/tokens/${slug}/${id}.png`;
 }
 
@@ -477,10 +478,6 @@ export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (mar
     publishForeign(assets);
     void warmLogos(assets);
     void refreshDexMarkets();
-    void paintForeignStats().then(() => {
-      useDesk.setState((state) => ({ clock: state.clock + 1 }));
-      onPaint?.({ ...marks });
-    });
     onPaint?.({ ...marks });
   }
   marketsSynced = true;
@@ -641,13 +638,14 @@ function ingestForeignPairs(pairs: DexPair[], icons: Map<string, string>, loose 
     const symbol = symbolFor(base, chain, address);
     const slug = pair.chainId ?? "";
     const iconKey = `${slug}:${slug === "solana" ? address : address.toLowerCase()}`;
-    const image = safeIcon(pair.info?.imageUrl) || safeIcon(icons.get(iconKey)) || logoFallback({ chain, address });
+    const photo = safeIcon(pair.info?.imageUrl);
+    const image = photo || safeIcon(icons.get(iconKey)) || logoFallback({ chain, address });
     const token = ensureToken({
       symbol,
       name: pair.baseToken?.name || base,
       price: num(pair.priceUsd),
       chain,
-      icon: knownLogo(base) || image || undefined,
+      icon: photo || knownLogo(base) || image || undefined,
       address,
     });
     if (token.chain !== chain) continue;
@@ -661,7 +659,7 @@ function ingestForeignPairs(pairs: DexPair[], icons: Map<string, string>, loose 
       token.rails = [chain];
       token.notes = token.verified ? ["Widely traded"] : ["Live DexScreener market"];
     }
-    if (image) paintIcon(token, image);
+    if (image) token.icon = photo ? image : preferIcon(token.icon, image);
     rememberPool(chain, address, pair.pairAddress);
     applyLiveStats(token, pair, false);
   }
@@ -719,6 +717,7 @@ async function pullDexMarkets() {
     const id = slug === "solana" || slug === "near" || slug === "sui" || slug === "aptos" || slug === "ton" ? token.address : token.address.toLowerCase();
     paintIcon(token, icons.get(`${slug}:${id}`));
   }
+  await paintForeignStats();
   useDesk.setState((state) => ({ clock: state.clock + 1 }));
 }
 
@@ -762,11 +761,17 @@ const NATIVE_PAIR: Record<string, string> = {
   "Solana|SOL": "So11111111111111111111111111111111111111112",
 };
 
+export async function fillListedStats() {
+  await paintForeignStats();
+  useDesk.setState((state) => ({ clock: state.clock + 1 }));
+}
+
 async function paintForeignStats() {
   const groups = new Map<string, { symbol: string; address: string }[]>();
   for (const token of TOKENS) {
     if (!token.listed) continue;
-    if (token.liqN > 0 && token.volN > 0 && token.txnsN > 0 && token.ageH > 0) continue;
+    const iconOk = token.icon.startsWith("https://") || token.icon.startsWith("/tokens/") || token.icon.startsWith("/logos/") || token.icon.startsWith("/chains/");
+    if (token.price > 0 && token.liqN > 0 && token.volN > 0 && token.txnsN > 0 && token.ageH > 0 && iconOk) continue;
     const slug = token.chain === "NEAR" ? "near" : DEX_SLUG[token.chain];
     if (!slug) continue;
     const base = token.symbol.split(".")[0].toUpperCase();
@@ -787,13 +792,27 @@ async function paintForeignStats() {
       }
     }),
   );
-  const missing = TOKENS.filter((token) => token.listed && token.address && !token.address.includes(":") && !(token.liqN > 0 && token.txnsN > 0));
-  for (let index = 0; index < missing.length; index += 30) {
-    const chunk = missing.slice(index, index + 30).map((token) => ({ symbol: token.symbol, address: token.address as string }));
+  const missing = TOKENS.filter((token) => token.listed && (!(token.price > 0) || !(token.liqN > 0) || !(token.txnsN > 0) || !(token.ageH > 0) || token.icon.startsWith("data:")));
+  const searchable = missing.filter((token) => token.address && !token.address.includes(":")).slice(0, 60);
+  for (let index = 0; index < searchable.length; index += 30) {
+    const chunk = searchable.slice(index, index + 30).map((token) => ({ symbol: token.symbol, address: token.address as string }));
     const pairs = await getJson<DexPair[]>(`https://api.dexscreener.com/latest/dex/tokens/${chunk.map((row) => row.address).join(",")}`).catch(() => null);
     const list = pairs && Array.isArray((pairs as { pairs?: DexPair[] }).pairs) ? (pairs as { pairs?: DexPair[] }).pairs ?? [] : Array.isArray(pairs) ? pairs : [];
     if (list.length) applyBestPairs(chunk, list);
   }
+  const unnamed = missing.filter((token) => !token.address || token.address.includes(":")).slice(0, 24);
+  await Promise.all(
+    unnamed.map(async (token) => {
+      const base = token.symbol.split(".")[0] ?? token.symbol;
+      const body = await getJson<{ pairs?: DexPair[] }>(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(base)}`).catch(() => null);
+      const slug = token.chain === "NEAR" ? "near" : DEX_SLUG[token.chain];
+      const pairs = (body?.pairs ?? []).filter((pair) => !slug || pair.chainId === slug);
+      const address = pairs.find((pair) => pair.baseToken?.symbol?.toUpperCase() === base.toUpperCase())?.baseToken?.address;
+      if (!address || !pairs.length) return;
+      if (!token.address) token.address = address;
+      applyBestPairs([{ symbol: token.symbol, address: token.address || address }], pairs);
+    }),
+  );
 }
 
 function sameAddr(left?: string, right?: string) {
@@ -816,26 +835,53 @@ function applyBestPairs(rows: { symbol: string; address: string }[], pairs: DexP
   }
   for (const [symbol, hit] of best) {
     const token = TOKENS.find((item) => item.symbol === symbol);
-    if (token) applyLiveStats(token, hit.pair, hit.quote);
+    if (!token) continue;
+    const born = earliestPair(pairs, hit.pair);
+    const photo = pairPhoto(pairs, token.address) || safeIcon(hit.pair.info?.imageUrl);
+    const pair = born || photo ? { ...hit.pair, pairCreatedAt: hit.pair.pairCreatedAt || born || undefined, info: { ...hit.pair.info, imageUrl: photo || hit.pair.info?.imageUrl } } : hit.pair;
+    applyLiveStats(token, pair, hit.quote);
   }
+}
+
+function earliestPair(pairs: DexPair[], pair: DexPair) {
+  let born = pair.pairCreatedAt ?? 0;
+  const address = pair.baseToken?.address;
+  for (const item of pairs) {
+    if (!sameAddr(item.baseToken?.address, address) && !sameAddr(item.quoteToken?.address, address)) continue;
+    if (item.pairCreatedAt && (!born || item.pairCreatedAt < born)) born = item.pairCreatedAt;
+  }
+  return born;
+}
+
+function pairPhoto(pairs: DexPair[], address?: string) {
+  if (!address) return "";
+  for (const pair of pairs) {
+    if (!sameAddr(pair.baseToken?.address, address)) continue;
+    const image = safeIcon(pair.info?.imageUrl);
+    if (image) return image;
+  }
+  return "";
 }
 
 function applyLiveStats(token: (typeof TOKENS)[number], pair: DexPair, asQuote = false) {
   const liq = num(pair.liquidity?.usd);
   const vol = windows(pair.volume);
   const change = windows(pair.priceChange);
-  const tx = pair.txns?.h24;
+  const tx = pair.txns?.h24 ?? pair.txns?.h6 ?? pair.txns?.h1;
   const buys = Math.max(0, Math.round(num(tx?.buys)));
   const sells = Math.max(0, Math.round(num(tx?.sells)));
   const mcapN = num(pair.marketCap) || num(pair.fdv);
+  const price = num(pair.priceUsd);
+  const traded = Math.max(vol.h24, vol.h6, vol.h1, vol.m5);
+  if (!asQuote && price > 0) token.price = price;
   if (liq > 0) {
     token.liqN = liq;
     token.liquidity = money(liq);
   }
-  if (vol.h24 > 0) {
-    token.volBy = vol;
-    token.volN = vol.h24;
-    token.volume = money(vol.h24);
+  if (traded > 0) {
+    token.volBy = { m5: vol.m5, h1: vol.h1, h6: vol.h6, h24: vol.h24 || traded };
+    token.volN = vol.h24 || traded;
+    token.volume = money(token.volN);
   }
   if (!asQuote) {
     token.windows = change;
@@ -846,14 +892,16 @@ function applyLiveStats(token: (typeof TOKENS)[number], pair: DexPair, asQuote =
       token.fdv = num(pair.fdv) > 0 ? money(num(pair.fdv)) : token.mcap;
     }
   }
-  token.txnsN = buys + sells;
-  token.buys = buys;
-  token.sells = sells;
-  token.txns = token.txnsN > 0 ? token.txnsN.toLocaleString("en-US") : "—";
+  if (buys + sells > 0) {
+    token.txnsN = buys + sells;
+    token.buys = buys;
+    token.sells = sells;
+    token.txns = token.txnsN.toLocaleString("en-US");
+  }
   if (pair.pairCreatedAt) token.ageH = Math.max(0.05, (Date.now() - pair.pairCreatedAt) / 3_600_000);
   token.score = qualityScore(token) ?? token.score;
   const image = safeIcon(pair.info?.imageUrl);
-  if (image && !asQuote) token.icon = preferIcon(token.icon, image);
+  if (image && !asQuote) token.icon = image;
 }
 
 function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {

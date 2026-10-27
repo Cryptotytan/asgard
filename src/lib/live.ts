@@ -1,5 +1,5 @@
 import { ensureToken, isCanonical, isMajorAsset, LEND_MARKETS, money, qualityScore, TOKENS, type Candle, type Print } from "@/lib/market";
-import { iconFor, geckoIdFor, knownPool, loadIconBook, refreshDexMarkets, syncNearMarkets, applyIconBook } from "@/lib/dex";
+import { iconFor, geckoIdFor, knownPool, loadIconBook, refreshDexMarkets, syncNearMarkets, applyIconBook, fillListedStats } from "@/lib/dex";
 import { syncPerpMarkets } from "@/lib/perps";
 import { useDesk } from "@/lib/store";
 
@@ -877,6 +877,9 @@ async function refreshMarkets() {
     token.score = qualityScore(token) ?? 0;
   }
   publish(marks);
+  void fillListedStats()
+    .catch(() => undefined)
+    .finally(() => publish(marks));
 }
 
 export async function refreshLive() {

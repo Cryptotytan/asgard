@@ -34,13 +34,14 @@ export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "s
   const key = `${token.chain ?? ""}:${token.address ?? token.symbol}`;
   const sources = useMemo(() => {
     const remote = token.icon?.startsWith("https://") ? token.icon : "";
-    const local = token.icon?.startsWith("/logos/") ? token.icon : knownLogo(token.symbol) || knownLogo(token.symbol.split(".")[0] ?? token.symbol);
+    const localFile = token.icon?.startsWith("/") ? token.icon : "";
     const booked = logoOf(token.symbol);
+    const known = knownLogo(token.symbol) || knownLogo(token.symbol.split(".")[0] ?? token.symbol);
     const coin = coinIcon(token.symbol);
     const base = (token.symbol.split(".")[0] ?? token.symbol).toLowerCase();
     const pack = /^[a-z0-9]{2,12}$/.test(base) ? `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/${base}.png` : "";
     const extra = logoFallback(token);
-    const list = [iconCache.get(key), booked, local, remote, coin, pack, extra].filter((src): src is string => Boolean(src && !src.startsWith("data:image/svg+xml;utf8,")));
+    const list = [iconCache.get(key), remote, extra, localFile, booked, known, coin, pack].filter((src): src is string => Boolean(src && !src.startsWith("data:image/svg+xml;utf8,")));
     return [...new Set(list)];
   }, [key, token.icon, token.symbol]);
   useEffect(() => {
