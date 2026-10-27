@@ -566,6 +566,11 @@ const SLUG_LABEL: Record<string, string> = Object.fromEntries(Object.entries(DEX
 
 const DEX_SLUG = DEX_LABEL_SLUG;
 
+function dollarStable(symbol: string) {
+  const base = symbol.split(".")[0]?.toUpperCase() ?? "";
+  return base.includes("USDT") || base.includes("USDC");
+}
+
 function dropOtherChains() {
   for (const token of TOKENS) {
     if (!chainByLabel(token.chain)) token.listed = false;
@@ -630,6 +635,7 @@ function ingestForeignPairs(pairs: DexPair[], icons: Map<string, string>, loose 
     const chain = key.slice(0, key.indexOf(":"));
     const address = pair.baseToken?.address ?? "";
     const base = pair.baseToken?.symbol?.replace(/\s/g, "").replace(/^\$/, "") || "TOKEN";
+    if (dollarStable(base)) continue;
     const symbol = symbolFor(base, chain, address);
     const slug = pair.chainId ?? "";
     const iconKey = `${slug}:${slug === "solana" ? address : address.toLowerCase()}`;
@@ -863,7 +869,7 @@ function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
     const vol = windows(pair.volume);
     if (liq <= 0 && vol.h24 <= 0) continue;
     const symbolName = ADDRESS_SYMBOL[address] ?? base.symbol.replace(/\s/g, "").replace(/^\$/, "");
-    if (!symbolName) continue;
+    if (!symbolName || dollarStable(symbolName)) continue;
     const meme = isNearMeme(address);
     const holder = owned.get(symbolName);
     const symbol = holder && holder !== address ? `${symbolName}.${address.slice(0, 6)}` : symbolName;

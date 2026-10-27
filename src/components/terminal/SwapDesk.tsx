@@ -357,22 +357,28 @@ export function SwapDesk({ focus }: { focus?: string }) {
           <span className="shrink-0 text-[11px] text-muted">{best ? best.kind : quoteError ? "Unavailable" : ""}</span>
         </div>
         {routesOpen && (
-          <ul className="route-deck mt-1 max-h-16 min-h-0 overflow-auto rounded-xl bg-bg sm:mt-2 sm:max-h-48">
-            {book.length === 0 && <li className="px-3 py-2 text-sm text-muted">{quoteError || "No live route for this pair."}</li>}
+          <ul className="mt-2 space-y-2">
+            {book.length === 0 && <li className="rounded-2xl border border-line px-3 py-4 text-sm text-muted">{quoteError || "No live route for this pair."}</li>}
             {book.map((route, index) => (
               <li key={`${deck}-${route.id}`}>
                 <button
                   type="button"
                   onClick={() => setPickedId(route.id)}
-                  className={`route-card flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-sm sm:py-2 ${route.id === best?.id ? "is-best" : ""}`}
-                  style={{ animationDelay: `${index * 45}ms` }}
+                  className={`flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left ${route.id === best?.id ? "border-primary bg-primary/10" : "border-line bg-bg"}`}
                 >
-                  <span className={route.id === best?.id ? "" : "text-muted"}>
-                    {route.name}
-                    {index === 0 && <span className="ml-2 text-xs text-primary">Cheapest</span>}
+                  <span className={`grid size-9 shrink-0 place-items-center rounded-full text-xs font-semibold ${index === 0 ? "bg-primary text-primary-fg" : "bg-surface-2 text-muted"}`}>{index + 1}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2 text-sm font-semibold">
+                      {route.name}
+                      {index === 0 && <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">Best</span>}
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-muted">
+                      {route.kind} · fee {(route.feeBps / 100).toFixed(2)}% · impact {route.impact.toFixed(2)}% · {route.eta}
+                    </span>
                   </span>
-                  <span className="font-mono text-xs text-muted">
-                    {(route.feeBps / 100).toFixed(2)}% · {route.kind}
+                  <span className="text-right">
+                    <span className="block font-mono text-sm">{fmt(route.receive)}</span>
+                    <span className="block text-[10px] uppercase tracking-wide text-muted">{tokenLabel(buy)}</span>
                   </span>
                 </button>
               </li>

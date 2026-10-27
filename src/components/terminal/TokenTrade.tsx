@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ChevronDown, Copy, Search, ShieldAlert } from "lucide-react";
-import { CandleChart, type ChartHover } from "@/components/terminal/CandleChart";
 import { TradingViewChart } from "@/components/terminal/TradingViewChart";
+import { DexToolsChart } from "@/components/terminal/DexToolsChart";
 import { tradingViewPerp, tradingViewSpot } from "@/lib/tv";
 import { LiveBook } from "@/components/terminal/LiveBook";
 import { SecurityGate } from "@/components/terminal/SecurityGate";
@@ -66,12 +66,10 @@ export function TokenTrade({
   const [scale, setScale] = useState<"price" | "mcap">("price");
   const [book, setBook] = useState<(typeof BOOKS)[number]>("Trades");
   const scanning = false;
-  const [hover, setHover] = useState<ChartHover | null>(null);
   const chartPane = useRef<HTMLElement>(null);
   const [chartH, setChartH] = useState(0);
 
   useEffect(() => setFrame("15m"), [symbol]);
-  useEffect(() => setHover(null), [frame, scale]);
 
   useEffect(() => {
     if (!canPerp(symbol) && mode === "perp") onMode("spot");
@@ -86,6 +84,7 @@ export function TokenTrade({
   const deskMode: TicketMode = canPerp(symbol) ? mode : "spot";
   const plotted = deskMode === "perp" ? tradingViewPerp(symbol) : tradingViewSpot(symbol);
   const tvChart = Boolean(plotted);
+  const showBook = Boolean(tradingViewSpot(symbol) || tradingViewPerp(symbol));
   useEffect(() => {
     const node = chartPane.current;
     if (!node) return;
@@ -121,8 +120,8 @@ export function TokenTrade({
 
   return (
     <div className="flex flex-col lg:block">
-      <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 sm:px-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
+      <header className="flex shrink-0 flex-col gap-2 border-b border-line px-3 py-2 sm:px-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-center gap-2">
           <TokenMenu token={token} mode={deskMode} scanning={scanning} onPick={onSymbol} />
           {canPerp(symbol) ? (
             <div className="flex shrink-0 rounded-md bg-surface p-0.5 text-[10px] font-semibold lg:hidden">
@@ -141,7 +140,7 @@ export function TokenTrade({
             {Number.isFinite(token.change) ? `${token.change.toFixed(2)}%` : "—"}
           </span>
         </div>
-        <dl className="scroll-x hidden max-w-full items-stretch self-end overflow-x-auto sm:flex lg:ml-auto lg:self-center">
+        <dl className="scroll-x hidden w-full max-w-full items-stretch overflow-x-auto sm:flex lg:ml-auto lg:w-auto lg:self-center">
           <Stat k="Mcap" v={token.mcap} />
           <Stat k="Price" v={px(token.price)} accent />
           <Stat k="Liq" v={token.liquidity} />
@@ -152,90 +151,28 @@ export function TokenTrade({
         </dl>
       </header>
 
-      <div className="flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_18rem_22rem] lg:grid-rows-[auto_minmax(0,1fr)] lg:items-start">
+      <div className={`flex flex-col lg:grid lg:items-start ${showBook ? "lg:grid-cols-[minmax(0,1fr)_18rem_22rem]" : "lg:grid-cols-[minmax(0,1fr)_22rem]"} lg:grid-rows-[auto_minmax(0,1fr)]`}>
         <section ref={chartPane} className="relative order-1 shrink-0 lg:col-start-1 lg:row-start-1 lg:self-start lg:border-r lg:border-line">
           {tvChart ? (
             <TradingViewChart symbol={symbol} market={deskMode} />
           ) : (
-            <>
-          <div className="flex items-center gap-2 px-3 pt-3 sm:px-4 sm:py-2">
-            <div className="grid min-w-0 flex-1 grid-cols-6 gap-1">
-              {FRAMES.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setFrame(item)}
-                  className={`h-8 rounded-md px-1 text-[11px] sm:h-8 sm:bg-transparent sm:px-0 sm:text-xs ${frame === item ? "bg-surface-2 text-fg" : "text-muted"}`}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-            <div className="flex shrink-0 rounded-lg bg-surface p-0.5 text-[11px] sm:text-xs">
-              {(["price", "mcap"] as const).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setScale(item)}
-                  className={`h-8 rounded-md px-2 uppercase sm:px-2 ${scale === item ? "bg-surface-2 text-fg" : "text-muted"}`}
-                >
-                  {item === "price" ? "Price" : "Mcap"}
-                </button>
-              ))}
-            </div>
-          </div>
-          <p className="hidden px-4 font-mono text-xs text-muted sm:block">
-            {bars.length < 2 ? (
-              "Waiting on the live chart"
-            ) : hover ? (
-              <>
-                {hover.label} O {fmt(hover.o)} H {fmt(hover.h)} L {fmt(hover.l)} C {fmt(hover.c)}{" "}
-                <span className={hover.c >= hover.o ? "text-primary" : "text-danger"}>
-                  {hover.c >= hover.o ? "+" : ""}
-                  {fmt(hover.c - hover.o)} ({hover.c >= hover.o ? "+" : ""}
-                  {(((hover.c - hover.o) / (hover.o || 1)) * 100).toFixed(2)}%)
-                </span>
-              </>
-            ) : (
-              <>
-                O {fmt(open.o)} H {fmt(high)} L {fmt(low)} C {fmt(close.c)}{" "}
-                <span className={delta >= 0 ? "text-primary" : "text-danger"}>
-                  {delta >= 0 ? "+" : ""}
-                  {fmt(delta)} ({delta >= 0 ? "+" : ""}
-                  {((delta / (open.o || 1)) * 100).toFixed(2)}%)
-                </span>
-              </>
-            )}
-          </p>
-          <div className="px-3 py-3 sm:px-0 sm:py-0">
-            <CandleChart
-              seed={`${symbol}-${frame}-${scale}`}
-              last={last}
-              frame={frame}
-              compact={scale === "mcap"}
-              live={scale === "price" ? mark : undefined}
-              series={series}
-              historyEnded={history.exhausted}
-              historyTick={history.from}
-              onHover={setHover}
-              onNeedHistory={scale === "price" ? needOlder : undefined}
-            />
-          </div>
-            </>
+            <DexToolsChart token={token} />
           )}
         </section>
-        <div className="order-2 grid grid-cols-2 items-start lg:contents">
+        <div className={showBook ? "order-2 grid grid-cols-2 items-start lg:contents" : "order-2 lg:contents"}>
+        {showBook && (
         <div
           className="flex h-[22rem] flex-col overflow-hidden border-t border-line lg:col-start-2 lg:row-start-1 lg:h-[var(--book-h)] lg:border-r lg:border-t-0"
           style={chartH > 0 ? ({ "--book-h": `${chartH}px` } as CSSProperties) : undefined}
         >
           <LiveBook symbol={symbol} mark={Number.isFinite(mark ?? token.price) ? (mark ?? token.price) : 0} liquidity={token.liqN} />
         </div>
-        <div className="border-t border-line lg:col-start-3 lg:row-span-2 lg:row-start-1 lg:self-stretch lg:border-t-0">
+        )}
+        <div className={`border-t border-line lg:row-span-2 lg:row-start-1 lg:self-stretch lg:border-t-0 ${showBook ? "lg:col-start-3" : "lg:col-start-2"}`}>
           <Ticket token={token} mode={mode} quickUsd={quickUsd} scanning={scanning} onMode={onMode} onFlash={onFlash} />
         </div>
         </div>
-        <section className="book-hinge order-4 border-t border-line lg:col-span-2 lg:col-start-1 lg:row-start-2 lg:self-stretch lg:border-r lg:border-t-0">
+        <section className={`book-hinge order-4 border-t border-line lg:col-start-1 lg:row-start-2 lg:self-stretch lg:border-r lg:border-t-0 ${showBook ? "lg:col-span-2" : "lg:col-span-1"}`}>
           <div className="scroll-x flex gap-3 border-b border-line bg-bg px-3 py-0 sm:gap-1 sm:px-3 sm:py-1.5">
             {BOOKS.map((item) => (
               <button
@@ -461,17 +398,28 @@ function WalletTrades({ symbol }: { symbol: string }) {
   if (!accountId) return <BookNote>Connect a wallet to see its trades.</BookNote>;
   if (rows.length === 0) return <BookNote>No trades from the connected wallet on {symbol} yet.</BookNote>;
   return (
-    <ul className="divide-y divide-line">
-      {rows.map((row) => (
-        <li key={row.id} className="flex items-center gap-3 py-2.5">
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold">{row.title}</span>
-            <span className="block truncate text-[11px] text-muted">{row.detail} · {row.status}</span>
-          </span>
-          <span className={`font-mono text-xs ${row.value < 0 ? "text-danger" : "text-fg"}`}>{usd(row.value)}</span>
-        </li>
-      ))}
-    </ul>
+    <div className="scroll-x py-2">
+      <table className="w-full min-w-[640px] text-left text-xs">
+        <thead className="text-[10px] uppercase tracking-wide text-muted">
+          <tr className="border-b border-line">
+            {["Time", "Market", "Status", "Detail", "Value"].map((label) => (
+              <th key={label} className="px-2 py-2 font-medium">{label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id} className="border-b border-line">
+              <td className="px-2 py-2 text-muted">{new Date(row.time).toLocaleString()}</td>
+              <td className="px-2 py-2 font-semibold">{row.title}</td>
+              <td className="px-2 py-2 capitalize">{row.status}</td>
+              <td className="px-2 py-2 text-muted">{row.detail}</td>
+              <td className={`px-2 py-2 text-right font-mono ${row.value < 0 ? "text-danger" : "text-primary"}`}>{usd(row.value)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -556,13 +504,14 @@ function Positions({ symbol, mark, mode }: { symbol: string; mark: number; mode:
   const closePerp = useDesk((s) => s.closePerp);
   const marks = useDesk((s) => s.marks);
   const held = balances[symbol] ?? 0;
-  const perps = positions.filter((position) => position.base === symbol);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const perps = [...positions].sort((a, b) => Number(b.base === symbol) - Number(a.base === symbol));
   if (mode === "spot") {
     return (
       <div className="space-y-2 py-2">
         <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-3 py-3">
           <span>
-            <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted">Spot</span>
+            <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted">Spot balance</span>
             <span className="mt-0.5 block font-mono text-sm">
               {bal(held)} {symbol}
             </span>
@@ -573,13 +522,50 @@ function Positions({ symbol, mark, mode }: { symbol: string; mark: number; mode:
       </div>
     );
   }
+  if (perps.length === 0) return <BookNote>No open positions. A filled perp shows here with size, entry, mark, liquidation and live PnL.</BookNote>;
   return (
-    <div className="space-y-2 py-2">
-      {perps.length === 0 ? (
-        <BookNote>No open perp on {symbol}.</BookNote>
-      ) : (
-        perps.map((position) => <PnlCard key={position.id} position={position} mark={marks[position.base] ?? position.entry} onClose={() => closePerp(position.id)} />)
-      )}
+    <div className="py-2">
+      <div className="scroll-x">
+        <table className="w-full min-w-[760px] text-left text-xs">
+          <thead className="text-[10px] uppercase tracking-wide text-muted">
+            <tr className="border-b border-line">
+              {["Symbol", "Side", "Size", "Entry", "Mark", "Liq", "Margin", "PnL", ""].map((label) => (
+                <th key={label} className="px-2 py-2 font-medium">{label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {perps.map((position) => {
+              const price = marks[position.base] ?? position.entry;
+              const pnl = position.side === "long" ? (price - position.entry) * position.size : (position.entry - price) * position.size;
+              const liq = position.side === "long" ? position.entry * (1 - 0.9 / position.leverage) : position.entry * (1 + 0.9 / position.leverage);
+              const up = pnl >= 0;
+              return (
+                <tr key={position.id} className="border-b border-line">
+                  <td className="px-2 py-2 font-semibold">{position.base}/USDT <span className="font-normal text-muted">{position.leverage}x</span></td>
+                  <td className={`px-2 py-2 uppercase ${position.side === "long" ? "text-primary" : "text-danger"}`}>{position.side}</td>
+                  <td className="px-2 py-2 font-mono">{fmt(position.size)}</td>
+                  <td className="px-2 py-2 font-mono">{px(position.entry)}</td>
+                  <td className="px-2 py-2 font-mono">{px(price)}</td>
+                  <td className="px-2 py-2 font-mono">{px(Math.max(liq, 0))}</td>
+                  <td className="px-2 py-2 font-mono">{usd(position.margin)}</td>
+                  <td className={`px-2 py-2 font-mono ${up ? "text-primary" : "text-danger"}`}>{up ? "+" : ""}{usd(pnl)}</td>
+                  <td className="px-2 py-2 text-right">
+                    <button type="button" onClick={() => setOpenId(openId === position.id ? null : position.id)} className="h-8 rounded-full border border-line px-3">
+                      {openId === position.id ? "Hide" : "Manage"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {perps.filter((position) => position.id === openId).map((position) => (
+        <div key={position.id} className="mt-3 max-w-md">
+          <PnlCard position={position} mark={marks[position.base] ?? position.entry} onClose={() => closePerp(position.id)} />
+        </div>
+      ))}
     </div>
   );
 }
@@ -587,25 +573,34 @@ function Positions({ symbol, mark, mode }: { symbol: string; mark: number; mode:
 function Orders({ symbol }: { symbol: string }) {
   const orders = useDesk((s) => s.orders);
   const cancelOrder = useDesk((s) => s.cancelOrder);
-  const list = orders.filter((order) => order.symbol === symbol);
-  if (list.length === 0) return <BookNote>No open orders. Limits rest here until the market reaches them.</BookNote>;
+  const list = [...orders].sort((a, b) => Number(b.symbol === symbol) - Number(a.symbol === symbol));
+  if (list.length === 0) return <BookNote>No open orders. A limit stays here until the market trades through it, or you cancel it.</BookNote>;
   return (
-    <ul className="space-y-2 py-2">
-      {list.map((order) => (
-        <li key={order.id} className="flex items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2.5">
-          <SidePill label={order.side} />
-          <span className="min-w-0 flex-1 font-mono text-xs">
-            <span className="block capitalize">{order.kind}</span>
-            <span className="block truncate text-muted">
-              {fmt(order.amount)} @ {fmt(order.limit)}
-            </span>
-          </span>
-          <button type="button" className="h-8 shrink-0 rounded-full border border-line px-3 text-xs text-danger" onClick={() => cancelOrder(order.id)}>
-            Cancel
-          </button>
-        </li>
-      ))}
-    </ul>
+    <div className="scroll-x py-2">
+      <table className="w-full min-w-[680px] text-left text-xs">
+        <thead className="text-[10px] uppercase tracking-wide text-muted">
+          <tr className="border-b border-line">
+            {["Pair", "Type", "Side", "Price", "Size", ""].map((label) => (
+              <th key={label} className="px-2 py-2 font-medium">{label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {list.map((order) => (
+            <tr key={order.id} className="border-b border-line">
+              <td className="px-2 py-2 font-semibold">{order.symbol}/USDT</td>
+              <td className="px-2 py-2 capitalize">{order.kind} limit</td>
+              <td className={`px-2 py-2 uppercase ${order.side === "buy" || order.side === "long" ? "text-primary" : "text-danger"}`}>{order.side}</td>
+              <td className="px-2 py-2 font-mono">{fmt(order.limit)}</td>
+              <td className="px-2 py-2 font-mono">{fmt(order.amount)}</td>
+              <td className="px-2 py-2 text-right">
+                <button type="button" className="h-8 rounded-full border border-line px-3 text-danger" onClick={() => cancelOrder(order.id)}>Cancel</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

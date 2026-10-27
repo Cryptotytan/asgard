@@ -51,7 +51,7 @@ export function Markets({
   }, [clock]);
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    let list = TOKENS.filter((token) => !watch.hidden.includes(token.symbol));
+    let list = TOKENS.filter((token) => !watch.hidden.includes(token.symbol) && !dollarStable(token.symbol));
     if (tab !== "Recents") list = list.filter((token) => token.listed && Number.isFinite(token.price) && token.price > 0);
     if (chain !== "All") list = list.filter((token) => token.chain === chain);
     if (verifiedOnly) list = list.filter((token) => token.verified);
@@ -320,6 +320,11 @@ function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowPro
       </td>
     </tr>
   );
+}
+
+function dollarStable(symbol: string) {
+  const base = symbol.split(".")[0]?.toUpperCase() ?? "";
+  return base.includes("USDT") || base.includes("USDC");
 }
 
 function completeStats(token: Token) {

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Bell, Eye, EyeOff, Pencil, Plus, Search, Trash2, Wallet, X } from "lucide-react";
+import { Pencil, Plus, Search, Trash2, Wallet, X } from "lucide-react";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { qty, signedPct, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
@@ -270,8 +270,6 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
                         <td className="px-3 text-muted">{live?.ago ?? "…"}</td>
                         <td className="px-3">
                           <span className="flex justify-end gap-1">
-                            <IconButton label={item.muted ? "Unmute" : "Mute"} onClick={() => setData((current) => ({ ...current, wallets: current.wallets.map((row) => row.id === item.id ? { ...row, muted: !row.muted } : row) }))}>{item.muted ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}</IconButton>
-                            <IconButton label="Alerts" onClick={() => setData((current) => ({ ...current, wallets: current.wallets.map((row) => row.id === item.id ? { ...row, notify: row.notify === "off" ? "toast" : "off" } : row) }))}><Bell className="size-3.5" /></IconButton>
                             <IconButton label="Edit" onClick={() => openEdit(item)}><Pencil className="size-3.5" /></IconButton>
                             <IconButton label="Remove" onClick={() => setData((current) => ({ ...current, wallets: current.wallets.filter((row) => row.id !== item.id) }))}><Trash2 className="size-3.5" /></IconButton>
                           </span>
@@ -380,7 +378,7 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
               </span>
               <div>
                 <p className="text-base font-semibold">{form.id ? "Edit wallet" : "Follow a wallet"}</p>
-                <p className="text-xs text-muted">Alerts stay on this connected account. Another wallet’s balances are never copied here.</p>
+                <p className="text-xs text-muted">The account stays on this wallet. Balances are read, never copied.</p>
               </div>
             </div>
           </div>
@@ -396,30 +394,6 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
           <Field label="Name">
             <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Whale #1" className="mt-1.5 h-12 w-full rounded-2xl border border-line bg-surface px-3 text-sm outline-none focus:border-primary" />
           </Field>
-          <Field label="Alert on">
-            <div className="mt-1.5 grid grid-cols-3 gap-2">
-              {(["all", "buys", "sells"] as const).map((alert) => (
-                <button key={alert} type="button" onClick={() => setForm({ ...form, alert })} className={`h-11 rounded-2xl text-sm capitalize ${form.alert === alert ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>{alert === "all" ? "All" : alert}</button>
-              ))}
-            </div>
-          </Field>
-          <Field label="Notify">
-            <div className="mt-1.5 grid grid-cols-2 gap-2">
-              {([["toast", "In-app"], ["off", "Off"]] as const).map(([id, label]) => (
-                <button key={id} type="button" onClick={() => setForm({ ...form, notify: id })} className={`h-11 rounded-2xl text-sm ${form.notify === id ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>{label}</button>
-              ))}
-            </div>
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Sound">
-              <select value={form.sound} onChange={(event) => setForm({ ...form, sound: event.target.value })} className="mt-1.5 h-12 w-full rounded-2xl border border-line bg-surface px-3 text-sm outline-none focus:border-primary">
-                {["Chime", "Soft", "Off"].map((sound) => <option key={sound}>{sound}</option>)}
-              </select>
-            </Field>
-            <Field label="Min USD">
-              <input value={form.minUsd} onChange={(event) => setForm({ ...form, minUsd: event.target.value.replace(/[^0-9.]/g, "") })} className="mt-1.5 h-12 w-full rounded-2xl border border-line bg-surface px-3 font-mono text-sm outline-none focus:border-primary" />
-            </Field>
-          </div>
           <Field label="Folder">
             <div className="mt-1.5 flex flex-wrap gap-2">
               <button type="button" onClick={() => setForm({ ...form, folder: "" })} className={`h-9 rounded-full px-3 text-xs ${form.folder === "" ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>None</button>
@@ -498,35 +472,35 @@ function WalletDetail({
   const held = live?.holdings ?? [];
   const top = (live?.holdings ?? []).slice(0, 3);
   return (
-    <div className="px-3 py-3 sm:px-4">
-      <button type="button" onClick={onBack} className="text-xs text-muted">← Wallets</button>
-      <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <i className="grid size-11 place-items-center rounded-full bg-primary text-sm font-bold text-black not-italic">{wallet.name.slice(0, 1).toUpperCase()}</i>
-          <div>
-            <p className="text-lg font-semibold">{wallet.name} <span className="text-sm font-normal text-muted">NEAR</span></p>
-            <p className="max-w-[16rem] truncate font-mono text-xs text-muted">{wallet.address}</p>
+    <div className="flex flex-col gap-4 p-3 sm:p-5">
+      <div className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <button type="button" onClick={onBack} className="grid size-9 shrink-0 place-items-center rounded-full border border-line text-sm text-muted">←</button>
+          <i className="grid size-12 shrink-0 place-items-center rounded-full bg-primary text-base font-bold text-black not-italic">{wallet.name.slice(0, 1).toUpperCase()}</i>
+          <div className="min-w-0">
+            <p className="truncate text-lg font-semibold">{wallet.name} <span className="text-sm font-normal text-muted">NEAR</span></p>
+            <p className="truncate font-mono text-xs text-muted">{wallet.address}</p>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1.5">
           {(["1D", "7D", "30D", "1Y"] as const).map((item) => (
-            <button key={item} type="button" onClick={() => onRange(item)} className={`h-8 rounded-full px-2.5 text-xs ${range === item ? "bg-primary text-black" : "text-muted"}`}>{item}</button>
+            <button key={item} type="button" onClick={() => onRange(item)} className={`h-9 rounded-full px-3 text-xs ${range === item ? "bg-primary text-black" : "bg-bg text-muted"}`}>{item}</button>
           ))}
-          <button type="button" onClick={onResearch} className="h-8 rounded-full border border-line px-3 text-xs">AI research</button>
+          <button type="button" onClick={onResearch} className="h-9 rounded-full border border-line px-3 text-xs">AI research</button>
         </div>
       </div>
-      {research && <p className="mt-2 max-w-3xl text-sm text-muted">{research}</p>}
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+      {research && <p className="rounded-2xl border border-line bg-surface px-4 py-3 text-sm text-muted">{research}</p>}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Stat k="Total value" v={live ? usd(live.value) : "…"} />
         <Stat k="Holdings" v={live ? String(live.holdings.length) : "…"} />
         <Stat k="Transactions" v={live ? (live.txCount || live.trades).toLocaleString("en-US") : "…"} />
       </div>
-      <div className="mt-3 rounded-xl border border-line bg-surface p-3">
+      <div className="rounded-2xl border border-line bg-surface px-4 py-4">
         <p className="text-xs text-muted">Total worth of tokens</p>
-        <p className="font-mono text-xl">{live ? usd(live.value) : "Reading balances…"}</p>
+        <p className="mt-1 font-mono text-2xl">{live ? usd(live.value) : "Reading balances…"}</p>
         <p className="mt-1 text-xs text-muted">{live ? `${live.holdings.length} tokens · ${(live.txCount || live.trades).toLocaleString("en-US")} transactions` : "Balances show as soon as the account is read. Transfers follow."}</p>
       </div>
-      <div className="mt-4 flex items-center gap-3 border-b border-line">
+      <div className="flex items-center gap-4 border-b border-line">
         {(["balances", "performance", "activity"] as const).map((item) => (
           <button key={item} type="button" onClick={() => onPane(item)} className={`h-9 capitalize ${pane === item ? "text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}>{item}</button>
         ))}

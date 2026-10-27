@@ -122,7 +122,7 @@ export function PortfolioDesk() {
           <Stat k="Holdings" v={holdings.length ? String(holdings.length) : "—"} />
           <Stat k="Vault" v={vaultRows.length ? money(vaultValue) : "—"} />
           <Stat k="Lending" v={lendRows.length ? money(lendValue) : "—"} />
-          <Stat k="Realized PnL" v={closes ? money(realized) : "—"} tone={closes ? (realized >= 0 ? "up" : "down") : undefined} />
+          <Stat k="Realized PnL" v={closes ? `${realized < 0 ? "-" : realized > 0 ? "+" : ""}$${Math.abs(realized).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"} tone={closes ? (realized >= 0 ? "up" : "down") : undefined} />
           <Stat k="Win rate" v={closes ? `${Math.round((wins / closes) * 100)}%` : "—"} />
         </dl>
 
