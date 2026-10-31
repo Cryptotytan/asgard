@@ -22,7 +22,7 @@ export function GeckoChart({ token, frame }: { token: Token; frame: string }) {
   const resolution = RESOLUTION[frame] ?? "15m";
   const src =
     network && address
-      ? `https://www.geckoterminal.com/${network}/tokens/${encodeURIComponent(address)}?embed=1&info=0&swaps=0&light_chart=1&chart_type=price&resolution=${resolution}&bg_color=000000`
+      ? `https://www.geckoterminal.com/${network}/tokens/${encodeURIComponent(address)}?embed=1&info=0&swaps=0&light_chart=0&chart_type=price&resolution=${resolution}&bg_color=000000`
       : "";
 
   if (!src) {
@@ -39,8 +39,7 @@ export function GeckoChart({ token, frame }: { token: Token; frame: string }) {
         key={src}
         title={`${token.symbol} price on GeckoTerminal`}
         src={src}
-        className="absolute left-0 w-full border-0 bg-black"
-        style={{ top: -118, height: "calc(100% + 159px)" }}
+        className="absolute inset-0 h-full w-full border-0 bg-black"
         loading="eager"
         allow="clipboard-write; fullscreen"
       />

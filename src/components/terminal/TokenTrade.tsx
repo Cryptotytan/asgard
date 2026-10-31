@@ -79,8 +79,9 @@ export function TokenTrade({
     let stop = false;
     const pull = () => {
       if (stop) return;
-      const perp = mode === "perp" && Boolean(tradingViewPerp(symbol));
-      if (perp) {
+      const plotted = mode === "perp" ? tradingViewPerp(symbol) : tradingViewSpot(symbol);
+      const gecko = tokenBySymbol(symbol).kind === "meme" || !plotted;
+      if (!gecko) {
         void import("@/lib/dex").then((mod) => mod.refreshTokenCard(symbol));
         return;
       }
@@ -117,7 +118,8 @@ export function TokenTrade({
   }, [mode, symbol, onSymbol]);
 
   const deskMode: TicketMode = canPerp(symbol) ? mode : "spot";
-  const tvChart = deskMode === "perp" && Boolean(tradingViewPerp(symbol));
+  const plotted = deskMode === "perp" ? tradingViewPerp(symbol) : tradingViewSpot(symbol);
+  const tvChart = token.kind !== "meme" && Boolean(plotted);
   const shownPx = !tvChart ? token.price : (mark ?? 0) > 0 ? (mark as number) : token.price;
   const showBook = Boolean(tradingViewSpot(symbol) || tradingViewPerp(symbol));
   useEffect(() => {
