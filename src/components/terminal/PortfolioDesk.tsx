@@ -120,8 +120,8 @@ export function PortfolioDesk() {
         <dl className="grid grid-cols-2 gap-px border-b border-line bg-line sm:grid-cols-3 lg:grid-cols-6">
           <Stat k="Total value" v={usd(total)} />
           <Stat k="Holdings" v={holdings.length ? String(holdings.length) : "—"} />
-          <Stat k="Vault" v={vaultRows.length ? money(vaultValue) : "—"} />
-          <Stat k="Lending" v={lendRows.length ? money(lendValue) : "—"} />
+          <Stat k="Vault" v={vaultRows.length ? usd(vaultValue) : "—"} />
+          <Stat k="Lending" v={lendRows.length ? usd(lendValue) : "—"} />
           <Stat k="Realized PnL" v={closes ? `${realized < 0 ? "-" : realized > 0 ? "+" : ""}$${Math.abs(realized).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"} tone={closes ? (realized >= 0 ? "up" : "down") : undefined} />
           <Stat k="Win rate" v={closes ? `${Math.round((wins / closes) * 100)}%` : "—"} />
         </dl>
@@ -297,6 +297,13 @@ function Holdings({
   );
 }
 
+function fixed2(n: number) {
+  if (!Number.isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  if (abs > 0 && abs < 0.005) return n < 0 ? ">-0.01" : "<0.01";
+  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function Book({
   rows,
   empty,
@@ -323,7 +330,7 @@ function Book({
               {token && <TokenIcon token={token} />}
               <span className="flex-1 font-semibold">{row.symbol}</span>
               <span className={`text-right font-mono text-xs ${debt ? "text-danger" : ""}`}>
-                <span className="block">{qty(row.amount)}</span>
+                <span className="block">{fixed2(row.amount)}</span>
                 <span className="text-muted">{usd(row.usd)}</span>
               </span>
             </li>

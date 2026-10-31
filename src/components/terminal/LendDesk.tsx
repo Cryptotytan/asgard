@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ArrowLeft, Search, TriangleAlert } from "lucide-react";
 import { borrowRoom, healthFactor, LEND_MARKETS, px, qty, tokenBySymbol, TOKENS, usd, type LendMarket } from "@/lib/market";
@@ -61,10 +61,21 @@ export function LendDesk() {
   const [busy, setBusy] = useState<Kind | "">("");
   const [flight, setFlight] = useState<{ title: string; detail: string } | null>(null);
   const [configs, setConfigs] = useState<Record<string, MarketConfig>>({});
+  const scroller = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (accountId) void syncWallet(accountId);
   }, [accountId]);
+  useLayoutEffect(() => {
+    const node = scroller.current;
+    if (!node) return;
+    node.scrollTop = 0;
+    let parent = node.parentElement;
+    while (parent) {
+      if (parent.scrollTop > 0) parent.scrollTop = 0;
+      parent = parent.parentElement;
+    }
+  }, [openId]);
   useEffect(() => {
     let live = true;
     void readMarketConfigs()
@@ -210,7 +221,7 @@ export function LendDesk() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-y-auto overscroll-contain pb-8">
+    <div ref={scroller} className="flex h-full min-h-0 w-full flex-1 flex-col overflow-y-auto overscroll-contain pb-8">
       {openMarket ? (
         <Reserve
           market={openMarket}
@@ -237,21 +248,24 @@ export function LendDesk() {
         />
       ) : (
         <div className="flex flex-col gap-4">
-          <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <img src="/tokens/rhea.svg" alt="" className="size-8 rounded-full bg-surface-2 object-cover" />
-                <h2 className="text-2xl font-semibold tracking-tight">Rhea</h2>
-                <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs font-medium text-muted">NEAR</span>
+          <header className="flex flex-col gap-4">
+            <div className="flex items-center gap-3">
+              <img src="/tokens/rhea.svg" alt="" className="size-10 shrink-0 rounded-full bg-surface-2 object-cover" />
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-2xl font-semibold tracking-tight">Rhea</h2>
+                  <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs font-medium text-muted">NEAR</span>
+                </div>
+                <p className="mt-0.5 text-sm leading-snug text-muted">Supply and borrow on NEAR. Your balance settles on the connected account.</p>
               </div>
-              <p className="mt-2 max-w-xs text-sm leading-relaxed text-muted">Supply and borrow on NEAR. Your balance settles on the connected account.</p>
             </div>
-            <dl className="grid grid-cols-2 gap-x-5 gap-y-3 sm:grid-cols-3 lg:grid-cols-5">
+            <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
               <Stat label="Total supplied" value={live ? money(totals.supplied) : "—"} />
               <Stat label="Total borrowed" value={live ? money(totals.borrowed) : "—"} />
               <Stat label="Available" value={live ? money(totals.available) : "—"} />
               <Stat label="Your supplied" value={connected ? usd(suppliedUsd) : "—"} />
-              <Stat label="Borrow room" value={connected ? usd(room) : "—"} hint={connected ? `Health ${healthText(health)}` : "Connect a NEAR wallet"} />
+              <Stat label="Borrow room" value={connected ? usd(room) : "—"} hint={connected ? `Of ${usd(suppliedUsd)} supplied` : "Connect a NEAR wallet"} />
+              <Stat label="Health" value={connected ? healthText(health) : "—"} tone={!connected ? undefined : health > 0 && health < 1.15 ? "bad" : "good"} hint={connected ? (health >= 99 ? "Nothing borrowed" : "Collateral factor") : "Connect a NEAR wallet"} />
             </dl>
           </header>
 
@@ -276,7 +290,7 @@ export function LendDesk() {
                 <span className="block text-xs text-muted">Supply APY</span>
                 <span className="font-mono text-lg text-primary">{apyText(feature.supplyApy)}</span>
               </span>
-              <span className="inline-flex h-11 items-center justify-center rounded-xl border border-line px-4 text-sm">View details</span>
+              <span className="inline-flex h-11 items-center justify-center rounded-xl bg-primary px-4 text-sm font-semibold text-primary-fg">View details</span>
             </button>
           )}
 
@@ -301,15 +315,25 @@ export function LendDesk() {
                   <span className={cn("absolute top-0.5 size-4 rounded-full bg-fg", inWallet ? "right-0.5" : "left-0.5")} />
                 </span>
               </button>
-              <select
-                value={category}
-                onChange={(event) => setCategory(event.target.value)}
-                className="h-11 rounded-xl border border-line bg-surface px-3 text-sm outline-none"
-              >
-                <option value="all">All categories</option>
-                <option value="stable">Stablecoins</option>
-                <option value="other">Other assets</option>
-              </select>
+              <div className="flex h-11 w-full items-center gap-1 rounded-xl border border-line bg-surface p-1 sm:w-auto" role="group" aria-label="Asset category">
+                {(
+                  [
+                    ["all", "All"],
+                    ["stable", "Stablecoins"],
+                    ["other", "Other"],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    aria-pressed={category === id}
+                    onClick={() => setCategory(id)}
+                    className={cn("h-9 flex-1 rounded-lg px-3 text-sm sm:flex-none", category === id ? "bg-primary font-semibold text-primary-fg" : "text-muted")}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -344,14 +368,14 @@ export function LendDesk() {
                           <p className="font-mono">{apyText(market.borrowApy)}</p>
                           {config && !config.borrowable && <p className="text-xs text-muted">Disabled</p>}
                         </div>
-                        <button type="button" onClick={() => setOpenId(marketId(market))} className="h-11 rounded-xl border border-line px-4 text-sm">
+                        <button type="button" onClick={() => setOpenId(marketId(market))} className="h-11 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-fg">
                           Details
                         </button>
                       </div>
                       <button type="button" onClick={() => setOpenId(marketId(market))} className="flex w-full flex-col gap-3 px-3 py-3 text-left md:hidden">
                         <span className="flex items-center justify-between gap-3">
                           <AssetCell market={market} config={config} />
-                          <span className="text-sm text-primary">Details</span>
+                          <span className="inline-flex h-8 shrink-0 items-center rounded-lg bg-primary px-3 text-xs font-semibold text-primary-fg">Details</span>
                         </span>
                         <span className="grid grid-cols-2 gap-2 text-sm">
                           <MiniStat label="Supplied" value={compact(market.supplied)} hint={money(market.suppliedUsd)} />
@@ -455,7 +479,7 @@ function Reserve({
       </header>
 
       <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,1.5fr)_20rem]">
-        <aside className="order-1 rounded-2xl border border-line bg-surface p-4 lg:order-2 lg:sticky lg:top-0">
+        <aside className="order-2 rounded-2xl border border-line bg-surface p-4 lg:sticky lg:top-0">
           <h3 className="text-lg font-semibold">Your info</h3>
           {!connected ? (
             <div className="mt-4">
@@ -551,7 +575,7 @@ function Reserve({
           )}
         </aside>
 
-        <section className="order-2 flex flex-col gap-6 rounded-2xl border border-line bg-surface p-4 lg:order-1">
+        <section className="order-1 flex flex-col gap-6 rounded-2xl border border-line bg-surface p-4">
           <h3 className="text-lg font-semibold">Reserve status</h3>
           <div>
             <p className="text-sm text-muted">Supply info</p>
@@ -770,12 +794,12 @@ function MiniStat({ label, value, hint, tone }: { label: string; value: string; 
   );
 }
 
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Stat({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: "good" | "bad" }) {
   return (
-    <div>
-      <dt className="text-xs text-muted">{label}</dt>
-      <dd className="font-mono text-lg font-semibold">{value}</dd>
-      {hint && <p className="text-xs text-muted">{hint}</p>}
+    <div className={cn("min-w-0 rounded-2xl border bg-surface px-3 py-3", tone === "good" ? "border-primary/40" : tone === "bad" ? "border-danger/50" : "border-line")}>
+      <dt className="truncate text-[11px] font-medium uppercase tracking-wide text-muted">{label}</dt>
+      <dd className={cn("mt-1 truncate font-mono text-lg font-semibold leading-none", tone === "good" && "text-primary", tone === "bad" && "text-danger")}>{value}</dd>
+      {hint && <p className="mt-1.5 truncate text-[11px] text-muted">{hint}</p>}
     </div>
   );
 }
