@@ -39,7 +39,8 @@ export function GeckoChart({ token, frame }: { token: Token; frame: string }) {
         key={src}
         title={`${token.symbol} price on GeckoTerminal`}
         src={src}
-        className="absolute inset-0 h-full w-full border-0 bg-black"
+        className="absolute left-0 top-0 w-full border-0 bg-black"
+        style={{ height: "calc(100% + 41px)" }}
         loading="eager"
         allow="clipboard-write; fullscreen"
       />
