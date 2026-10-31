@@ -325,14 +325,34 @@ function priced(holdings: ChainHolding[]) {
   return { value, usdt: value / unit, holdings };
 }
 
+const chainGen = new Map<string, number>();
+
 async function fetchChain(account: string): Promise<ChainWallet> {
   const id = encodeURIComponent(account);
+  const gen = (chainGen.get(account) ?? 0) + 1;
+  chainGen.set(account, gen);
   const previous = chainCache.get(account) ?? peekChain(account);
-  const fastJob = fetch(`https://api.fastnear.com/v1/account/${id}/full`).catch(() => null);
-  const countJob = fetch(`https://api.nearblocks.io/v1/account/${id}/txns/count`).catch(() => null);
+  const blank: ChainWallet = previous ?? { value: 0, usdt: 0, holdings: [], trades: 0, txCount: 0, ago: "…", fills: [] };
   const txJob = fetch(`https://api.nearblocks.io/v1/account/${id}/txns?per_page=25`).catch(() => null);
   const ftJob = fetch(`https://api.nearblocks.io/v1/account/${id}/ft-txns?per_page=25`).catch(() => null);
-  const fastRes = await fastJob;
+  const fastJob = fetch(`https://api.fastnear.com/v1/account/${id}/full`).catch(() => null);
+  const countJob = fetch(`https://api.nearblocks.io/v1/account/${id}/txns/count`).catch(() => null);
+
+  const activity = Promise.all([txJob, ftJob]).then(async ([txRes, ftRes]) => {
+    const txBody = txRes?.ok ? ((await txRes.json()) as { txns?: ReceiptTxn[] }) : {};
+    const ftBody = ftRes?.ok ? ((await ftRes.json()) as { txns?: FtTxn[] }) : {};
+    const txns = txBody.txns ?? [];
+    const fts = ftBody.txns ?? [];
+    const prices = ftPriceBook ?? new Map<string, number>();
+    const freshFills = txRes?.ok || ftRes?.ok ? mergeActivity(txns, fts, [], prices) : [];
+    if (chainGen.get(account) === gen && freshFills.length) {
+      const current = chainCache.get(account) ?? blank;
+      remember(account, { ...current, ago: freshFills[0]?.ago ?? current.ago, fills: freshFills });
+    }
+    return { txns, fts, freshFills };
+  });
+
+  const [acted, fastRes, counted] = await Promise.all([activity, fastJob, countJob]);
   const fast = fastRes?.ok
     ? ((await fastRes.json()) as { tokens?: { contract_id?: string; balance?: string }[]; state?: { balance?: string } })
     : null;
@@ -347,41 +367,35 @@ async function fetchChain(account: string): Promise<ChainWallet> {
     const rpcBody = rpc?.ok ? ((await rpc.json()) as { result?: { amount?: string } }) : {};
     if (rpcBody.result?.amount) near = Number(rpcBody.result.amount) / 1e24;
   }
-  const quick = holdingsFrom(tokenRows, Number.isFinite(near) ? near : 0, metaBook ?? seedMeta());
-  const seeded: ChainWallet = {
-    value: quick.value,
-    usdt: quick.usdt,
-    holdings: quick.holdings.length ? quick.holdings : previous?.holdings ?? [],
-    trades: previous?.trades ?? quick.holdings.length,
-    txCount: previous?.txCount ?? 0,
-    ago: previous?.ago ?? "…",
-    fills: previous?.fills ?? [],
-  };
-  if (seeded.holdings.length) remember(account, seeded);
-  const meta = await loadMeta();
-  const named = holdingsFrom(tokenRows, Number.isFinite(near) ? near : 0, meta);
-  const holdings = named.holdings.length ? named.holdings : seeded.holdings;
-  const money = named.holdings.length ? named : { value: seeded.value, usdt: seeded.usdt };
-  const counted = await countJob;
   const countBody = counted?.ok ? ((await counted.json()) as { txns?: { count?: string }[] }) : {};
-  const txCount = Number(countBody.txns?.[0]?.count ?? 0) || seeded.txCount;
-  const partial: ChainWallet = {
-    value: money.value,
-    usdt: money.usdt,
-    holdings,
-    trades: txCount || holdings.length,
+  const txCount = Number(countBody.txns?.[0]?.count ?? 0) || previous?.txCount || 0;
+  const quick = holdingsFrom(tokenRows, Number.isFinite(near) ? near : 0, metaBook ?? seedMeta());
+  const fills = acted.freshFills.length ? acted.freshFills : previous?.fills ?? [];
+  const next: ChainWallet = {
+    value: quick.holdings.length ? quick.value : previous?.value ?? quick.value,
+    usdt: quick.holdings.length ? quick.usdt : previous?.usdt ?? quick.usdt,
+    holdings: quick.holdings.length ? quick.holdings : previous?.holdings ?? [],
+    trades: txCount || quick.holdings.length,
     txCount,
-    ago: seeded.ago,
-    fills: seeded.fills,
+    ago: fills[0]?.ago ?? previous?.ago ?? "…",
+    fills,
   };
-  remember(account, partial);
-  const [txRes, ftRes] = await Promise.all([txJob, ftJob]);
-  const txBody = txRes?.ok ? ((await txRes.json()) as { txns?: ReceiptTxn[] }) : {};
-  const ftBody = ftRes?.ok ? ((await ftRes.json()) as { txns?: FtTxn[] }) : {};
-  const freshFills = txRes?.ok || ftRes?.ok ? mergeActivity(txBody.txns ?? [], ftBody.txns ?? [], [], await loadFtPrices()) : [];
-  const fills = freshFills.length ? freshFills : previous?.fills ?? [];
-  const next: ChainWallet = { ...partial, ago: fills[0]?.ago ?? partial.ago, fills };
-  remember(account, next);
+  if (chainGen.get(account) === gen) remember(account, next);
+  void loadMeta().then((meta) => {
+    if (chainGen.get(account) !== gen) return;
+    const named = holdingsFrom(tokenRows, Number.isFinite(near) ? near : 0, meta);
+    if (!named.holdings.length) return;
+    const current = chainCache.get(account) ?? next;
+    remember(account, { ...current, value: named.value, usdt: named.usdt, holdings: named.holdings });
+  });
+  if (!(ftPriceBook && Date.now() - ftPriceAt < 60_000)) {
+    void loadFtPrices().then((book) => {
+      if (chainGen.get(account) !== gen || !acted.freshFills.length) return;
+      const priced = mergeActivity(acted.txns, acted.fts, [], book);
+      const current = chainCache.get(account) ?? next;
+      remember(account, { ...current, ago: priced[0]?.ago ?? current.ago, fills: priced });
+    });
+  }
   return next;
 }
 
@@ -439,24 +453,54 @@ function addLeg(row: ChainFill, symbol: string, amount: number, contract?: strin
 
 let ftPriceBook: Map<string, number> | null = null;
 let ftPriceAt = 0;
+let ftPriceJob: Promise<Map<string, number>> | null = null;
+
+function readPriceCache() {
+  if (typeof localStorage === "undefined") return;
+  try {
+    const raw = localStorage.getItem("asgard-ft-prices");
+    if (!raw) return;
+    const saved = JSON.parse(raw) as { at?: number; rows?: [string, number][] };
+    if (!saved.rows?.length) return;
+    ftPriceBook = new Map(saved.rows);
+    ftPriceAt = saved.at ?? 0;
+  } catch {
+    /* ignore a bad cache */
+  }
+}
+
+readPriceCache();
 
 async function loadFtPrices() {
   if (ftPriceBook && Date.now() - ftPriceAt < 60_000) return ftPriceBook;
-  const book = new Map<string, number>();
-  const response = await fetch("https://indexer.ref.finance/list-token-price").catch(() => null);
-  if (response?.ok) {
-    const data = (await response.json()) as Record<string, { price?: string }>;
-    for (const [id, row] of Object.entries(data)) {
-      const price = Number(row?.price);
-      if (price > 0) book.set(id.toLowerCase(), price);
+  if (ftPriceJob) return ftPriceJob;
+  ftPriceJob = (async () => {
+    const book = new Map(ftPriceBook ?? []);
+    const response = await fetch("https://indexer.ref.finance/list-token-price").catch(() => null);
+    if (response?.ok) {
+      const data = (await response.json()) as Record<string, { price?: string }>;
+      for (const [id, row] of Object.entries(data)) {
+        const price = Number(row?.price);
+        if (price > 0) book.set(id.toLowerCase(), price);
+      }
+      const near = book.get("wrap.near") || tokenPrice("NEAR") || 0;
+      if (near > 0) book.set("wrap.near", near);
+      ftPriceBook = book;
+      ftPriceAt = Date.now();
+      try {
+        localStorage.setItem("asgard-ft-prices", JSON.stringify({ at: ftPriceAt, rows: [...book.entries()] }));
+      } catch {
+        /* private mode */
+      }
     }
-  }
-  const near = book.get("wrap.near") || tokenPrice("NEAR") || 0;
-  if (near > 0) book.set("wrap.near", near);
-  ftPriceBook = book;
-  ftPriceAt = Date.now();
-  return book;
+    return ftPriceBook ?? book;
+  })().finally(() => {
+    ftPriceJob = null;
+  });
+  return ftPriceJob;
 }
+
+if (typeof window !== "undefined") void loadFtPrices();
 
 function asUsdt(legs: ChainLeg[], prices: Map<string, number>) {
   const nearUsd = prices.get("wrap.near") || tokenPrice("NEAR") || 0;
