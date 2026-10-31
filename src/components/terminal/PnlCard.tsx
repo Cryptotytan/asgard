@@ -91,7 +91,7 @@ export function PnlCard({ position, mark, onClose, startShare = false, onShareCl
               <input type="range" min={1} max={20} value={lev} aria-label="Position leverage" onChange={(event) => setLev(Number(event.target.value))} className="mt-1 w-full" />
               <button
                 type="button"
-                onClick={() => setRiskNote(setLeverage(position.id, lev) ? "" : "Not enough free USDT to lower leverage.")}
+                onClick={() => setRiskNote(setLeverage(position.id, lev).note)}
                 className="mt-1 h-8 w-full rounded-lg border border-line text-xs"
               >
                 Update leverage
@@ -107,7 +107,7 @@ export function PnlCard({ position, mark, onClose, startShare = false, onShareCl
                 <button type="button" onClick={() => setRiskNote(adjustMargin(position.id, Number(marginAmt) || 0) ? "" : "Not enough free USDT.")} className="h-8 rounded-lg border border-line px-2 text-xs">Add</button>
                 <button type="button" onClick={() => setRiskNote(adjustMargin(position.id, -(Number(marginAmt) || 0)) ? "" : "Margin can't go below the maintenance floor.")} className="h-8 rounded-lg border border-line px-2 text-xs">Remove</button>
               </div>
-              <p className="mt-1 text-[10px] text-muted">{riskNote || `${usd(free)} USDT free`}</p>
+              <p className={`mt-1 text-[10px] ${riskNote.startsWith("Leverage is") ? "text-primary" : riskNote ? "text-danger" : "text-muted"}`}>{riskNote || `${usd(free)} USDT free`}</p>
             </div>
             <div>
               <button type="button" onClick={() => setGuardsOpen(true)} className="grid w-full grid-cols-2 gap-2 text-left">

@@ -4,8 +4,9 @@ import { ArrowLeft, Search, TriangleAlert } from "lucide-react";
 import { borrowRoom, healthFactor, LEND_MARKETS, px, qty, tokenBySymbol, TOKENS, usd, type LendMarket } from "@/lib/market";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { ConfirmGate } from "@/components/terminal/ConfirmGate";
-import { borrowFromBurrow, lendDecimals, readMarketConfigs, repayOnBurrow, supplyOnBurrow, withdrawFromBurrow, type MarketConfig, type RatePoint } from "@/lib/burrow";
-import { syncWallet } from "@/lib/near-wallet";
+import { borrowFromBurrow, lendDecimals, readMarketConfigs, repayOnBurrow, supplyOnBurrow, warmBurrow, withdrawFromBurrow, type MarketConfig, type RatePoint } from "@/lib/burrow";
+import { armWalletPopup, cancelNearSigning, syncWallet } from "@/lib/near-wallet";
+import { iconFor, lendIcon } from "@/lib/dex";
 import { useDesk } from "@/lib/store";
 import { cn } from "@/lib/cn";
 
@@ -62,6 +63,15 @@ export function LendDesk() {
   const [flight, setFlight] = useState<{ title: string; detail: string } | null>(null);
   const [configs, setConfigs] = useState<Record<string, MarketConfig>>({});
   const scroller = useRef<HTMLDivElement>(null);
+  const flightGen = useRef(0);
+
+  function dismissFlight() {
+    flightGen.current += 1;
+    cancelNearSigning();
+    setFlight(null);
+    setBusy("");
+    setNote("Cancelled.");
+  }
 
   useEffect(() => {
     if (accountId) void syncWallet(accountId);
@@ -90,6 +100,11 @@ export function LendDesk() {
 
   const live = LEND_MARKETS.length > 0;
   const markets = useMemo(() => (live ? [...LEND_MARKETS] : FALLBACK), [clock, live]);
+  const warmKey = markets.map((market) => market.token || "").filter(Boolean).join(",");
+  useEffect(() => {
+    if (!accountId || !warmKey) return;
+    warmBurrow(accountId, warmKey.split(","));
+  }, [accountId, warmKey]);
   const suppliedUsd = Object.entries(supplied).reduce((sum, [symbol, value]) => sum + value * (tokenBySymbol(symbol).price || 0), 0);
   const debtUsd = Object.entries(loans).reduce((sum, [symbol, value]) => sum + value * (tokenBySymbol(symbol).price || 0), 0);
   const health = healthFactor(supplied, loans);
@@ -199,6 +214,8 @@ export function LendDesk() {
         return;
       }
     }
+    const generation = flightGen.current;
+    armWalletPopup();
     setBusy(kind);
     const verb = kind === "supply" ? "Supply" : kind === "withdraw" ? "Withdraw" : kind === "borrow" ? "Borrow" : "Repay";
     setFlight({ title: `${verb} ${tickerOf(market)}`, detail: `${qty(qtyN)} ${tickerOf(market)}` });
@@ -209,14 +226,18 @@ export function LendDesk() {
       else if (kind === "borrow") await borrowFromBurrow(wallet, token, String(qtyN), decimals);
       else await repayOnBurrow(wallet, token, String(qtyN), decimals);
       await syncWallet(wallet);
+      if (flightGen.current !== generation) return;
       const verb = kind === "supply" ? "Supplied" : kind === "withdraw" ? "Withdrew" : kind === "borrow" ? "Borrowed" : "Repaid";
       setNote(`${verb} ${qty(qtyN)} ${tickerOf(market)} on Rhea.`);
       setAmount("");
     } catch (error) {
+      if (flightGen.current !== generation) return;
       setNote(error instanceof Error ? error.message : "Lending move failed.");
     } finally {
-      setBusy("");
-      setFlight(null);
+      if (flightGen.current === generation) {
+        setBusy("");
+        setFlight(null);
+      }
     }
   }
 
@@ -248,17 +269,7 @@ export function LendDesk() {
         />
       ) : (
         <div className="flex flex-col gap-4">
-          <header className="flex flex-col gap-4">
-            <div className="flex items-center gap-3">
-              <img src="/tokens/rhea.svg" alt="" className="size-10 shrink-0 rounded-full bg-surface-2 object-cover" />
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h2 className="text-2xl font-semibold tracking-tight">Rhea</h2>
-                  <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs font-medium text-muted">NEAR</span>
-                </div>
-                <p className="mt-0.5 text-sm leading-snug text-muted">Supply and borrow on NEAR. Your balance settles on the connected account.</p>
-              </div>
-            </div>
+          <header>
             <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
               <Stat label="Total supplied" value={live ? money(totals.supplied) : "—"} />
               <Stat label="Total borrowed" value={live ? money(totals.borrowed) : "—"} />
@@ -399,7 +410,7 @@ export function LendDesk() {
           {note && <p className="text-sm text-muted">{note}</p>}
         </div>
       )}
-      {flight && <ConfirmGate title={flight.title} detail={flight.detail} />}
+      {flight && <ConfirmGate title={flight.title} detail={flight.detail} onDismiss={dismissFlight} />}
     </div>
   );
 }
@@ -844,11 +855,13 @@ function assetName(market: LendMarket, config?: MarketConfig) {
 }
 
 function iconOf(market: LendMarket) {
+  const ticker = tickerOf(market);
   const listed =
-    TOKENS.find((item) => item.address?.toLowerCase() === market.token?.toLowerCase()) ??
-    TOKENS.find((item) => item.symbol.toUpperCase() === market.symbol.toUpperCase());
-  if (listed) return listed;
-  return { symbol: tickerOf(market), icon: "", address: market.token, chain: "NEAR" };
+    TOKENS.find((item) => market.token && item.address?.toLowerCase() === market.token.toLowerCase()) ??
+    TOKENS.find((item) => item.symbol.toUpperCase() === market.symbol.toUpperCase() || item.symbol.toUpperCase() === ticker.toUpperCase());
+  const icon = lendIcon(market.token) || iconFor(market.token, ticker) || listed?.icon || "";
+  if (listed) return { ...listed, icon: icon || listed.icon, address: market.token || listed.address, chain: listed.chain || "NEAR" };
+  return { symbol: ticker, icon, address: market.token, chain: "NEAR" };
 }
 
 function bookAmount(book: Record<string, number>, market: LendMarket) {

@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fmt, qty, tokenBySymbol, usd } from "@/lib/market";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { executeIntent, loadIntentAssets, parseUnits } from "@/lib/intents";
-import { stakeNear, syncWallet } from "@/lib/near-wallet";
+import { armWalletPopup, cancelNearSigning, stakeNear, syncWallet } from "@/lib/near-wallet";
 import { useDesk } from "@/lib/store";
 import { ConfirmGate } from "@/components/terminal/ConfirmGate";
 
@@ -28,6 +28,7 @@ export function VaultDesk() {
   const [busy, setBusy] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
   const [flight, setFlight] = useState<{ title: string; detail: string } | null>(null);
+  const flightGen = useRef(0);
   const staked = chain.STNEAR ?? chain.stNEAR ?? 0;
   const value = staked * tokenBySymbol("STNEAR").price;
   useEffect(() => {
@@ -59,6 +60,8 @@ export function VaultDesk() {
       setNote(`This account holds ${qty(staked)} stNEAR.`);
       return;
     }
+    const generation = flightGen.current;
+    armWalletPopup();
     setBusy(true);
     const title = kind === "out" ? "Withdraw stNEAR" : symbol === "NEAR" ? "Stake NEAR" : `Deposit ${symbol}`;
     setFlight({ title, detail: `${fmt(n)} ${kind === "out" ? "stNEAR" : symbol}` });
@@ -69,11 +72,12 @@ export function VaultDesk() {
         if (!yocto) throw new Error("Enter an amount.");
         await stakeNear(wallet, yocto);
         await syncWallet(wallet);
+        if (flightGen.current !== generation) return;
         setAmount("");
         setNote(`Staked ${fmt(n)} NEAR. stNEAR arrives in this wallet.`);
       } else if (kind === "in") {
         const result = await executeIntent({ from: symbol, to: "STNEAR", amount: String(n), accountId, purpose: "Vault deposit" });
-        if (useDesk.getState().accountId !== wallet) return;
+        if (flightGen.current !== generation || useDesk.getState().accountId !== wallet) return;
         await syncWallet(wallet);
         setAmount("");
         setNote(`Deposited into stNEAR. ${result.status}.`);
@@ -86,18 +90,29 @@ export function VaultDesk() {
           purpose: "Vault withdraw",
           maxPay: staked,
         });
-        if (useDesk.getState().accountId !== wallet) return;
+        if (flightGen.current !== generation || useDesk.getState().accountId !== wallet) return;
         await syncWallet(wallet);
         setAmount("");
         setWithdrawing(false);
         setNote(`Withdrew ${fmt(n)} stNEAR. NEAR returns to this wallet.`);
       }
     } catch (error) {
+      if (flightGen.current !== generation) return;
       setNote(cleanVaultError(error));
     } finally {
-      setBusy(false);
-      setFlight(null);
+      if (flightGen.current === generation) {
+        setBusy(false);
+        setFlight(null);
+      }
     }
+  }
+
+  function dismissFlight() {
+    flightGen.current += 1;
+    cancelNearSigning();
+    setFlight(null);
+    setBusy(false);
+    setNote("Cancelled.");
   }
 
   return (
@@ -198,7 +213,7 @@ export function VaultDesk() {
           {note && <p className="mt-1.5 font-mono text-[11px] text-primary">{note}</p>}
         </section>
       )}
-      {flight && <ConfirmGate title={flight.title} detail={flight.detail} />}
+      {flight && <ConfirmGate title={flight.title} detail={flight.detail} onDismiss={dismissFlight} />}
     </div>
   );
 }

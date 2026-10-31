@@ -249,6 +249,14 @@ function mix(from: bigint, to: bigint, t: number) {
   return from + ((to - from) * weight) / parts;
 }
 
+export function warmBurrow(accountId: string, tokens: string[]) {
+  void extraDecimals().catch(() => undefined);
+  const ids = new Set([BURROW, ...tokens.filter(Boolean)]);
+  for (const id of ids) void isRegisteredOn(id, accountId).catch(() => undefined);
+}
+
+if (typeof window !== "undefined") void extraDecimals().catch(() => undefined);
+
 async function extraDecimals() {
   if (extraCache) return extraCache;
   const rows = (await view(BURROW, "get_assets_paged", { from_index: 0, limit: 200 })) as

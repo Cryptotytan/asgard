@@ -335,6 +335,32 @@ export function knownLogo(symbol: string) {
   return LOCAL[symbol.toUpperCase()] ?? LOCAL[symbol] ?? "";
 }
 
+const PINNED_ICON: Record<string, string> = {
+  "wrap.near": "/tokens/near.svg",
+  "usdt.tether-token.near": "/logos/usdt.svg",
+  "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": "/tokens/usdc.png",
+  "dac17f958d2ee523a2206206994597c13d831ec7.factory.bridge.near": "/logos/usdt.svg",
+  "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.factory.bridge.near": "/tokens/usdc.png",
+  "eth.bridge.near": "/tokens/eth.png",
+  aurora: "/tokens/eth.png",
+  "2260fac5e5542a773aa44fbcfedf7c193bc2c599.factory.bridge.near": "/tokens/wbtc.png",
+  "nbtc.bridge.near": "/chains/bitcoin.png",
+  "meta-pool.near": "/tokens/stnear.svg",
+  "token.burrow.near": "/tokens/brrr.svg",
+  "linear-protocol.near": "/tokens/linear.svg",
+  "6b175474e89094c44da98b954eedeac495271d0f.factory.bridge.near": "/logos/dai.svg",
+  "853d955acef822db058eb8505911ed77f175b99e.factory.bridge.near": "/logos/frax.svg",
+  "zec.omft.near": "/logos/zec.svg",
+  "meta-token.near": "https://ref-new-1.s3.amazonaws.com/token/41a57b750687df5759f55077c5d4445e.svg",
+  "v2-nearx.stader-labs.near": "https://ref-new-1.s3.amazonaws.com/token/85585104c15906456e4407a9a4f5920c.svg",
+  "lst.rhealab.near": "https://ref-new-1.s3.amazonaws.com/token/56b1c7e1b4eed8463b1ceeddcddf9ba9.svg",
+};
+
+export function lendIcon(address?: string) {
+  if (!address) return "";
+  return PINNED_ICON[address.toLowerCase()] ?? "";
+}
+
 export function iconFor(address: string | undefined, symbol: string, dexImage?: string) {
   const dex = safeIcon(dexImage);
   if (dex && !dex.includes("cdn.dexscreener.com/tokens/") && !dex.includes("dd.dexscreener.com/ds-data/tokens/")) return dex;

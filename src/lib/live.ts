@@ -813,12 +813,15 @@ async function refreshMarkets() {
     publish(batch);
   }).catch(() => ({}) as Record<string, number>);
 
-  const [rows, spots] = await Promise.all([rheaPromise, spotPromise]);
+  const [rows, spots, icons] = await Promise.all([rheaPromise, spotPromise, iconsPromise]);
+  applyIconBook(icons);
   const rheaBySymbol = new Map<string, RheaRow>();
   for (const row of rows) {
     const raw = row.symbol ?? "";
-    if (!raw || raw.includes("$")) continue;
-    rheaBySymbol.set(canon(raw), row);
+    if (!raw || !row.token) continue;
+    const symbol = canon(raw);
+    if (raw.includes("$") && symbol !== "META") continue;
+    rheaBySymbol.set(symbol, row);
   }
   for (const [symbol, row] of rheaBySymbol) {
     const price = Number(row.price);
@@ -857,7 +860,7 @@ async function refreshMarkets() {
     .filter((market) => Boolean(market.token) && (market.suppliedUsd > 0 || market.supplyApy > 0 || market.borrowApy > 0))
     .sort((a, b) => b.suppliedUsd - a.suppliedUsd);
   if (lend.length) LEND_MARKETS.splice(0, LEND_MARKETS.length, ...lend);
-  const [dexMarks, icons, cap] = await Promise.all([dexPromise, iconsPromise, capPromise]);
+  const [dexMarks, freshIcons, cap] = await Promise.all([dexPromise, iconsPromise, capPromise]);
   Object.assign(marks, dexMarks);
   if (cap > 0) {
     const near = TOKENS.find((token) => token.symbol === "NEAR");
@@ -867,7 +870,7 @@ async function refreshMarkets() {
       near.fdv = money(cap);
     }
   }
-  applyIconBook(icons);
+  applyIconBook(freshIcons);
   for (const token of TOKENS) {
     token.verified = isVerifiedAsset(token);
     token.score = qualityScore(token) ?? 0;

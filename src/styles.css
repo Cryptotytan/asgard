@@ -1520,3 +1520,15 @@ a.landing-enter-lg {
 #near-wallet-selector-modal .modal-right .back-button {
   left: 10px;
 }
+
+#near-wallet-selector-modal,
+#near-wallet-selector-modal .nws-modal-wrapper {
+  z-index: 200000 !important;
+}
+
+iframe[src*="herewallet.app"],
+iframe[src*="intear.tech"],
+iframe[src*="intear"],
+iframe[src*="walletbot"] {
+  z-index: 200001 !important;
+}

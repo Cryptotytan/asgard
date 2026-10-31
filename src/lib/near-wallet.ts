@@ -188,7 +188,86 @@ export function restoreNearSession() {
   return boot();
 }
 
-let hereCancelWired = false;
+let signAbort: (() => void) | null = null;
+let redirectTimer = 0;
+let nativeOpen: typeof window.open | null = null;
+let primed: Window | null = null;
+let primedUsed = false;
+let restoreTimer = 0;
+let abandonSign = false;
+
+function hasInjectedSigner() {
+  const host = window as Window & {
+    meteor_wallet?: unknown;
+    hotWallet?: unknown;
+    nightly?: { near?: unknown };
+    near?: { isSender?: boolean };
+  };
+  return Boolean(host.meteor_wallet || host.hotWallet || host.nightly?.near || host.near?.isSender);
+}
+
+export function armWalletPopup() {
+  if (typeof window === "undefined") return;
+  abandonSign = false;
+  if (hasInjectedSigner()) return;
+  disarmWalletPopup();
+  primedUsed = false;
+  primed = window.open("about:blank", "asgard-wallet", "popup=1,width=440,height=760");
+  if (!primed) return;
+  nativeOpen = window.open.bind(window);
+  const native = nativeOpen;
+  window.open = ((url?: string | URL, target?: string, features?: string) => {
+    const href = url == null ? "" : String(url);
+    if (!primedUsed && primed && !primed.closed && href && !href.startsWith("about:")) {
+      primedUsed = true;
+      try {
+        primed.location.href = href;
+      } catch {
+        /* A cross-origin wallet navigates the popup itself. */
+      }
+      window.open = native;
+      return primed;
+    }
+    return native(url as string, target, features);
+  }) as typeof window.open;
+  restoreTimer = window.setTimeout(() => disarmWalletPopup(), 20000);
+}
+
+export function disarmWalletPopup() {
+  if (typeof window === "undefined") return;
+  if (restoreTimer) window.clearTimeout(restoreTimer);
+  restoreTimer = 0;
+  if (nativeOpen) window.open = nativeOpen;
+  nativeOpen = null;
+  if (primed && !primedUsed && !primed.closed) primed.close();
+  primed = null;
+  primedUsed = false;
+}
+
+export function closeSparePopup() {
+  if (primed && !primedUsed && !primed.closed) primed.close();
+}
+
+export function cancelNearSigning() {
+  abandonSign = true;
+  hideWalletFrame();
+  signAbort?.();
+  signAbort = null;
+  if (redirectTimer) window.clearInterval(redirectTimer);
+  redirectTimer = 0;
+  disarmWalletPopup();
+}
+
+function walletSurfaceOpen() {
+  if (visibleWalletFrame()) return true;
+  if (document.querySelector("#near-wallet-selector-modal .nws-modal-wrapper.open")) return true;
+  for (const node of document.querySelectorAll("body > div, body > iframe")) {
+    if (!(node instanceof HTMLElement)) continue;
+    const z = Number(node.style.zIndex || getComputedStyle(node).zIndex);
+    if (z >= 10000 && getComputedStyle(node).position === "fixed" && getComputedStyle(node).display !== "none") return true;
+  }
+  return false;
+}
 
 function visibleWalletFrame() {
   const frames = document.querySelectorAll("iframe");
@@ -212,12 +291,14 @@ function hideWalletFrame() {
 }
 
 function placeWalletClose() {
+  if (walletSurfaceOpen()) closeSparePopup();
   const frame = visibleWalletFrame();
   let button = document.getElementById("asgard-here-close") as HTMLButtonElement | null;
   if (!frame) {
     button?.remove();
     return;
   }
+  closeSparePopup();
   if (!button) {
     button = document.createElement("button");
     button.id = "asgard-here-close";
@@ -226,7 +307,7 @@ function placeWalletClose() {
     button.textContent = "Close";
     button.style.cssText = [
       "position:fixed",
-      "z-index:100002",
+      "z-index:200002",
       "height:36px",
       "padding:0 14px",
       "border:0",
@@ -259,7 +340,10 @@ function placeWalletClose() {
   const top = (narrow ? viewportHeight - cardHeight : (viewportHeight - cardHeight) / 2) + inset - 4;
   button.style.right = `${Math.max(8, right)}px`;
   button.style.top = `${Math.max(8, top)}px`;
+  closeSparePopup();
 }
+
+let hereCancelWired = false;
 
 function hideWalletOnCancel() {
   if (hereCancelWired || typeof window === "undefined") return;
@@ -416,20 +500,40 @@ export async function stakeNear(accountId: string, yocto: string) {
 }
 
 export async function sendNearTransactions(accountId: string, transactions: { receiverId: string; actions: Call[] }[]) {
-  if (localStorage.getItem(READONLY_STORE)) throw new Error("This account is view-only. Connect a wallet to sign.");
+  if (localStorage.getItem(READONLY_STORE)) {
+    await boot();
+    modalShow?.();
+    throw new Error("This account is view-only. Choose a wallet that can sign.");
+  }
   await boot();
+  if (abandonSign) throw new Error("Cancelled.");
   const selector = await selectorPromise;
   if (!selector) throw new Error("Wallet is not ready.");
-  const wallet = await selector.wallet();
+  let wallet: WalletApi;
+  try {
+    wallet = await selector.wallet();
+  } catch {
+    modalShow?.();
+    throw new Error("Choose a NEAR wallet to sign this transaction.");
+  }
+  if (abandonSign) throw new Error("Cancelled.");
   const built = transactions.map((tx) => ({ signerId: accountId, receiverId: tx.receiverId, actions: tx.actions }));
   const before = new URL(window.location.href).searchParams.get("transactionHashes");
   const sent = built.length > 1 && wallet.signAndSendTransactions ? wallet.signAndSendTransactions({ transactions: built }) : sendOneByOne(wallet, built);
+  const cancelled = new Promise<never>((_, reject) => {
+    signAbort = () => reject(new Error("Cancelled."));
+  });
   try {
-    return await Promise.race([sent, redirectHash(before)]);
+    return await Promise.race([sent, redirectHash(before), cancelled]);
   } catch (error) {
     const hash = new URL(window.location.href).searchParams.get("transactionHashes");
     if (hash && hash !== before) return hash.split(",")[0] ?? hash;
     throw error instanceof Error ? error : new Error("The NEAR wallet rejected the transaction.");
+  } finally {
+    signAbort = null;
+    if (redirectTimer) window.clearInterval(redirectTimer);
+    redirectTimer = 0;
+    disarmWalletPopup();
   }
 }
 
@@ -443,10 +547,12 @@ function sendOneByOne(wallet: WalletApi, built: { signerId: string; receiverId: 
 
 function redirectHash(before: string | null) {
   return new Promise<string>((resolve) => {
-    const timer = window.setInterval(() => {
+    if (redirectTimer) window.clearInterval(redirectTimer);
+    redirectTimer = window.setInterval(() => {
       const hash = new URL(window.location.href).searchParams.get("transactionHashes");
       if (hash && hash !== before) {
-        window.clearInterval(timer);
+        window.clearInterval(redirectTimer);
+        redirectTimer = 0;
         resolve(hash.split(",")[0] ?? hash);
       }
     }, 400);
@@ -519,24 +625,35 @@ export async function isRegisteredOn(contractId: string, accountId: string) {
 }
 
 const registeredYes = new Set<string>();
+const registeredFlight = new Map<string, Promise<boolean>>();
 
 async function isRegistered(contractId: string, accountId: string) {
   const key = `${contractId}:${accountId}`;
   if (registeredYes.has(key)) return true;
+  const pending = registeredFlight.get(key);
+  if (pending) return pending;
+  const job = (async () => {
+    try {
+      const result = (await rpc({
+        request_type: "call_function",
+        finality: "optimistic",
+        account_id: contractId,
+        method_name: "storage_balance_of",
+        args_base64: btoa(JSON.stringify({ account_id: accountId })),
+      })) as { result?: number[] };
+      const text = new TextDecoder().decode(new Uint8Array(result.result ?? [])).trim();
+      const yes = text !== "" && text !== "null";
+      if (yes) registeredYes.add(key);
+      return yes;
+    } catch {
+      return false;
+    }
+  })();
+  registeredFlight.set(key, job);
   try {
-    const result = (await rpc({
-      request_type: "call_function",
-      finality: "optimistic",
-      account_id: contractId,
-      method_name: "storage_balance_of",
-      args_base64: btoa(JSON.stringify({ account_id: accountId })),
-    })) as { result?: number[] };
-    const text = new TextDecoder().decode(new Uint8Array(result.result ?? [])).trim();
-    const yes = text !== "" && text !== "null";
-    if (yes) registeredYes.add(key);
-    return yes;
-  } catch {
-    return false;
+    return await job;
+  } finally {
+    registeredFlight.delete(key);
   }
 }
 

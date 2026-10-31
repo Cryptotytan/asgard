@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { LEND_MARKETS, canPerp, isHoneypot, tokenBySymbol } from "@/lib/market";
+import { LEND_MARKETS, canPerp, isHoneypot, tokenBySymbol, usd } from "@/lib/market";
 import { logTrade } from "@/lib/trade-log";
 
 export type Side = "long" | "short";
@@ -84,7 +84,7 @@ type Desk = {
   ) => boolean;
   closePerp: (id: string, reason?: string) => boolean;
   setGuards: (id: string, guards: { tp?: number; sl?: number }) => void;
-  setLeverage: (id: string, leverage: number) => boolean;
+  setLeverage: (id: string, leverage: number) => { ok: boolean; note: string };
   adjustMargin: (id: string, delta: number) => boolean;
   depositVault: (symbol: string, amount: number) => boolean;
   withdrawVault: (symbol: string, amount: number) => boolean;
@@ -453,21 +453,41 @@ export const useDesk = create<Desk>((set, get) => ({
   },
 
   setLeverage: (id, leverage) => {
-    const lev = Math.min(20, Math.max(1, Math.round(leverage)));
+    const lev = Math.min(20, Math.max(1, Math.round(Number(leverage))));
+    if (!Number.isFinite(lev)) return { ok: false, note: "Pick a leverage from 1x to 20x." };
     const state = get();
     const position = state.positions.find((item) => item.id === id);
-    if (!position) return false;
+    if (!position) return { ok: false, note: "That position is no longer open." };
     const notional = position.size * position.entry;
-    if (!(notional > 0)) return false;
+    if (!(notional > 0)) return { ok: false, note: "This position has no size to resize." };
+    const current = Math.min(20, Math.max(1, Math.round(position.leverage)));
+    if (lev === current) return { ok: true, note: `Leverage is already ${current}x.` };
     const nextMargin = notional / lev;
     const delta = nextMargin - position.margin;
-    const balances = delta > 0 ? take(state.balances, "USDT", delta) : add(state.balances, "USDT", -delta);
-    if (!balances) return false;
-    set({
-      balances,
-      positions: state.positions.map((item) => (item.id === id ? { ...item, leverage: lev, margin: nextMargin } : item)),
-    });
-    return true;
+    const apply = (balances: Book) => {
+      set({
+        balances,
+        positions: state.positions.map((item) => (item.id === id ? { ...item, leverage: lev, margin: nextMargin } : item)),
+        orders: state.orders.map((order) => (order.positionId === id ? { ...order, leverage: lev } : order)),
+      });
+    };
+    if (position.external) {
+      apply(state.balances);
+      return { ok: true, note: `Leverage is now ${lev}x.` };
+    }
+    if (delta > 1e-6) {
+      const free = state.balances.USDT ?? 0;
+      if (free + 1e-6 < delta) {
+        const need = Math.max(0, delta - Math.max(0, free));
+        return { ok: false, note: `Need ${usd(need)} more free USDT to set ${lev}x. ${usd(Math.max(0, free))} is free.` };
+      }
+      const next = take(state.balances, "USDT", delta);
+      if (!next) return { ok: false, note: `Need ${usd(delta)} more free USDT to set ${lev}x.` };
+      apply(next);
+      return { ok: true, note: `Leverage is now ${lev}x. Margin is ${usd(nextMargin)}.` };
+    }
+    apply(delta < -1e-6 ? add(state.balances, "USDT", -delta) : state.balances);
+    return { ok: true, note: `Leverage is now ${lev}x. Margin is ${usd(nextMargin)}.` };
   },
 
   adjustMargin: (id, delta) => {
