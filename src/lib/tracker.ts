@@ -142,7 +142,7 @@ export function fillsOf(wallets: TrackedWallet[]): Fill[] {
 }
 
 export type ChainHolding = { symbol: string; amount: number; usd: number; share: number; contract?: string };
-export type ChainLeg = { symbol: string; amount: number };
+export type ChainLeg = { symbol: string; amount: number; contract?: string };
 export type ChainFill = {
   id: string;
   symbol: string;
@@ -378,7 +378,7 @@ async function fetchChain(account: string): Promise<ChainWallet> {
   const [txRes, ftRes] = await Promise.all([txJob, ftJob]);
   const txBody = txRes?.ok ? ((await txRes.json()) as { txns?: ReceiptTxn[] }) : {};
   const ftBody = ftRes?.ok ? ((await ftRes.json()) as { txns?: FtTxn[] }) : {};
-  const freshFills = txRes?.ok || ftRes?.ok ? mergeActivity(txBody.txns ?? [], ftBody.txns ?? [], []) : [];
+  const freshFills = txRes?.ok || ftRes?.ok ? mergeActivity(txBody.txns ?? [], ftBody.txns ?? [], [], await loadFtPrices()) : [];
   const fills = freshFills.length ? freshFills : previous?.fills ?? [];
   const next: ChainWallet = { ...partial, ago: fills[0]?.ago ?? partial.ago, fills };
   remember(account, next);
@@ -423,28 +423,52 @@ function argsNear(args?: string | null) {
   }
 }
 
-function addLeg(row: ChainFill, symbol: string, amount: number) {
+function addLeg(row: ChainFill, symbol: string, amount: number, contract?: string) {
   if (!symbol || !(amount > 1e-8)) return;
   const legs = row.legs ?? [];
   const hit = legs.find((leg) => leg.symbol.toLowerCase() === symbol.toLowerCase());
-  if (hit) hit.amount += amount;
-  else legs.push({ symbol, amount });
+  if (hit) {
+    hit.amount += amount;
+    if (contract && !hit.contract) hit.contract = contract;
+  } else legs.push({ symbol, amount, contract });
   row.legs = legs;
   row.tokens = legs.map((leg) => leg.symbol);
   row.symbol = legs[0]?.symbol ?? row.symbol;
   row.amount = legs[0]?.amount ?? row.amount;
 }
 
-function asNear(legs: ChainLeg[]) {
-  const nearPx = tokenPrice("NEAR") || 0;
+let ftPriceBook: Map<string, number> | null = null;
+let ftPriceAt = 0;
+
+async function loadFtPrices() {
+  if (ftPriceBook && Date.now() - ftPriceAt < 60_000) return ftPriceBook;
+  const book = new Map<string, number>();
+  const response = await fetch("https://indexer.ref.finance/list-token-price").catch(() => null);
+  if (response?.ok) {
+    const data = (await response.json()) as Record<string, { price?: string }>;
+    for (const [id, row] of Object.entries(data)) {
+      const price = Number(row?.price);
+      if (price > 0) book.set(id.toLowerCase(), price);
+    }
+  }
+  const near = book.get("wrap.near") || tokenPrice("NEAR") || 0;
+  if (near > 0) book.set("wrap.near", near);
+  ftPriceBook = book;
+  ftPriceAt = Date.now();
+  return book;
+}
+
+function asNear(legs: ChainLeg[], prices: Map<string, number>) {
+  const nearUsd = prices.get("wrap.near") || tokenPrice("NEAR") || 0;
   let near = 0;
   for (const leg of legs) {
     const base = leg.symbol.toUpperCase();
-    if (base === "NEAR" || base === "WNEAR") near += leg.amount;
-    else if (nearPx > 0) {
-      const px = tokenPrice(leg.symbol);
-      if (px > 0) near += (leg.amount * px) / nearPx;
+    if (base === "NEAR" || base === "WNEAR") {
+      near += leg.amount;
+      continue;
     }
+    const usd = (leg.contract ? prices.get(leg.contract.toLowerCase()) : 0) || tokenPrice(leg.symbol, leg.contract) || 0;
+    if (usd > 0 && nearUsd > 0) near += (leg.amount * usd) / nearUsd;
   }
   return near;
 }
@@ -485,7 +509,7 @@ function stamp(ns?: string) {
   return Number.isFinite(ms) ? ms : 0;
 }
 
-function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[]): ChainFill[] {
+function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[], prices = new Map<string, number>()): ChainFill[] {
   const rows = new Map<string, ChainFill>();
   const touch = (hash: string, time: number, ago: string) => {
     const id = hash || `t-${time}-${rows.size}`;
@@ -552,7 +576,7 @@ function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[]): ChainF
     row.amount = Number.isFinite(amount) ? amount : 0;
     if (row.kind === "Transaction") row.kind = ftKind(tx.cause, incoming);
     row.detail = row.detail || `${incoming ? "Received" : "Sent"} ${Number.isFinite(amount) ? trimAmount(row.amount) : 0} ${symbol}`;
-    addLeg(row, symbol, row.amount);
+    addLeg(row, symbol, row.amount, tx.ft?.contract);
     row.programs = pushUnique(row.programs, tx.ft?.contract || "");
   }
   for (const tx of nfts) {
@@ -572,7 +596,7 @@ function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[]): ChainF
     .map((row) => {
       const legs = row.legs ?? [];
       row.tokens = legs.length ? legs.map((leg) => leg.symbol) : row.tokens;
-      row.value = asNear(legs);
+      row.value = asNear(legs, prices);
       const marks = Math.max(0, (row.tokens?.length ?? 0) - 1, (row.programs?.length ?? 1) - 1);
       row.extra = Math.max(row.extra ?? 0, marks);
       return row;

@@ -79,7 +79,12 @@ export function TokenTrade({
     let stop = false;
     const pull = () => {
       if (stop) return;
-      void import("@/lib/dex").then((mod) => mod.refreshTokenCard(symbol));
+      const perp = mode === "perp" && Boolean(tradingViewPerp(symbol));
+      if (perp) {
+        void import("@/lib/dex").then((mod) => mod.refreshTokenCard(symbol));
+        return;
+      }
+      void import("@/lib/live").then((mod) => mod.syncGeckoStats(symbol));
     };
     pull();
     const timer = window.setInterval(pull, 15_000);
@@ -87,7 +92,7 @@ export function TokenTrade({
       stop = true;
       window.clearInterval(timer);
     };
-  }, [symbol]);
+  }, [symbol, mode]);
 
   const hlKey = orders.map((order) => order.hlOid ?? "").join(",");
 
@@ -112,8 +117,8 @@ export function TokenTrade({
   }, [mode, symbol, onSymbol]);
 
   const deskMode: TicketMode = canPerp(symbol) ? mode : "spot";
-  const plotted = deskMode === "perp" ? tradingViewPerp(symbol) : tradingViewSpot(symbol);
-  const tvChart = token.kind !== "meme" && Boolean(plotted);
+  const tvChart = deskMode === "perp" && Boolean(tradingViewPerp(symbol));
+  const shownPx = !tvChart ? token.price : (mark ?? 0) > 0 ? (mark as number) : token.price;
   const showBook = Boolean(tradingViewSpot(symbol) || tradingViewPerp(symbol));
   useEffect(() => {
     const node = chartPane.current;
@@ -149,7 +154,7 @@ export function TokenTrade({
         </div>
         <dl className="scroll-x flex w-full max-w-full items-stretch overflow-x-auto lg:ml-auto lg:w-auto lg:self-center">
           <Stat k="Mcap" v={token.mcapN > 0 ? token.mcap : "—"} />
-          <Stat k="Price" v={px((mark ?? 0) > 0 ? mark : token.price)} accent />
+          <Stat k="Price" v={px(shownPx)} accent />
           <Stat k="Liq" v={token.liqN > 0 ? token.liquidity : "—"} />
           <Stat k="Vol" v={token.volN > 0 ? token.volume : "—"} />
           <Stat k="FDV" v={token.fdv || "—"} />
@@ -177,7 +182,6 @@ export function TokenTrade({
                     </button>
                   ))}
                 </div>
-                <span className="shrink-0 text-[10px] font-semibold text-muted">GeckoTerminal · Price</span>
               </div>
               <GeckoChart key={`${token.chain}:${token.address || token.symbol}:${frame}`} token={token} frame={frame} />
             </div>
@@ -189,7 +193,7 @@ export function TokenTrade({
           className="flex h-[22rem] flex-col overflow-hidden border-t border-line lg:col-start-2 lg:row-start-1 lg:h-[var(--book-h)] lg:border-r lg:border-t-0"
           style={chartH > 0 ? ({ "--book-h": `${chartH}px` } as CSSProperties) : undefined}
         >
-          <LiveBook symbol={symbol} mark={Number.isFinite(mark ?? token.price) ? (mark ?? token.price) : 0} liquidity={token.liqN} />
+          <LiveBook symbol={symbol} mark={Number.isFinite(shownPx) ? shownPx : 0} liquidity={token.liqN} />
         </div>
         )}
         <div className={`border-t border-line lg:row-span-2 lg:row-start-1 lg:self-stretch lg:border-t-0 ${showBook ? "lg:col-start-3" : "lg:col-start-2"}`}>

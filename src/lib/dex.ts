@@ -351,7 +351,7 @@ const PINNED_ICON: Record<string, string> = {
   "6b175474e89094c44da98b954eedeac495271d0f.factory.bridge.near": "/logos/dai.svg",
   "853d955acef822db058eb8505911ed77f175b99e.factory.bridge.near": "/logos/frax.svg",
   "zec.omft.near": "/logos/zec.svg",
-  "meta-token.near": "https://ref-new-1.s3.amazonaws.com/token/41a57b750687df5759f55077c5d4445e.svg",
+  "meta-token.near": "/tokens/meta.svg",
   "v2-nearx.stader-labs.near": "https://ref-new-1.s3.amazonaws.com/token/85585104c15906456e4407a9a4f5920c.svg",
   "lst.rhealab.near": "https://ref-new-1.s3.amazonaws.com/token/56b1c7e1b4eed8463b1ceeddcddf9ba9.svg",
 };
@@ -364,10 +364,10 @@ export function lendIcon(address?: string) {
 export function iconFor(address: string | undefined, symbol: string, dexImage?: string) {
   const dex = safeIcon(dexImage);
   if (dex && !dex.includes("cdn.dexscreener.com/tokens/") && !dex.includes("dd.dexscreener.com/ds-data/tokens/")) return dex;
-  const local = knownLogo(symbol.split(".")[0] ?? symbol) || knownLogo(symbol);
+  const booked = address ? safeIcon(iconBook?.get(address) || iconBook?.get(address.toLowerCase()) || "") : "";
+  if (booked) return booked;
+  const local = knownLogo(symbol.split(".")[0]?.replace(/^\$/, "") ?? symbol) || knownLogo(symbol);
   if (local) return local;
-  const listed = address ? safeIcon(iconBook?.get(address)) : "";
-  if (listed) return listed;
   return "";
 }
 
@@ -431,6 +431,10 @@ export async function loadIconBook() {
   const [ref, blocks] = await Promise.all([refIcons().catch(() => new Map<string, string>()), nearIcons().catch(() => ({ map: new Map<string, string>(), ranked: [] as string[] }))]);
   const map = new Map(ref);
   for (const [address, icon] of blocks.map) if (!map.has(address)) map.set(address, icon);
+  for (const [address, icon] of [...map.entries()]) {
+    const lower = address.toLowerCase();
+    if (!map.has(lower)) map.set(lower, icon);
+  }
   if (!map.get("wrap.near")) map.set("wrap.near", "/tokens/near.svg");
   iconBook = map;
   discover = blocks.ranked;

@@ -519,6 +519,57 @@ export function geckoNetwork(chain: string) {
   return GECKO_NET[chain] ?? "";
 }
 
+const geckoStatAt = new Map<string, number>();
+
+export async function syncGeckoStats(symbol: string) {
+  const token = TOKENS.find((item) => item.symbol === symbol);
+  if (!token) return;
+  const network = geckoNetwork(token.chain);
+  const raw = (token.address ?? "").trim().replace(/^(nep141:|nep245:)/i, "");
+  if (!network || !raw || raw.includes(" ") || raw.includes(":")) {
+    const { refreshTokenCard } = await import("@/lib/dex");
+    await refreshTokenCard(symbol);
+    return;
+  }
+  const address = raw.startsWith("0x") ? raw.toLowerCase() : raw;
+  const key = `${network}:${address}`;
+  if (Date.now() - (geckoStatAt.get(key) ?? 0) < 20_000) return;
+  geckoStatAt.set(key, Date.now());
+  const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${encodeURIComponent(address)}`, {
+    headers: { accept: "application/json" },
+  }).catch(() => null);
+  if (!response?.ok) {
+    const { refreshTokenCard } = await import("@/lib/dex");
+    await refreshTokenCard(symbol);
+    return;
+  }
+  const body = (await response.json()) as { data?: { attributes?: Record<string, unknown> } };
+  const attrs = body.data?.attributes ?? {};
+  const price = Number(attrs.price_usd);
+  const mcap = Number(attrs.market_cap_usd);
+  const fdv = Number(attrs.fdv_usd);
+  const liq = Number(attrs.total_reserve_in_usd);
+  const volume = attrs.volume_usd;
+  const vol = Number(typeof volume === "object" && volume ? (volume as { h24?: string }).h24 : volume);
+  if (!(price > 0)) return;
+  token.price = price;
+  if (mcap > 0) {
+    token.mcapN = mcap;
+    token.mcap = money(mcap);
+  }
+  token.fdv = fdv > 0 ? money(fdv) : mcap > 0 ? token.mcap : token.fdv;
+  if (liq > 0) {
+    token.liqN = liq;
+    token.liquidity = money(liq);
+  }
+  if (vol > 0) {
+    token.volN = vol;
+    token.volume = money(vol);
+    token.volBy = { ...token.volBy, h24: vol };
+  }
+  useDesk.setState((state) => ({ marks: { ...state.marks, [symbol]: price }, clock: state.clock + 1 }));
+}
+
 async function geckoBars(network: string, pool: string, frame: string, before?: number, limit = 1000) {
   const plan = geckoFrame(frame);
   const query = new URLSearchParams({ aggregate: String(plan.aggregate), limit: String(limit), currency: "usd" });

@@ -6,7 +6,7 @@ import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { ConfirmGate } from "@/components/terminal/ConfirmGate";
 import { borrowFromBurrow, lendDecimals, readMarketConfigs, repayOnBurrow, supplyOnBurrow, warmBurrow, withdrawFromBurrow, type MarketConfig, type RatePoint } from "@/lib/burrow";
 import { armWalletPopup, cancelNearSigning, syncWallet } from "@/lib/near-wallet";
-import { iconFor, lendIcon } from "@/lib/dex";
+import { iconFor, lendIcon, loadIconBook } from "@/lib/dex";
 import { useDesk } from "@/lib/store";
 import { cn } from "@/lib/cn";
 
@@ -76,6 +76,11 @@ export function LendDesk() {
   useEffect(() => {
     if (accountId) void syncWallet(accountId);
   }, [accountId]);
+  useEffect(() => {
+    void loadIconBook()
+      .then(() => useDesk.setState((state) => ({ clock: state.clock + 1 })))
+      .catch(() => undefined);
+  }, []);
   useLayoutEffect(() => {
     const node = scroller.current;
     if (!node) return;
