@@ -2,6 +2,7 @@ import { chainByLabel, validAddress } from "@/lib/chains";
 import { evmDexRoutes } from "@/lib/evm-dex";
 import { ensureEvmAllowance, sendEvmCall, sendSolanaSerialized } from "@/lib/foreign-wallet";
 import { executeIntent, parseUnits, quoteIntent } from "@/lib/intents";
+import { nearFunctionCall, sendNearTransactions } from "@/lib/near-wallet";
 import type { Token } from "@/lib/market";
 
 const LIFI = "https://li.quest/v1/advanced";
@@ -288,6 +289,150 @@ async function jupiterRoute(from: Token, to: Token, amount: string, sender: stri
   };
 }
 
+const DEBRIDGE = "https://deswap.debridge.finance/v1.0/dln/order";
+const DEBRIDGE_CHAIN: Record<string, number> = {
+  Ethereum: 1,
+  BNB: 56,
+  Polygon: 137,
+  Arbitrum: 42161,
+  Optimism: 10,
+  Base: 8453,
+  Avalanche: 43114,
+  Gnosis: 100,
+  Linea: 59144,
+  Scroll: 534352,
+  Solana: 7565164,
+};
+
+function debridgeAsset(token: Token) {
+  const chainId = DEBRIDGE_CHAIN[token.chain];
+  const decimals = decimalsOf(token);
+  if (!chainId || decimals == null) return null;
+  if (chainId === 7565164) {
+    const native = token.symbol.split(".")[0]?.toUpperCase() === "SOL";
+    const address = token.address && token.address.length >= 32 && !token.address.startsWith("0x") ? token.address : native ? "11111111111111111111111111111111" : "";
+    if (!address) return null;
+    return { chainId, address, decimals };
+  }
+  const native = ["ETH", "BNB", "POL", "MATIC", "AVAX"].includes(token.symbol.split(".")[0]?.toUpperCase() ?? "");
+  const address = token.address && /^0x[a-fA-F0-9]{40}$/.test(token.address) ? token.address : native ? EVM_NATIVE : "";
+  if (!address) return null;
+  return { chainId, address, decimals };
+}
+
+async function debridgeRoute(from: Token, to: Token, amount: string, sender: string, recipient: string): Promise<LiveRoute | null> {
+  const origin = debridgeAsset(from);
+  const destination = debridgeAsset(to);
+  if (!origin || !destination) return null;
+  if (origin.chainId === destination.chainId && origin.address.toLowerCase() === destination.address.toLowerCase()) return null;
+  if (!validAddress(from.chain, sender) || !validAddress(to.chain, recipient)) return null;
+  const units = parseUnits(amount, origin.decimals);
+  if (!units) return null;
+  const query = new URLSearchParams({
+    srcChainId: String(origin.chainId),
+    srcChainTokenIn: origin.address,
+    srcChainTokenInAmount: units,
+    dstChainId: String(destination.chainId),
+    dstChainTokenOut: destination.address,
+    prependOperatingExpenses: "false",
+  });
+  const quoted = await fetch(`${DEBRIDGE}/quote?${query}`);
+  if (!quoted.ok) return null;
+  const quote = (await quoted.json()) as { estimation?: { dstChainTokenOut?: { amount?: string; approximateUsdValue?: number } } };
+  const out = Number(quote.estimation?.dstChainTokenOut?.amount);
+  if (!(out > 0)) return null;
+  const receive = out / 10 ** destination.decimals;
+  const impact = gap(Number(amount) * (from.price || 0), Number(quote.estimation?.dstChainTokenOut?.approximateUsdValue) || receive * (to.price || 0));
+  return {
+    id: "debridge",
+    name: "deBridge",
+    kind: from.chain === to.chain ? "Swap" : "Bridge",
+    feeBps: Math.round(impact * 100),
+    impact,
+    receive,
+    eta: "live",
+    execute: async () => {
+      const create = new URLSearchParams(query);
+      create.set("dstChainTokenOutRecipient", recipient);
+      create.set("srcChainOrderAuthorityAddress", sender);
+      create.set("dstChainOrderAuthorityAddress", recipient);
+      const response = await fetch(`${DEBRIDGE}/create-tx?${create}`);
+      if (!response.ok) throw new Error("deBridge did not return a transaction. Nothing was sent.");
+      const body = (await response.json()) as { tx?: { to?: string; data?: string; value?: string }; errorMessage?: string };
+      if (origin.chainId === 7565164) {
+        if (!body.tx?.data) throw new Error(body.errorMessage || "deBridge did not return a Solana transaction.");
+        const hash = await sendSolanaSerialized(body.tx.data);
+        return { status: hash, amountOutHuman: receive };
+      }
+      if (!body.tx?.to || !body.tx.data) throw new Error(body.errorMessage || "deBridge did not return a transaction. Nothing was sent.");
+      const hash = await sendEvmCall(from.chain, { to: body.tx.to, data: body.tx.data, value: body.tx.value });
+      return { status: hash, amountOutHuman: receive };
+    },
+  };
+}
+
+function intearId(token: Token) {
+  if (token.chain !== "NEAR") return "";
+  const base = token.symbol.split(".")[0]?.toUpperCase() ?? "";
+  if (base === "NEAR") return "near";
+  return token.address ? `nep141:${token.address}` : "";
+}
+
+function decodeCallArgs(args: string) {
+  const text = atob(args);
+  return JSON.parse(text) as object;
+}
+
+async function intearRoute(from: Token, to: Token, amount: string, accountId: string): Promise<LiveRoute | null> {
+  const tokenIn = intearId(from);
+  const tokenOut = intearId(to);
+  const decimals = decimalsOf(from);
+  const outDecimals = decimalsOf(to);
+  if (!tokenIn || !tokenOut || tokenIn === tokenOut || decimals == null || outDecimals == null) return null;
+  const units = parseUnits(amount, decimals);
+  if (!units) return null;
+  const url = `https://router.intear.tech/route?token_in=${encodeURIComponent(tokenIn)}&token_out=${encodeURIComponent(tokenOut)}&amount_in=${units}&max_wait_ms=2500&slippage_type=Fixed&slippage=0.01`;
+  const response = await fetch(url);
+  if (!response.ok) return null;
+  const routes = (await response.json()) as {
+    estimated_amount?: { amount_out?: string };
+    dex_id?: string;
+    execution_instructions?: { NearTransaction?: { receiver_id?: string; actions?: { FunctionCall?: { method_name?: string; args?: string; gas?: number | string; deposit?: string } }[] } }[];
+  }[];
+  const best = Array.isArray(routes) ? routes.find((route) => Number(route.estimated_amount?.amount_out) > 0) : undefined;
+  if (!best?.execution_instructions?.length) return null;
+  const receive = Number(best.estimated_amount?.amount_out) / 10 ** outDecimals;
+  if (!(receive > 0)) return null;
+  return {
+    id: `intear:${best.dex_id || "rhea"}`,
+    name: best.dex_id || "Rhea",
+    kind: "Swap",
+    feeBps: 30,
+    impact: gap(Number(amount) * (from.price || 0), receive * (to.price || 0)),
+    receive,
+    eta: "live",
+    execute: async () => {
+      const fresh = await fetch(url);
+      if (!fresh.ok) throw new Error("Rhea did not return a route. Nothing was sent.");
+      const next = (await fresh.json()) as typeof routes;
+      const picked = (Array.isArray(next) ? next.find((route) => route.execution_instructions?.length) : undefined) ?? best;
+      const transactions = (picked.execution_instructions ?? []).flatMap((step) => {
+        const tx = step.NearTransaction;
+        if (!tx?.receiver_id || !tx.actions?.length) return [];
+        const actions = tx.actions.flatMap((action) => {
+          const call = action.FunctionCall;
+          if (!call?.method_name || !call.args) return [];
+          return [nearFunctionCall(call.method_name, decodeCallArgs(call.args), BigInt(call.gas ?? 30_000_000_000_000), BigInt(call.deposit || "0"))];
+        });
+        return actions.length ? [{ receiverId: tx.receiver_id, actions }] : [];
+      });
+      if (!transactions.length) throw new Error("Rhea did not return a transaction. Nothing was sent.");
+      const hash = await sendNearTransactions(accountId, transactions);
+      return { status: typeof hash === "string" ? hash : "SENT", amountOutHuman: receive };
+    },
+  };
+}
+
 async function intentsRoute(from: Token, to: Token, amount: string, accountId: string, refundTo: string, recipient: string, slippageBps: number, purpose: "Swap" | "Spot"): Promise<LiveRoute | null> {
   const quote = await quoteIntent({
     from: from.symbol,
@@ -348,15 +493,20 @@ export async function quoteRoutes(input: {
       .catch((error: unknown) => ({ route: null, error: error instanceof Error && error.message !== "timeout" ? error.message : "NEAR Intents has no quote for this pair." }));
 
   const sameKind = chainByLabel(input.from.chain)?.kind;
-  const [intents, evm, lifi, jupiter] = await Promise.all([
-    intentsJob(),
+  const usd = Number(input.amount) * (input.from.price || 0);
+  const nearPair = input.from.chain === "NEAR" && input.to.chain === "NEAR";
+  const [intents, evm, lifi, jupiter, debridge, intear] = await Promise.all([
+    usd >= 1000 ? intentsJob() : Promise.resolve({ route: null as LiveRoute | null, error: "" }),
     !cross && sameKind === "evm"
       ? timeout(evmDexRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => [] as LiveRoute[])
       : Promise.resolve([] as LiveRoute[]),
     timeout(lifiRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), cross ? 12000 : 8000).catch(() => [] as LiveRoute[]),
-    !cross ? timeout(jupiterRoute(input.from, input.to, input.amount, input.refundTo), 8000).catch(() => null) : Promise.resolve(null),
+    !cross && sameKind === "sol" ? timeout(jupiterRoute(input.from, input.to, input.amount, input.refundTo), 8000).catch(() => null) : Promise.resolve(null),
+    timeout(debridgeRoute(input.from, input.to, input.amount, input.refundTo, input.recipient), 10000).catch(() => null),
+    nearPair ? timeout(intearRoute(input.from, input.to, input.amount, input.accountId || input.refundTo), 8000).catch(() => null) : Promise.resolve(null),
   ]);
-  const routes = [...(intents.route ? [intents.route] : []), ...evm, ...lifi, ...(jupiter ? [jupiter] : [])];
-  if (!routes.length) throw new Error(intents.error || (cross ? "No route for this pair." : "No live route for this pair."));
-  return routes.sort((a, b) => Number(b.id === "intents") - Number(a.id === "intents") || a.impact - b.impact || b.receive - a.receive);
+  const routes = [...(intents.route ? [intents.route] : []), ...evm, ...lifi, ...(jupiter ? [jupiter] : []), ...(debridge ? [debridge] : []), ...(intear ? [intear] : [])];
+  const minimum = /1,000|minimum swap/i.test(intents.error);
+  if (!routes.length) throw new Error(minimum ? "No venue quoted this size. NEAR Intents currently requires $1,000, and the other exchanges did not return a route." : intents.error || (cross ? "No route for this pair." : "No live route for this pair."));
+  return routes.sort((a, b) => a.impact - b.impact || b.receive - a.receive);
 }

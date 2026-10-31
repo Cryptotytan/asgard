@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { CHAINS_META, chainByLabel } from "@/lib/chains";
-import { TOKENS } from "@/lib/market";
+import { CHAINS_META, chainByLabel, chainRpcs } from "@/lib/chains";
+import { TOKENS, ensureToken } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 import type { LinkedWallet } from "@/lib/foreign-wallet";
 
@@ -118,9 +118,10 @@ async function evmBook(address: string) {
       if (!mine.length) return;
       const native = mine.filter((token) => !/^0x[a-fA-F0-9]{40}$/.test(token.address ?? "")).sort((a, b) => b.price - a.price)[0];
       const erc20 = mine.filter((token) => /^0x[a-fA-F0-9]{40}$/.test(token.address ?? "") && token.decimals != null);
+      const rpcs = chainRpcs(chain);
       const [gas, balances] = await Promise.all([
-        native ? ethBalance(chain.rpc!, address) : Promise.resolve(0n),
-        mapPool(erc20, 6, (token) => tokenBalance(chain.rpc!, token.address!, address)),
+        native ? ethBalance(rpcs, address) : Promise.resolve(0n),
+        mapPool(erc20, 6, (token) => tokenBalance(rpcs, token.address!, address)),
       ]);
       if (native && gas > 0n) {
         const amount = Number(gas) / 10 ** (native.decimals ?? 18);
@@ -140,29 +141,64 @@ async function evmBook(address: string) {
 async function solBook(address: string) {
   const book: Record<string, number> = {};
   const tokens = listed("sol");
+  const rpcs = ["https://solana-rpc.publicnode.com", "https://api.mainnet-beta.solana.com", "https://solana.drpc.org"];
+  let rpcOk = false;
   const body = async (method: string, params: unknown[]) => {
-    const response = await fetch("https://api.mainnet-beta.solana.com", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    });
-    if (!response.ok) return null;
-    return (await response.json()) as { result?: { value?: unknown } };
+    for (const rpc of rpcs) {
+      const response = await fetch(rpc, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      }).catch(() => null);
+      if (!response?.ok) continue;
+      const parsed = (await response.json()) as { result?: { value?: unknown }; error?: unknown };
+      if (parsed.error || parsed.result == null) continue;
+      rpcOk = true;
+      return parsed;
+    }
+    return null;
   };
-  const native = tokens.filter((token) => !token.address || token.address.length < 32).sort((a, b) => b.price - a.price)[0];
+  const native = tokens.filter((token) => token.symbol.split(".")[0]?.toUpperCase() === "SOL").sort((a, b) => b.price - a.price)[0];
   const lamports = await body("getBalance", [address]);
   const sol = Number((lamports?.result?.value as number | undefined) ?? 0) / 1e9;
-  if (native && sol > 0) book[native.symbol] = sol;
+  if (sol > 0) {
+    const symbol = native?.symbol || "SOL";
+    if (!native) {
+      const created = ensureToken({ symbol: "SOL", name: "Solana", price: 0, chain: "Solana", address: "So11111111111111111111111111111111111111112" });
+      created.decimals = 9;
+      created.listed = true;
+    }
+    book[symbol] = sol;
+  }
   const programs = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"];
   const byMint = new Map(tokens.filter((token) => token.address && token.address.length >= 32).map((token) => [token.address!, token.symbol]));
+  const unknown = new Map<string, number>();
   for (const program of programs) {
     const parsed = await body("getTokenAccountsByOwner", [address, { programId: program }, { encoding: "jsonParsed" }]);
-    const rows = (parsed?.result?.value as { account?: { data?: { parsed?: { info?: { mint?: string; tokenAmount?: { uiAmount?: number } } } } } }[]) ?? [];
+    const rows = (parsed?.result?.value as { account?: { data?: { parsed?: { info?: { mint?: string; tokenAmount?: { uiAmount?: number; uiAmountString?: string } } } } } }[]) ?? [];
     for (const row of rows) {
       const info = row.account?.data?.parsed?.info;
-      const symbol = info?.mint ? byMint.get(info.mint) : undefined;
-      const amount = info?.tokenAmount?.uiAmount ?? 0;
-      if (symbol && amount > 0) book[symbol] = (book[symbol] ?? 0) + amount;
+      const amount = info?.tokenAmount?.uiAmount ?? Number(info?.tokenAmount?.uiAmountString ?? 0);
+      if (!info?.mint || !(amount > 0)) continue;
+      const symbol = byMint.get(info.mint);
+      if (symbol) book[symbol] = (book[symbol] ?? 0) + amount;
+      else unknown.set(info.mint, (unknown.get(info.mint) ?? 0) + amount);
+    }
+  }
+  if (!rpcOk) throw new Error("Solana RPC unavailable");
+  const mints = [...unknown.keys()].slice(0, 30);
+  if (mints.length) {
+    const response = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.join(",")}`).catch(() => null);
+    const pairs = response?.ok ? ((await response.json()) as { baseToken?: { address?: string; symbol?: string; name?: string }; priceUsd?: string; info?: { imageUrl?: string } }[]) : [];
+    for (const mint of mints) {
+      const pair = Array.isArray(pairs) ? pairs.find((item) => item.baseToken?.address === mint) : undefined;
+      const symbol = pair?.baseToken?.symbol?.replace(/\s/g, "") || mint.slice(0, 4);
+      const price = Number(pair?.priceUsd) || 0;
+      const token = ensureToken({ symbol, name: pair?.baseToken?.name || symbol, price, chain: "Solana", address: mint, icon: pair?.info?.imageUrl });
+      token.decimals = token.decimals ?? 6;
+      token.listed = true;
+      if (price > 0) token.price = price;
+      book[token.symbol] = (book[token.symbol] ?? 0) + (unknown.get(mint) ?? 0);
     }
   }
   return book;
@@ -179,15 +215,23 @@ async function btcBook(address: string) {
   return book;
 }
 
-async function ethBalance(rpc: string, address: string) {
-  const value = await rpcCall(rpc, "eth_getBalance", [address, "latest"]);
-  return hex(value);
+async function ethBalance(rpcs: string[], address: string) {
+  for (const rpc of rpcs) {
+    const value = await rpcCall(rpc, "eth_getBalance", [address, "latest"]);
+    const amount = hex(value);
+    if (amount > 0n) return amount;
+  }
+  return 0n;
 }
 
-async function tokenBalance(rpc: string, contract: string, address: string) {
+async function tokenBalance(rpcs: string[], contract: string, address: string) {
   const data = `0x70a08231${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
-  const value = await rpcCall(rpc, "eth_call", [{ to: contract, data }, "latest"]);
-  return hex(value);
+  for (const rpc of rpcs) {
+    const value = await rpcCall(rpc, "eth_call", [{ to: contract, data }, "latest"]);
+    const amount = hex(value);
+    if (amount > 0n) return amount;
+  }
+  return 0n;
 }
 
 async function rpcCall(rpc: string, method: string, params: unknown[]) {

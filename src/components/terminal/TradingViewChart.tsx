@@ -58,8 +58,8 @@ export function TradingViewChart({ symbol, market = "perp" }: { symbol: string; 
   }
 
   return (
-    <div className="w-full">
-      <div ref={host} className="relative h-[340px] min-h-[340px] w-full bg-black sm:h-[440px] lg:h-[560px]" />
+    <div className="relative h-[340px] min-h-[340px] w-full overflow-hidden bg-black sm:h-[440px] lg:h-[560px]">
+      <div ref={host} className="absolute inset-x-0 top-0 bg-black" style={{ height: "calc(100% + 48px)" }} />
     </div>
   );
 }

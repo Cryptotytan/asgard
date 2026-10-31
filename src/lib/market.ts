@@ -42,6 +42,7 @@ export type Token = {
   holdersN: number;
   windows: Record<WindowId, number>;
   volBy: Record<WindowId, number>;
+  txnBy?: Record<WindowId, { buys: number; sells: number }>;
   address?: string;
   assetId?: string;
   decimals?: number;

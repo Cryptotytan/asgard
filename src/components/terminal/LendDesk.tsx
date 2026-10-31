@@ -25,6 +25,8 @@ export function LendDesk() {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   useDesk((s) => s.clock);
+  const suppliedUsd = Object.entries(supplied).reduce((sum, [symbol, amount]) => sum + amount * (tokenBySymbol(symbol).price || 0), 0);
+  const debtUsd = Object.entries(loans).reduce((sum, [symbol, amount]) => sum + amount * (tokenBySymbol(symbol).price || 0), 0);
   const health = healthFactor(supplied, loans);
   const room = borrowRoom(supplied, loans);
   const n = Number(amount) || 0;
@@ -88,6 +90,7 @@ export function LendDesk() {
             <div className="rounded-xl bg-bg px-3 py-1.5">
               <p className="text-[10px] uppercase tracking-wide text-muted">Borrow room</p>
               <p className="font-mono text-base sm:text-lg">{usd(room)}</p>
+              <p className="max-w-[16rem] text-[10px] leading-snug text-muted">You can still borrow {usd(room)}. That is 70% of {usd(suppliedUsd)} supplied, minus {usd(debtUsd)} already owed.</p>
             </div>
           </div>
         </div>

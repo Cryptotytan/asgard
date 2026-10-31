@@ -34,7 +34,7 @@ export async function withdrawFromBurrow(accountId: string, token: string, amoun
         { DecreaseCollateral: { token_id: token, amount: units, max_amount: units } },
         { Withdraw: { token_id: token, amount: units, max_amount: units } },
       ],
-    }, 180_000_000_000_000n, 0n),
+    }, 180_000_000_000_000n, 1n),
   ];
   await sendNearTransactions(accountId, [{ receiverId: BURROW, actions }]);
 }
@@ -45,7 +45,7 @@ export async function borrowFromBurrow(accountId: string, token: string, amount:
   await sendNearTransactions(accountId, [
     {
       receiverId: BURROW,
-      actions: [nearCall("execute", { actions: [{ Borrow: { token_id: token, amount: units, max_amount: units } }] }, 120_000_000_000_000n, 0n)],
+      actions: [nearCall("execute", { actions: [{ Borrow: { token_id: token, amount: units, max_amount: units } }] }, 120_000_000_000_000n, 1n)],
     },
   ]);
 }
@@ -102,25 +102,34 @@ async function ftRaw(accountId: string, contractId: string) {
 }
 
 async function view(contractId: string, method: string, args: object) {
-  const response = await fetch("https://free.rpc.fastnear.com", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: "asgard",
-      method: "query",
-      params: {
-        request_type: "call_function",
-        finality: "final",
-        account_id: contractId,
-        method_name: method,
-        args_base64: btoa(JSON.stringify(args)),
-      },
-    }),
-  });
-  const body = (await response.json()) as { result?: { result?: number[] }; error?: { message?: string } };
-  if (body.error) throw new Error(body.error.message ?? "NEAR RPC error");
-  const text = new TextDecoder().decode(new Uint8Array(body.result?.result ?? [])).trim();
-  if (!text || text === "null") return null;
-  return JSON.parse(text) as unknown;
+  const urls = ["https://rpc.mainnet.near.org", "https://near.drpc.org", "https://free.rpc.fastnear.com"];
+  let last = "NEAR RPC is unreachable.";
+  for (const url of urls) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "asgard",
+        method: "query",
+        params: {
+          request_type: "call_function",
+          finality: "final",
+          account_id: contractId,
+          method_name: method,
+          args_base64: btoa(JSON.stringify(args)),
+        },
+      }),
+    }).catch(() => null);
+    if (!response?.ok) continue;
+    const body = (await response.json()) as { result?: { result?: number[] }; error?: { message?: string } };
+    if (body.error) {
+      last = /rate limit/i.test(body.error.message ?? "") ? "NEAR RPC is busy. Retry in a moment." : body.error.message ?? last;
+      continue;
+    }
+    const text = new TextDecoder().decode(new Uint8Array(body.result?.result ?? [])).trim();
+    if (!text || text === "null") return null;
+    return JSON.parse(text) as unknown;
+  }
+  throw new Error(last);
 }

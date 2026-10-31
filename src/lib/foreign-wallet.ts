@@ -4,6 +4,10 @@ import { chainById, chainByLabel, type ChainMeta } from "@/lib/chains";
 type Eip = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
   on?: (event: string, handler: (...args: unknown[]) => void) => void;
+  isMetaMask?: boolean;
+  isRabby?: boolean;
+  isZerion?: boolean;
+  providers?: Eip[];
 };
 
 type SolWallet = {
@@ -65,16 +69,70 @@ export function linkedWallets(near: string | null, foreign: ForeignWallets): Lin
   return rows;
 }
 
-function ethereum() {
-  if (typeof window === "undefined") return null;
-  const eth = (window as unknown as { ethereum?: Eip & { providers?: Eip[] } }).ethereum;
-  if (!eth) return null;
-  return eth.providers?.[0] ?? eth;
+type Announced = { info?: { rdns?: string; name?: string }; provider: Eip };
+
+const announced: Announced[] = [];
+const rdnsOf = new WeakMap<Eip, string>();
+let evmSigner: Eip | null = null;
+
+function rememberProvider(provider: Eip, rdns?: string) {
+  if (rdns) rdnsOf.set(provider, rdns);
+  return provider;
 }
 
-function solana() {
+function discoverEvm() {
+  if (typeof window === "undefined" || announced.length) return;
+  const target = window as unknown as { addEventListener: (type: string, fn: (event: Event) => void) => void; dispatchEvent: (event: Event) => boolean };
+  target.addEventListener("eip6963:announceProvider", (event) => {
+    const detail = (event as CustomEvent<Announced>).detail;
+    if (!detail?.provider) return;
+    const rdns = detail.info?.rdns ?? "";
+    if (announced.some((item) => (item.info?.rdns ?? "") === rdns && rdns)) return;
+    announced.push(detail);
+    rememberProvider(detail.provider, rdns);
+  });
+  target.dispatchEvent(new Event("eip6963:requestProvider"));
+}
+
+function evmList() {
+  discoverEvm();
+  const root = typeof window === "undefined" ? undefined : (window as unknown as { ethereum?: Eip }).ethereum;
+  const list = [...announced.map((item) => rememberProvider(item.provider, item.info?.rdns)), ...(root?.providers ?? []), ...(root ? [root] : [])];
+  return list.filter((provider, index) => list.indexOf(provider) === index);
+}
+
+function matches(provider: Eip, prefer: "metamask" | "rabby" | "zerion") {
+  const rdns = rdnsOf.get(provider) ?? "";
+  if (prefer === "rabby") return Boolean(provider.isRabby) || rdns.includes("rabby");
+  if (prefer === "zerion") return Boolean(provider.isZerion) || rdns.includes("zerion");
+  return (Boolean(provider.isMetaMask) && !provider.isRabby && !provider.isZerion) || rdns.includes("metamask");
+}
+
+function ethereum(prefer?: "metamask" | "rabby" | "zerion") {
+  const list = evmList();
+  if (!prefer) return list[0] ?? null;
+  return list.find((provider) => matches(provider, prefer)) ?? null;
+}
+
+export function signingEvm() {
+  return evmSigner ?? ethereum();
+}
+
+function solana(prefer?: "phantom" | "solflare" | "backpack") {
   if (typeof window === "undefined") return null;
-  return (window as unknown as { solana?: SolWallet }).solana ?? null;
+  const browser = window as unknown as {
+    solana?: SolWallet;
+    phantom?: { solana?: SolWallet };
+    solflare?: SolWallet;
+    backpack?: SolWallet;
+  };
+  const phantom = browser.phantom?.solana ?? (browser.solana?.isPhantom ? browser.solana : null);
+  const solflare = browser.solflare ?? null;
+  const backpack = browser.backpack ?? null;
+  if (prefer === "phantom") return phantom;
+  if (prefer === "solflare") return solflare;
+  if (prefer === "backpack") return backpack;
+  return phantom ?? solflare ?? backpack ?? browser.solana ?? null;
 }
 
 function bitcoin() {
@@ -82,9 +140,10 @@ function bitcoin() {
   return (window as unknown as { unisat?: BtcWallet }).unisat ?? null;
 }
 
-export async function connectEvm() {
-  const provider = ethereum();
-  if (!provider) throw new Error("Install MetaMask or Rabby to use an EVM chain.");
+export async function connectEvm(prefer?: "metamask" | "rabby" | "zerion") {
+  const provider = ethereum(prefer);
+  if (!provider) throw new Error(prefer ? `Install ${prefer} to connect that wallet.` : "Install MetaMask, Rabby, or Zerion.");
+  evmSigner = provider;
   const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
   const chain = (await provider.request({ method: "eth_chainId" })) as string;
   const address = accounts[0] ?? null;
@@ -97,10 +156,11 @@ export async function connectEvm() {
   return address;
 }
 
-export async function connectSol() {
-  const wallet = solana();
-  if (!wallet) throw new Error("Install Phantom to use Solana.");
-  const result = await wallet.connect();
+export async function connectSol(prefer?: "phantom" | "solflare" | "backpack") {
+  const wallet = solana(prefer);
+  if (!wallet) throw new Error(prefer ? `Install ${prefer} to connect that wallet.` : "Install Phantom, Solflare, or Backpack.");
+  const existing = wallet.publicKey?.toString();
+  const result = existing ? { publicKey: { toString: () => existing } } : await wallet.connect();
   const address = result.publicKey.toString();
   emit({ sol: address });
   return address;
@@ -272,7 +332,7 @@ export async function ensureEvmAllowance(chainLabel: string, token: string, spen
   if (!isEvmAddress(token) || token.toLowerCase() === NATIVE || !isEvmAddress(spender)) return;
   const need = BigInt(amount);
   if (need <= 0n) return;
-  const provider = ethereum();
+  const provider = signingEvm();
   if (!provider) throw new Error("Install MetaMask or Rabby. Nothing was sent.");
   const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
   const from = accounts[0];
@@ -299,7 +359,7 @@ export async function sendOriginDeposit(input: { blockchain: string; contract: s
 }
 
 async function sendEvm(meta: ChainMeta, token: string | null, to: string, amount: string) {
-  const provider = ethereum();
+  const provider = signingEvm();
   if (!provider) throw new Error("Install MetaMask or Rabby. Nothing was sent.");
   const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
   const from = accounts[0];
@@ -332,7 +392,7 @@ export async function sendEvmCall(chainLabel: string, tx: { to: string; data?: s
   const meta = chainByLabel(chainLabel);
   if (!meta || meta.kind !== "evm") throw new Error(`No EVM wallet can sign ${chainLabel}. Nothing was sent.`);
   if (!isEvmAddress(tx.to)) throw new Error("The route did not return an EVM address. Nothing was sent.");
-  const provider = ethereum();
+  const provider = signingEvm();
   if (!provider) throw new Error("Install MetaMask or Rabby. Nothing was sent.");
   const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
   const from = accounts[0];
@@ -417,50 +477,83 @@ async function sendBtc(to: string, amount: string) {
 export async function connectNamed(kind: "tron" | "ton" | "sui" | "aptos" | "xrp" | "stellar" | "starknet" | "cardano") {
   const browser = window as unknown as Record<string, unknown>;
   if (kind === "tron") {
-    const tron = browser.tronLink as { request?: (args: { method: string }) => Promise<unknown> } | undefined;
-    if (!tron?.request) throw new Error("Install TronLink.");
-    await tron.request({ method: "tron_requestAccounts" });
+    const tron = (browser.tronLink || browser.tron) as { request?: (args: { method: string }) => Promise<unknown>; ready?: boolean } | undefined;
+    if (tron?.request) await tron.request({ method: "tron_requestAccounts" });
+    else if (!browser.tronWeb) throw new Error("Install TronLink.");
     const address = (browser.tronWeb as { defaultAddress?: { base58?: string } } | undefined)?.defaultAddress?.base58;
     if (!address) throw new Error("TronLink did not return an address.");
     return address;
   }
   if (kind === "ton") {
-    const ton = (browser.tonkeeper || browser.ton) as { connect?: () => Promise<unknown> } | undefined;
+    const ton = (browser.tonkeeper || browser.ton) as { send?: (method: string) => Promise<string[] | { address?: string }>; connect?: () => Promise<{ account?: { address?: string } }> } | undefined;
+    if (ton?.send) {
+      const result = await ton.send("ton_requestAccounts");
+      const address = Array.isArray(result) ? result[0] : result?.address;
+      if (!address) throw new Error("Tonkeeper did not return an address.");
+      return address;
+    }
     if (!ton?.connect) throw new Error("Install Tonkeeper.");
-    await ton.connect();
-    return "connected";
+    const result = await ton.connect();
+    return result?.account?.address || "connected";
   }
   if (kind === "sui") {
-    const sui = (browser.suiWallet || browser.sui) as { connect?: () => Promise<unknown> } | undefined;
-    if (!sui?.connect) throw new Error("Install Sui Wallet.");
-    await sui.connect();
-    return "connected";
+    const sui = (browser.suiWallet || browser.slush || browser.sui) as {
+      connect?: () => Promise<unknown>;
+      getAccounts?: () => Promise<{ address?: string }[]>;
+      accounts?: { address?: string }[];
+    } | undefined;
+    if (!sui) throw new Error("Install Sui Wallet or Slush.");
+    if (sui.connect) await sui.connect();
+    const accounts = sui.getAccounts ? await sui.getAccounts() : sui.accounts ?? [];
+    return accounts[0]?.address || "connected";
   }
   if (kind === "aptos") {
-    const aptos = (browser.aptos || browser.petra) as { connect?: () => Promise<unknown>; account?: () => Promise<{ address?: string }> } | undefined;
+    const aptos = (browser.aptos || browser.petra) as { connect?: () => Promise<{ address?: string }>; account?: () => Promise<{ address?: string }> } | undefined;
     if (!aptos?.connect) throw new Error("Install Petra.");
-    await aptos.connect();
-    const account = aptos.account ? await aptos.account() : null;
+    const connected = await aptos.connect();
+    const account = connected?.address ? connected : aptos.account ? await aptos.account() : null;
     return account?.address || "connected";
   }
   if (kind === "stellar") {
-    const freighter = browser.freighter as { connect?: () => Promise<unknown> } | undefined;
-    if (!freighter?.connect) throw new Error("Install Freighter.");
-    await freighter.connect();
+    const freighter = (browser.freighter || browser.freighterApi) as {
+      connect?: () => Promise<unknown>;
+      getAddress?: () => Promise<{ address?: string } | string>;
+      getPublicKey?: () => Promise<string>;
+    } | undefined;
+    if (!freighter) throw new Error("Install Freighter.");
+    if (freighter.connect) await freighter.connect();
+    if (freighter.getPublicKey) return (await freighter.getPublicKey()) || "connected";
+    if (freighter.getAddress) {
+      const result = await freighter.getAddress();
+      return typeof result === "string" ? result : result.address || "connected";
+    }
     return "connected";
   }
   if (kind === "starknet") {
-    const starknet = (browser.starknet_braavos || browser.starknet) as { request?: (args: { method: string }) => Promise<unknown>; selectedAddress?: string } | undefined;
-    if (!starknet?.request) throw new Error("Install Braavos.");
+    const starknet = (browser.starknet_braavos || browser.starknet) as {
+      enable?: (options?: { showModal?: boolean }) => Promise<string[]>;
+      request?: (args: { method: string }) => Promise<unknown>;
+      selectedAddress?: string;
+    } | undefined;
+    if (!starknet) throw new Error("Install Braavos.");
+    if (starknet.enable) {
+      const accounts = await starknet.enable({ showModal: true });
+      return accounts[0] || starknet.selectedAddress || "connected";
+    }
+    if (!starknet.request) throw new Error("Install Braavos.");
     await starknet.request({ method: "wallet_requestAccounts" });
     return starknet.selectedAddress || "connected";
   }
   if (kind === "cardano") {
-    const cardano = browser.cardano as { lace?: { enable?: () => Promise<{ getUsedAddresses?: () => Promise<string[]> }> } } | undefined;
+    const cardano = browser.cardano as { lace?: { enable?: () => Promise<{ getUsedAddresses?: () => Promise<string[]>; getChangeAddress?: () => Promise<string> }> } } | undefined;
     if (!cardano?.lace?.enable) throw new Error("Install Lace.");
     const api = await cardano.lace.enable();
     const used = api.getUsedAddresses ? await api.getUsedAddresses() : [];
-    return used[0] || "connected";
+    if (used[0]) return used[0];
+    return api.getChangeAddress ? await api.getChangeAddress() : "connected";
   }
-  throw new Error("Install Xaman, then connect it from the Xaman app.");
+  const xaman = (browser.xaman || browser.xumm) as { authorize?: () => Promise<{ address?: string }> } | undefined;
+  if (!xaman?.authorize) throw new Error("Install Xaman, then connect it from the Xaman app.");
+  const session = await xaman.authorize();
+  return session.address || "connected";
 }

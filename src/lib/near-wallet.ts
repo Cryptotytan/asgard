@@ -111,7 +111,13 @@ function boot() {
         import("@near-wallet-selector/modal-ui/styles.css"),
       ]);
       const selector = await setupWalletSelector({
-        network: "mainnet",
+        network: {
+          networkId: "mainnet",
+          nodeUrl: "https://rpc.mainnet.near.org",
+          helperUrl: "https://helper.mainnet.near.org",
+          explorerUrl: "https://nearblocks.io",
+          indexerUrl: "https://api.fastnear.com/v1",
+        },
         modules: [
           here.setupHereWallet(),
           intear.setupIntearWallet(),
@@ -474,7 +480,7 @@ async function ftBalance(accountId: string, contractId: string) {
 }
 
 async function rpc(params: object) {
-  const urls = ["https://free.rpc.fastnear.com", "https://rpc.mainnet.near.org"];
+  const urls = ["https://rpc.mainnet.near.org", "https://near.drpc.org", "https://free.rpc.fastnear.com"];
   let last = "NEAR RPC is unreachable.";
   for (const url of urls) {
     try {
@@ -485,7 +491,8 @@ async function rpc(params: object) {
       });
       const body = (await response.json()) as { result?: unknown; error?: { message?: string } };
       if (body.error) {
-        last = body.error.message ?? last;
+        const message = body.error.message ?? last;
+        last = /rate limit/i.test(message) ? "NEAR RPC is busy. Retry in a moment." : message;
         continue;
       }
       if (body.result !== undefined) return body.result;

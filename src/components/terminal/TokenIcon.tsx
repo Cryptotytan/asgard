@@ -97,6 +97,7 @@ export function TokenPicker({
   open,
   balances,
   loadingBalances,
+  heldOnly = false,
   onClose,
   onPick,
 }: {
@@ -123,7 +124,8 @@ export function TokenPicker({
   const list = useMemo(
     () =>
       TOKENS.filter((token) => {
-        if (!token.listed || !Number.isFinite(token.price) || token.price <= 0) return false;
+        if (heldOnly && (balances?.[token.symbol] ?? 0) <= 0) return false;
+        if (!heldOnly && (!token.listed || !Number.isFinite(token.price) || token.price <= 0)) return false;
         if (chain !== "All" && token.chain !== chain) return false;
         if (!needle) return true;
         return `${token.symbol} ${token.name} ${token.address ?? ""}`.toLowerCase().includes(needle);
@@ -133,7 +135,7 @@ export function TokenPicker({
         if (byHold !== 0) return byHold;
         return b.volN - a.volN || b.liqN - a.liqN;
       }),
-    [balances, chain, clock, needle],
+    [balances, chain, clock, heldOnly, needle],
   );
   useEffect(() => {
     if (!open) {

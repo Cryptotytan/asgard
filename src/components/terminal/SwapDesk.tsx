@@ -402,6 +402,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
         balances={picking === "buy" ? buyHold.book : sellHold.book}
         walletKind={picking === "buy" ? buyActive?.id : sellActive?.id}
         walletName={picking === "buy" ? buyActive?.label : sellActive?.label}
+        heldOnly={picking === "sell"}
         loadingBalances={picking === "buy" ? buyHold.loading : sellHold.loading}
         onClose={() => setPicking(null)}
         onPick={(symbol) => {

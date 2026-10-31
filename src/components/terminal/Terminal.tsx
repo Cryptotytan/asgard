@@ -111,12 +111,12 @@ export function Terminal() {
     setWalletOpen(true);
   }
 
-  async function pickForeign(kind: "evm" | "sol" | "btc") {
+  async function pickForeign(kind: "evm" | "sol" | "btc", wallet?: string) {
     setWalletError("");
     try {
       const mod = await import("@/lib/foreign-wallet");
-      if (kind === "evm") await mod.connectEvm();
-      if (kind === "sol") await mod.connectSol();
+      if (kind === "evm") await mod.connectEvm(wallet as "metamask" | "rabby" | "zerion" | undefined);
+      if (kind === "sol") await mod.connectSol(wallet as "phantom" | "solflare" | "backpack" | undefined);
       if (kind === "btc") await mod.connectBtc();
       setWalletOpen(false);
     } catch (error) {
@@ -328,7 +328,7 @@ export function Terminal() {
           nearAccount={accountId}
           onClose={() => setWalletOpen(false)}
           onPick={(kind) => void pickWallet(kind)}
-          onForeign={(kind) => void pickForeign(kind)}
+          onForeign={(kind, wallet) => void pickForeign(kind, wallet)}
           onWatch={(account) => void watchAccount(account)}
           onDisconnectNear={() => disconnect()}
         />
@@ -362,7 +362,7 @@ function WalletSheet({
   nearAccount: string | null;
   onClose: () => void;
   onPick: (kind: "intear" | "here" | "meteor" | "hot" | "nightly" | "sender") => void;
-  onForeign: (kind: "evm" | "sol" | "btc") => void;
+  onForeign: (kind: "evm" | "sol" | "btc", wallet?: string) => void;
   onWatch: (account: string) => void;
   onDisconnectNear: () => void;
 }) {
@@ -378,23 +378,23 @@ function WalletSheet({
     { kind: "nightly", name: "Nightly", note: "Extension", logo: "/wallets/nightly.png" },
     { kind: "sender", name: "Sender", note: "Extension", logo: "/wallets/sender.png" },
   ];
-  const groups: { id: string; name: string; logos: string[]; connect: "evm" | "sol" | "btc" | "tron" | "ton" | "sui" | "aptos" | "xrp" | "stellar" | "starknet" | "cardano" }[] = [
-    { id: "evm", name: "EVM", logos: ["/wallets/metamask.svg", "/wallets/rabby.svg", "/wallets/zerion.svg"], connect: "evm" },
-    { id: "svm", name: "SVM", logos: ["/wallets/phantom.svg", "/wallets/solflare.svg", "/wallets/backpack.svg"], connect: "sol" },
-    { id: "btc", name: "Bitcoin", logos: ["/wallets/unisat.png"], connect: "btc" },
-    { id: "tron", name: "Tron", logos: ["/wallets/tronlink.png"], connect: "tron" },
-    { id: "ton", name: "TON", logos: ["/wallets/tonkeeper.png"], connect: "ton" },
-    { id: "sui", name: "Sui", logos: ["/wallets/sui.png"], connect: "sui" },
-    { id: "aptos", name: "Aptos", logos: ["/wallets/petra.png"], connect: "aptos" },
-    { id: "xrp", name: "XRP", logos: ["/wallets/xaman.png"], connect: "xrp" },
-    { id: "cardano", name: "Cardano", logos: ["/wallets/lace.png"], connect: "cardano" },
-    { id: "stellar", name: "Stellar", logos: ["/wallets/freighter.png"], connect: "stellar" },
-    { id: "starknet", name: "Starknet", logos: ["/wallets/braavos.png"], connect: "starknet" },
+  const groups: { id: string; name: string; logos: { src: string; wallet?: string }[]; connect: "evm" | "sol" | "btc" | "tron" | "ton" | "sui" | "aptos" | "xrp" | "stellar" | "starknet" | "cardano" }[] = [
+    { id: "evm", name: "EVM", logos: [{ src: "/wallets/metamask.svg", wallet: "metamask" }, { src: "/wallets/rabby.svg", wallet: "rabby" }, { src: "/wallets/zerion.svg", wallet: "zerion" }], connect: "evm" },
+    { id: "svm", name: "SVM", logos: [{ src: "/wallets/phantom.svg", wallet: "phantom" }, { src: "/wallets/solflare.svg", wallet: "solflare" }, { src: "/wallets/backpack.svg", wallet: "backpack" }], connect: "sol" },
+    { id: "btc", name: "Bitcoin", logos: [{ src: "/wallets/unisat.png", wallet: "unisat" }], connect: "btc" },
+    { id: "tron", name: "Tron", logos: [{ src: "/wallets/tronlink.png" }], connect: "tron" },
+    { id: "ton", name: "TON", logos: [{ src: "/wallets/tonkeeper.png" }], connect: "ton" },
+    { id: "sui", name: "Sui", logos: [{ src: "/wallets/sui.png" }], connect: "sui" },
+    { id: "aptos", name: "Aptos", logos: [{ src: "/wallets/petra.png" }], connect: "aptos" },
+    { id: "xrp", name: "XRP", logos: [{ src: "/wallets/xaman.png" }], connect: "xrp" },
+    { id: "cardano", name: "Cardano", logos: [{ src: "/wallets/lace.png" }], connect: "cardano" },
+    { id: "stellar", name: "Stellar", logos: [{ src: "/wallets/freighter.png" }], connect: "stellar" },
+    { id: "starknet", name: "Starknet", logos: [{ src: "/wallets/braavos.png" }], connect: "starknet" },
   ];
-  async function openGroup(group: (typeof groups)[number]) {
+  async function openGroup(group: (typeof groups)[number], wallet?: string) {
     setLocalError("");
     if (group.connect === "evm" || group.connect === "sol" || group.connect === "btc") {
-      onForeign(group.connect);
+      onForeign(group.connect, wallet);
       return;
     }
     try {
@@ -455,7 +455,9 @@ function WalletSheet({
                 <li key={group.id} className="flex items-center gap-3 rounded-2xl px-2 py-2">
                   <span className={`flex shrink-0 -space-x-2 ${group.logos.length > 1 ? "w-[4.5rem]" : ""}`}>
                     {group.logos.map((logo) => (
-                      <img key={logo} src={logo} alt="" className="size-8 rounded-full bg-[#171b18] object-cover ring-2 ring-[#0c0f0d]" />
+                      <button key={logo.src} type="button" aria-label={logo.wallet ?? group.name} onClick={() => void openGroup(group, logo.wallet)} className="rounded-full">
+                        <img src={logo.src} alt="" className="size-8 rounded-full bg-[#171b18] object-cover ring-2 ring-[#0c0f0d]" />
+                      </button>
                     ))}
                   </span>
                   <button type="button" onClick={() => void openGroup(group)} className="min-w-0 flex-1 text-left">

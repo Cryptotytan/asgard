@@ -26,7 +26,7 @@ import {
   type Print,
   type Token,
 } from "@/lib/market";
-import { useDesk, type Side } from "@/lib/store";
+import { useDesk, type Position, type Side } from "@/lib/store";
 import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, warmCharts, watchCandles, type HolderRow } from "@/lib/live";
 import { searchTokens, syncNearMarkets } from "@/lib/dex";
 import { logoOf } from "@/lib/logo-book";
@@ -62,6 +62,7 @@ export function TokenTrade({
 }) {
   const mark = useDesk((s) => s.marks[symbol]);
   useDesk((s) => s.clock);
+  const orders = useDesk((s) => s.orders);
   const token = tokenBySymbol(symbol);
   const [frame, setFrame] = useState<(typeof FRAMES)[number]>("15m");
   const [scale, setScale] = useState<"price" | "mcap">("price");
@@ -71,6 +72,32 @@ export function TokenTrade({
   const [chartH, setChartH] = useState(0);
 
   useEffect(() => setFrame("15m"), [symbol]);
+
+  useEffect(() => {
+    let stop = false;
+    const pull = () => {
+      if (stop) return;
+      void import("@/lib/dex").then((mod) => mod.refreshTokenCard(symbol));
+    };
+    pull();
+    const timer = window.setInterval(pull, 15_000);
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+  }, [symbol]);
+
+  const hlKey = orders.map((order) => order.hlOid ?? "").join(",");
+
+  useEffect(() => {
+    if (!hlKey) return;
+    const sync = () => {
+      void import("@/lib/hyperliquid").then((mod) => mod.syncHyperliquidOrders(useDesk.getState().orders));
+    };
+    sync();
+    const timer = window.setInterval(sync, 15_000);
+    return () => window.clearInterval(timer);
+  }, [hlKey]);
 
   useEffect(() => {
     if (!canPerp(symbol) && mode === "perp") onMode("spot");
@@ -141,13 +168,13 @@ export function TokenTrade({
             {Number.isFinite(token.change) ? `${token.change.toFixed(2)}%` : "—"}
           </span>
         </div>
-        <dl className="scroll-x hidden w-full max-w-full items-stretch overflow-x-auto sm:flex lg:ml-auto lg:w-auto lg:self-center">
-          <Stat k="Mcap" v={token.mcap} />
-          <Stat k="Price" v={px(token.price)} accent />
-          <Stat k="Liq" v={token.liquidity} />
-          <Stat k="Vol" v={token.volume} />
-          <Stat k="FDV" v={token.fdv} />
-          <Stat k="Txns" v={token.txns} />
+        <dl className="scroll-x flex w-full max-w-full items-stretch overflow-x-auto lg:ml-auto lg:w-auto lg:self-center">
+          <Stat k="Mcap" v={token.mcapN > 0 ? token.mcap : "—"} />
+          <Stat k="Price" v={px((mark ?? 0) > 0 ? mark : token.price)} accent />
+          <Stat k="Liq" v={token.liqN > 0 ? token.liquidity : "—"} />
+          <Stat k="Vol" v={token.volN > 0 ? token.volume : "—"} />
+          <Stat k="FDV" v={token.fdv || "—"} />
+          <Stat k="Txns" v={token.txnsN > 0 ? token.txns : "—"} />
           <SafetyStat token={token} />
         </dl>
       </header>
@@ -170,7 +197,7 @@ export function TokenTrade({
         </div>
         )}
         <div className={`border-t border-line lg:row-span-2 lg:row-start-1 lg:self-stretch lg:border-t-0 ${showBook ? "lg:col-start-3" : "lg:col-start-2"}`}>
-          <Ticket token={token} mode={mode} quickUsd={quickUsd} scanning={scanning} onMode={onMode} onFlash={onFlash} />
+          <Ticket token={token} mode={mode} quickUsd={quickUsd} scanning={scanning} onMode={onMode} onFlash={onFlash} onPlaced={() => setBook("Orders")} />
         </div>
         </div>
         <section className={`book-hinge order-4 border-t border-line lg:col-start-1 lg:row-start-2 lg:self-stretch lg:border-r lg:border-t-0 ${showBook ? "lg:col-span-2" : "lg:col-span-1"}`}>
@@ -426,7 +453,11 @@ function WalletTrades({ symbol }: { symbol: string }) {
 
 function OrderHistory({ symbol }: { symbol: string }) {
   const accountId = useDesk((state) => (state.connected ? state.accountId : null));
-  const rows = useTradeLog().filter((row) => accountId && (row.account === accountId || row.account === "desk" || !row.account) && row.bucket === "order" && baseOf(row.symbol) === baseOf(symbol) && row.status !== "open");
+  const rows = useTradeLog().filter((row) => {
+    if (!accountId || row.bucket !== "order" || baseOf(row.symbol) !== baseOf(symbol) || row.status === "open") return false;
+    const account = (row.account || "").toLowerCase();
+    return !account || account === "desk" || account === accountId.toLowerCase();
+  });
   if (!accountId) return <BookNote>Connect a wallet to see its orders.</BookNote>;
   if (rows.length === 0) return <BookNote>No filled or canceled orders from this wallet on {symbol} yet.</BookNote>;
   return (
@@ -499,6 +530,18 @@ function Trades({ prints, symbol }: { prints: Print[]; symbol: string }) {
   );
 }
 
+async function closeLive(position: Position, closePerp: (id: string, reason?: string) => boolean) {
+  try {
+    if (position.external) {
+      const { closeHyperliquid } = await import("@/lib/hyperliquid");
+      await closeHyperliquid({ symbol: position.base, side: position.side, size: position.size });
+    }
+    closePerp(position.id, "Closed");
+  } catch (error) {
+    useDesk.getState().log("Close failed", error instanceof Error ? error.message : "Hyperliquid rejected the close.", 0);
+  }
+}
+
 function Positions({ symbol, mark, mode }: { symbol: string; mark: number; mode: TicketMode }) {
   const balances = useDesk((s) => s.balances);
   const positions = useDesk((s) => s.positions);
@@ -506,6 +549,7 @@ function Positions({ symbol, mark, mode }: { symbol: string; mark: number; mode:
   const marks = useDesk((s) => s.marks);
   const held = balances[symbol] ?? 0;
   const [openId, setOpenId] = useState<string | null>(null);
+  const [shareId, setShareId] = useState<string | null>(null);
   const perps = [...positions].sort((a, b) => Number(b.base === symbol) - Number(a.base === symbol));
   if (mode === "spot") {
     return (
@@ -550,11 +594,14 @@ function Positions({ symbol, mark, mode }: { symbol: string; mark: number; mode:
                   <td className="px-2 py-2 font-mono">{px(price)}</td>
                   <td className="px-2 py-2 font-mono">{px(Math.max(liq, 0))}</td>
                   <td className="px-2 py-2 font-mono">{usd(position.margin)}</td>
-                  <td className={`px-2 py-2 font-mono ${up ? "text-primary" : "text-danger"}`}>{up ? "+" : ""}{usd(pnl)}</td>
+                  <td className={`px-2 py-2 font-mono ${up ? "text-primary" : "text-danger"}`}>{up ? "+" : "-"}${Math.abs(pnl).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="px-2 py-2 text-right">
-                    <button type="button" onClick={() => setOpenId(openId === position.id ? null : position.id)} className="h-8 rounded-full border border-line px-3">
-                      {openId === position.id ? "Hide" : "Manage"}
-                    </button>
+                    <span className="inline-flex shrink-0 gap-1 whitespace-nowrap">
+                      <button type="button" onClick={() => { setOpenId(position.id); setShareId(position.id); }} className="h-8 rounded-full border border-line px-3">Share</button>
+                      <button type="button" onClick={() => setOpenId(openId === position.id ? null : position.id)} className="h-8 rounded-full border border-line px-3">
+                        {openId === position.id ? "Hide" : "Manage"}
+                      </button>
+                    </span>
                   </td>
                 </tr>
               );
@@ -564,7 +611,7 @@ function Positions({ symbol, mark, mode }: { symbol: string; mark: number; mode:
       </div>
       {perps.filter((position) => position.id === openId).map((position) => (
         <div key={position.id} className="mt-3 max-w-md">
-          <PnlCard position={position} mark={marks[position.base] ?? position.entry} onClose={() => closePerp(position.id)} />
+          <PnlCard position={position} mark={marks[position.base] ?? position.entry} startShare={shareId === position.id} onClose={() => void closeLive(position, closePerp)} />
         </div>
       ))}
     </div>
@@ -765,6 +812,7 @@ function Ticket({
   scanning,
   onMode,
   onFlash,
+  onPlaced,
 }: {
   token: Token;
   mode: TicketMode;
@@ -772,6 +820,7 @@ function Ticket({
   scanning: boolean;
   onMode: (mode: TicketMode) => void;
   onFlash: (message: string) => void;
+  onPlaced: () => void;
 }) {
   const listed = canPerp(token.symbol);
   const viewMode: TicketMode = listed ? mode : "spot";
@@ -872,21 +921,53 @@ function Ticket({
       return;
     }
     const desk = useDesk.getState();
+    if (viewMode === "perp") {
+      const limit = perpType === "limit" ? Number(limitPrice) || token.price : undefined;
+      const mark = useDesk.getState().marks[token.symbol] || token.price;
+      if (!(mark > 0)) {
+        onFlash("This market has no price yet.");
+        return;
+      }
+      onFlash("Confirm the order in your EVM wallet. It settles on Hyperliquid.");
+      void import("@/lib/hyperliquid")
+        .then((mod) => mod.placeHyperliquid({ symbol: token.symbol, side: perpSide, notional: qty, mark, leverage: lev, limit, reduceOnly }))
+        .then((result) => {
+          if (result.resting) {
+            const parked = useDesk.getState().placeOrder({
+              symbol: token.symbol,
+              kind: "perp",
+              side: perpSide,
+              amount: qty,
+              limit: limit || result.price,
+              pay: "USDT",
+              receive: token.symbol,
+              base: token.symbol,
+              leverage: lev,
+              tp: Number(tp) || undefined,
+              sl: Number(sl) || undefined,
+              external: true,
+              hlOid: result.oid,
+              hlAsset: result.asset,
+            });
+            onFlash(parked ? `Limit ${perpSide} is on Hyperliquid and in Open orders.` : "Hyperliquid accepted the order, but it could not be listed here.");
+            if (parked) onPlaced();
+            return;
+          }
+          const opened = useDesk.getState().openPerp(`${token.symbol}-PERP`, token.symbol, perpSide, qty, lev, {
+            tp: Number(tp) || undefined,
+            sl: Number(sl) || undefined,
+            external: true,
+            entry: result.price,
+            size: result.size,
+          });
+          onFlash(opened ? `${perpSide} ${token.symbol}/USDT ${lev}x filled on Hyperliquid.` : "Hyperliquid filled the order, but the position could not be saved.");
+        })
+        .catch((error: unknown) => onFlash(error instanceof Error ? error.message : "Hyperliquid rejected the order. Nothing was opened."));
+      return;
+    }
     if (!desk.connected) {
       desk.connect();
       onFlash("Connect a NEAR wallet to trade.");
-      return;
-    }
-    if (viewMode === "perp") {
-      const limit = perpType === "limit" ? Number(limitPrice) || token.price : undefined;
-      const ok = useDesk.getState().openPerp(`${token.symbol}-PERP`, token.symbol, perpSide, qty, lev, {
-        tp: Number(tp) || undefined,
-        sl: Number(sl) || undefined,
-        reduceOnly,
-        limit,
-      });
-      const guards = [tp && `TP ${tp}`, sl && `SL ${sl}`, reduceOnly && "reduce-only"].filter(Boolean).join(" · ");
-      onFlash(ok ? `${limit ? "Limit " : ""}${perpSide} ${token.symbol}/USDT ${lev}x ${marginMode}${guards ? ` · ${guards}` : ""}. USDT margin is locked until this position closes.` : token.price > 0 ? "Not enough USDT margin" : "This market has no price yet.");
       return;
     }
     if (orderType === "limit") {
@@ -900,7 +981,8 @@ function Ticket({
         pay: pay.symbol,
         receive: receiveToken.symbol,
       });
-      onFlash(ok ? `Limit ${side} parked at ${fmt(limit)}. Market orders settle on NEAR Intents.` : "Not enough balance");
+      onFlash(ok ? `Limit ${side} parked at ${fmt(limit)}. It stays in Open orders until it fills or you cancel it.` : "Enter a limit price.");
+      if (ok) onPlaced();
       return;
     }
     const accountId = useDesk.getState().accountId;

@@ -766,6 +766,29 @@ export async function fillListedStats() {
   useDesk.setState((state) => ({ clock: state.clock + 1 }));
 }
 
+export async function refreshTokenCard(symbol: string) {
+  const token = TOKENS.find((item) => item.symbol === symbol);
+  if (!token) return;
+  const slug = token.chain === "NEAR" ? "near" : DEX_SLUG[token.chain];
+  const base = token.symbol.split(".")[0]?.toUpperCase() ?? "";
+  const address = token.address && !token.address.includes(":") ? token.address : NATIVE_PAIR[`${token.chain}|${base}`];
+  if (slug && address) {
+    const pairs = await getJson<DexPair[]>(`https://api.dexscreener.com/tokens/v1/${slug}/${address}`).catch(() => null);
+    if (Array.isArray(pairs) && pairs.length) {
+      applyBestPairs([{ symbol: token.symbol, address }], pairs);
+      useDesk.setState((state) => ({ clock: state.clock + 1 }));
+      return;
+    }
+  }
+  const body = await getJson<{ pairs?: DexPair[] }>(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(base)}`).catch(() => null);
+  const pairs = (body?.pairs ?? []).filter((pair) => pair.baseToken?.symbol?.toUpperCase() === base && (!slug || pair.chainId === slug));
+  const found = pairs[0]?.baseToken?.address;
+  if (!found || !pairs.length) return;
+  if (!token.address) token.address = found;
+  applyBestPairs([{ symbol: token.symbol, address: token.address || found }], pairs);
+  useDesk.setState((state) => ({ clock: state.clock + 1 }));
+}
+
 async function paintForeignStats() {
   const groups = new Map<string, { symbol: string; address: string }[]>();
   for (const token of TOKENS) {
@@ -870,6 +893,12 @@ function applyLiveStats(token: (typeof TOKENS)[number], pair: DexPair, asQuote =
   const tx = pair.txns?.h24 ?? pair.txns?.h6 ?? pair.txns?.h1;
   const buys = Math.max(0, Math.round(num(tx?.buys)));
   const sells = Math.max(0, Math.round(num(tx?.sells)));
+  const txnBy = {
+    m5: { buys: Math.round(num(pair.txns?.m5?.buys)), sells: Math.round(num(pair.txns?.m5?.sells)) },
+    h1: { buys: Math.round(num(pair.txns?.h1?.buys)), sells: Math.round(num(pair.txns?.h1?.sells)) },
+    h6: { buys: Math.round(num(pair.txns?.h6?.buys)), sells: Math.round(num(pair.txns?.h6?.sells)) },
+    h24: { buys: Math.round(num(pair.txns?.h24?.buys)), sells: Math.round(num(pair.txns?.h24?.sells)) },
+  };
   const mcapN = num(pair.marketCap) || num(pair.fdv);
   const price = num(pair.priceUsd);
   const traded = Math.max(vol.h24, vol.h6, vol.h1, vol.m5);
@@ -897,11 +926,13 @@ function applyLiveStats(token: (typeof TOKENS)[number], pair: DexPair, asQuote =
     token.buys = buys;
     token.sells = sells;
     token.txns = token.txnsN.toLocaleString("en-US");
+    token.txnBy = txnBy;
   }
   if (pair.pairCreatedAt) token.ageH = Math.max(0.05, (Date.now() - pair.pairCreatedAt) / 3_600_000);
   token.score = qualityScore(token) ?? token.score;
   const image = safeIcon(pair.info?.imageUrl);
   if (image && !asQuote) token.icon = image;
+  if (!token.verified && token.kind === "meme" && token.liqN >= 25_000 && token.ageH >= 24) token.verified = true;
 }
 
 function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {

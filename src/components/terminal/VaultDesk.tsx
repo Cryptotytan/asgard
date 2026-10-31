@@ -8,6 +8,13 @@ import { useDesk } from "@/lib/store";
 const PAY = ["USDC", "NEAR", "ETH"];
 const SHOWN = ["STNEAR", "USDC", "NEAR", "ETH"];
 
+function cleanVaultError(error: unknown) {
+  const message = error instanceof Error ? error.message : "Vault move failed.";
+  if (/rate limit|fastnear|-429|jsonrpc/i.test(message)) return "NEAR RPC is busy. Retry in a moment.";
+  if (message.trim().startsWith("{")) return "The NEAR network rejected that vault move. Retry in a moment.";
+  return message;
+}
+
 export function VaultDesk() {
   const connected = useDesk((s) => s.connected);
   const accountId = useDesk((s) => s.accountId);
@@ -77,7 +84,7 @@ export function VaultDesk() {
         setNote(`Withdrew ${fmt(result.amountOutHuman)} ${symbol}.`);
       }
     } catch (error) {
-      setNote(error instanceof Error ? error.message : "Vault move failed.");
+      setNote(cleanVaultError(error));
     } finally {
       setBusy(false);
     }

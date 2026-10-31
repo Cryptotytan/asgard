@@ -41,18 +41,23 @@ let assets: IntentAsset[] | null = null;
 
 export function parseUnits(amount: string, decimals: number): string | null {
   const cleaned = amount.trim();
-  if (!/^\d+(\.\d*)?$/.test(cleaned)) return null;
-  const [whole, frac = ""] = cleaned.split(".");
+  if (!cleaned || cleaned === ".") return null;
+  const normalized = cleaned.startsWith(".") ? `0${cleaned}` : cleaned;
+  if (!/^\d+(\.\d*)?$/.test(normalized)) return null;
+  const [whole, frac = ""] = normalized.split(".");
+  if (decimals < 0) return null;
+  if (frac.length > decimals && /[1-9]/.test(frac.slice(decimals))) return null;
   const units = `${whole}${frac.slice(0, decimals).padEnd(decimals, "0")}`.replace(/^0+/, "");
   return units || null;
 }
 
 export function formatUnits(units: string, decimals: number): number {
-  if (!units) return 0;
+  if (!/^\d+$/.test(units)) return 0;
+  if (decimals <= 0) return Number(units);
   const padded = units.padStart(decimals + 1, "0");
-  const whole = padded.slice(0, -decimals) || "0";
-  const frac = padded.slice(-decimals, -decimals + 8);
-  return Number(`${whole}.${frac}`);
+  const whole = padded.slice(0, padded.length - decimals) || "0";
+  const frac = padded.slice(padded.length - decimals).replace(/0+$/, "");
+  return Number(frac ? `${whole}.${frac}` : whole);
 }
 
 export async function loadIntentAssets(): Promise<IntentAsset[]> {
@@ -115,7 +120,13 @@ export async function quoteIntent(input: {
   const recipient = (input.recipient || input.accountId).trim();
   if (!refundTo || !recipient) throw new Error("A refund address and a receive address are required. Nothing was sent.");
   const units = parseUnits(input.amount, input.swapType === "EXACT_OUTPUT" ? destination.decimals : origin.decimals);
-  if (!units) throw new Error("Enter an amount.");
+  if (!units) {
+    const normalized = input.amount.trim().startsWith(".") ? `0${input.amount.trim()}` : input.amount.trim();
+    const frac = normalized.split(".")[1] ?? "";
+    const places = input.swapType === "EXACT_OUTPUT" ? destination.decimals : origin.decimals;
+    if (frac.length > places && /[1-9]/.test(frac.slice(places))) throw new Error(`That amount is smaller than this token allows (${places} decimals).`);
+    throw new Error("Enter an amount.");
+  }
   const response = await fetch(`${BASE}/v0/quote`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -228,7 +239,14 @@ export async function resumeIntent() {
   if (!raw) return;
   const hash = new URLSearchParams(window.location.search).get("transactionHashes")?.split(",")[0];
   if (!hash) return;
-  const pending = JSON.parse(raw) as { depositAddress: string; depositMemo?: string | null; from: string; to: string; purpose: Purpose; amountOutHuman: number };
+  let pending: { depositAddress: string; depositMemo?: string | null; from: string; to: string; purpose: Purpose; amountOutHuman: number };
+  try {
+    pending = JSON.parse(raw) as typeof pending;
+  } catch {
+    sessionStorage.removeItem(PENDING_KEY);
+    return;
+  }
+  if (!pending?.depositAddress || !pending.from || !pending.to) return;
   window.history.replaceState({}, "", window.location.pathname);
   await finishDeposit(
     { ...pending, amountIn: "0", amountOut: "0", amountInHuman: 0, amountInUsd: 0, amountOutUsd: 0, timeEstimate: 0 },
@@ -245,7 +263,11 @@ async function finishDeposit(quote: IntentQuote, txHash: string | null, purpose:
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ txHash, depositAddress: quote.depositAddress, depositMemo: quote.depositMemo || undefined }),
-    }).catch(() => undefined);
+    })
+      .then(async (response) => {
+        if (!response.ok) console.warn("NEAR Intents deposit submit failed", response.status, await response.text().catch(() => ""));
+      })
+      .catch((error) => console.warn("NEAR Intents deposit submit failed", error));
   }
   const status = quote.depositAddress ? await pollStatus(quote.depositAddress, quote.depositMemo) : "SUBMITTED";
   sessionStorage.removeItem(PENDING_KEY);

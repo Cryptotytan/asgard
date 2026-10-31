@@ -697,26 +697,9 @@ function contractOf(symbol: string, address?: string) {
 }
 
 async function evmHolders(address: string, decimals: number): Promise<HolderRow[]> {
-  const [listRes, infoRes] = await Promise.all([
-    fetch(`https://api.ethplorer.io/getTopTokenHolders/${address}?apiKey=freekey&limit=15`),
-    decimals > 0 ? Promise.resolve(null) : fetch(`https://api.ethplorer.io/getTokenInfo/${address}?apiKey=freekey`),
-  ]);
-  if (!listRes.ok) return [];
-  const list = (await listRes.json()) as { holders?: { address?: string; balance?: number; share?: number }[] };
-  let places = decimals;
-  if (!(places > 0) && infoRes && infoRes.ok) {
-    const info = (await infoRes.json()) as { decimals?: string | number };
-    places = Number(info.decimals) || 0;
-  }
-  return (list.holders ?? [])
-    .map((row) => {
-      const balance = Number(row.balance) || 0;
-      const amount = places > 0 && balance > 1e12 ? balance / 10 ** places : balance;
-      const share = Number(row.share);
-      return { account: row.address || "—", amount, share: Number.isFinite(share) ? share : null };
-    })
-    .filter((row) => row.amount > 0 || (row.share ?? 0) > 0)
-    .slice(0, 15);
+  void address;
+  void decimals;
+  return [];
 }
 
 export async function loadHolders(symbol: string, address?: string): Promise<{ rows: HolderRow[]; top10: number | null; count: number | null; bands: HolderBand[] }> {

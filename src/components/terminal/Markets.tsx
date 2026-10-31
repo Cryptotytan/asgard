@@ -212,8 +212,8 @@ export function Markets({
                   <th className="px-3 py-3 font-medium">Price</th>
                   <th className="px-3 py-3 font-medium">Token stats</th>
                   <th className="px-3 py-3 font-medium">Liquidity</th>
-                  <th className="px-3 py-3 font-medium">Volume</th>
-                  <th className="px-3 py-3 font-medium">Txns</th>
+                  <th className="px-3 py-3 font-medium">Volume {windowLabel}</th>
+                  <th className="px-3 py-3 font-medium">Txns {windowLabel}</th>
                   <th className="px-4 py-3 text-right font-medium">Buy</th>
                 </tr>
               </thead>
@@ -242,9 +242,8 @@ export function Markets({
 }
 
 function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowProps) {
-  const change = token.windows[win];
-  const volume = token.volBy?.[win] ?? token.volN;
-  const sellPct = token.txnsN ? Math.round((token.sells / token.txnsN) * 1000) / 10 : 0;
+  const { buys, sells, txns, volume, change } = windowStats(token, win);
+  const sellPct = txns ? Math.round((sells / txns) * 1000) / 10 : 0;
   return (
     <tr
       className="row-lift cursor-pointer border-b border-line hover:bg-surface"
@@ -286,15 +285,15 @@ function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowPro
         </p>
       </td>
       <td className="px-3 py-3">
-        {token.txnsN > 0 ? (
+        {txns > 0 ? (
           <>
             <p className="flex items-center gap-1.5 font-mono text-xs">
               <span className="text-muted">{token.holdersN > 0 ? compactCount(token.holdersN) : "—"}</span>
-              <span className="rounded bg-primary/15 px-1.5 py-0.5 text-primary">{compactCount(token.buys)}</span>
+              <span className="rounded bg-primary/15 px-1.5 py-0.5 text-primary">{compactCount(buys)}</span>
               <span className="rounded bg-danger/15 px-1.5 py-0.5 text-danger">{sellPct}%</span>
             </p>
             <div className="mt-1.5 h-1 w-24 overflow-hidden rounded-full bg-danger/30">
-              <div className="h-full bg-primary" style={{ width: `${(token.buys / token.txnsN) * 100}%` }} />
+              <div className="h-full bg-primary" style={{ width: `${(buys / txns) * 100}%` }} />
             </div>
           </>
         ) : (
@@ -304,7 +303,7 @@ function DesktopRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowPro
       <td className="px-3 py-3 font-mono whitespace-nowrap">{token.liqN > 0 ? money(token.liqN) : "—"}</td>
       <td className="px-3 py-3 font-mono whitespace-nowrap">{volume > 0 ? money(volume) : "—"}</td>
       <td className="px-3 py-3 font-mono whitespace-nowrap">
-        <p>{token.txnsN > 0 ? token.txnsN.toLocaleString("en-US") : "—"}</p>
+        <p>{txns > 0 ? txns.toLocaleString("en-US") : "—"}</p>
       </td>
       <td className="px-4 py-3 text-right">
         <button
@@ -327,6 +326,16 @@ function dollarStable(symbol: string) {
   return base.includes("USDT") || base.includes("USDC");
 }
 
+function windowStats(token: Token, win: WindowId) {
+  const txn = token.txnBy?.[win];
+  const buys = txn ? txn.buys : win === "h24" ? token.buys : 0;
+  const sells = txn ? txn.sells : win === "h24" ? token.sells : 0;
+  const txns = buys + sells;
+  const volume = token.volBy?.[win] ?? (win === "h24" ? token.volN : 0);
+  const change = token.windows?.[win] ?? (win === "h24" ? token.change : 0);
+  return { buys, sells, txns, volume, change };
+}
+
 function completeStats(token: Token) {
   const volume = token.volN > 0 || (token.volBy?.h24 ?? 0) > 0;
   return token.ageH > 0 && token.price > 0 && token.liqN > 0 && volume && token.txnsN > 0;
@@ -341,8 +350,7 @@ function ChainLogo({ id, className = "size-4" }: { id: string; className?: strin
 }
 
 function MobileRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowProps) {
-  const change = token.windows[win];
-  const volume = token.volBy?.[win] ?? token.volN;
+  const { txns, volume, change } = windowStats(token, win);
   return (
     <article className="row-lift border-b border-line px-3 py-2">
       <button type="button" onPointerDown={() => warmCharts(token.symbol)} onClick={onOpen} className="flex w-full items-center gap-2 text-left">
@@ -368,7 +376,7 @@ function MobileRow({ token, win, windowLabel, starred, onOpen, onSwap }: RowProp
       <div className="mt-2 flex items-center justify-between gap-2">
         <p className="min-w-0 text-[11px] leading-4 text-muted">
           <span className="block truncate">
-            {ageLabel(token.ageH)} · {token.txnsN > 0 ? `${compactCount(token.txnsN)} txns` : "— txns"}
+            {ageLabel(token.ageH)} · {txns > 0 ? `${compactCount(txns)} txns` : "— txns"}
           </span>
           <span className="block truncate">
             Liq {token.liqN > 0 ? money(token.liqN) : "—"} · Vol {volume > 0 ? money(volume) : "—"}

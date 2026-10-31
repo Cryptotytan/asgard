@@ -11,12 +11,12 @@ export type ChainMeta = {
 
 export const CHAINS_META: ChainMeta[] = [
   { id: "near", label: "NEAR", kind: "near", icon: "/tokens/near.svg" },
-  { id: "eth", label: "Ethereum", kind: "evm", chainId: 1, rpc: "https://cloudflare-eth.com", icon: "/tokens/eth.png" },
+  { id: "eth", label: "Ethereum", kind: "evm", chainId: 1, rpc: "https://ethereum-rpc.publicnode.com", icon: "/tokens/eth.png" },
   { id: "base", label: "Base", kind: "evm", chainId: 8453, rpc: "https://mainnet.base.org", icon: "/chains/base.png" },
   { id: "arb", label: "Arbitrum", kind: "evm", chainId: 42161, rpc: "https://arb1.arbitrum.io/rpc", icon: "/chains/arbitrum.png" },
   { id: "op", label: "Optimism", kind: "evm", chainId: 10, rpc: "https://mainnet.optimism.io", icon: "/chains/optimism.png" },
   { id: "bsc", label: "BNB", kind: "evm", chainId: 56, rpc: "https://bsc-dataseed.binance.org", icon: "/chains/bnb.png" },
-  { id: "pol", label: "Polygon", kind: "evm", chainId: 137, rpc: "https://polygon-rpc.com", icon: "/chains/polygon.png" },
+  { id: "pol", label: "Polygon", kind: "evm", chainId: 137, rpc: "https://polygon-bor-rpc.publicnode.com", icon: "/chains/polygon.png" },
   { id: "avax", label: "Avalanche", kind: "evm", chainId: 43114, rpc: "https://api.avax.network/ext/bc/C/rpc", icon: "/chains/avalanche.png" },
   { id: "gnosis", label: "Gnosis", kind: "evm", chainId: 100, rpc: "https://rpc.gnosischain.com", icon: "/chains/gnosis.png" },
   { id: "scroll", label: "Scroll", kind: "evm", chainId: 534352, rpc: "https://rpc.scroll.io", icon: "/chains/scroll.png" },
@@ -63,6 +63,22 @@ export function chainByLabel(label: string) {
 
 export function chainLabel(id: string) {
   return BY_ID.get(id)?.label ?? id.toUpperCase();
+}
+
+export function chainRpcs(meta: ChainMeta) {
+  const extra: Record<string, string[]> = {
+    eth: ["https://cloudflare-eth.com", "https://rpc.ankr.com/eth"],
+    base: ["https://base-rpc.publicnode.com"],
+    arb: ["https://arbitrum-one-rpc.publicnode.com"],
+    op: ["https://optimism-rpc.publicnode.com"],
+    bsc: ["https://bsc-rpc.publicnode.com"],
+    pol: ["https://polygon-bor-rpc.publicnode.com", "https://polygon.llamarpc.com"],
+    avax: ["https://avalanche-c-chain-rpc.publicnode.com"],
+    gnosis: ["https://gnosis-rpc.publicnode.com"],
+    scroll: ["https://scroll-rpc.publicnode.com"],
+    aurora: ["https://aurora.drpc.org"],
+  };
+  return [...new Set([meta.rpc, ...(extra[meta.id] ?? [])].filter((url): url is string => Boolean(url)))];
 }
 
 export function chainIcon(label: string) {

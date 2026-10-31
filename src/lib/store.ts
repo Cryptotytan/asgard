@@ -15,6 +15,7 @@ export type Position = {
   leverage: number;
   tp?: number;
   sl?: number;
+  external?: boolean;
 };
 
 export type Activity = { id: string; title: string; detail: string; value: number };
@@ -32,6 +33,10 @@ export type RestingOrder = {
   leverage?: number;
   tp?: number;
   sl?: number;
+  locked?: boolean;
+  external?: boolean;
+  hlOid?: number;
+  hlAsset?: number;
 };
 
 export type Receipt = { asset: string; amount: number };
@@ -52,6 +57,7 @@ type Desk = {
   marks: Book;
   chain: Book;
   receipts: Record<string, Receipt>;
+  adjustUsdt: number;
   realized: number;
   wins: number;
   closes: number;
@@ -65,14 +71,14 @@ type Desk = {
   log: (title: string, detail: string, value: number) => void;
   swap: (from: string, to: string, amountIn: number, amountOut: number, via: string) => boolean;
   placeOrder: (order: Omit<RestingOrder, "id">) => boolean;
-  cancelOrder: (id: string) => void;
+  cancelOrder: (id: string, status?: "canceled" | "filled") => void;
   openPerp: (
     market: string,
     base: string,
     side: Side,
     notional: number,
     leverage: number,
-    extra?: { tp?: number; sl?: number; reduceOnly?: boolean; limit?: number },
+    extra?: { tp?: number; sl?: number; reduceOnly?: boolean; limit?: number; external?: boolean; entry?: number; size?: number },
   ) => boolean;
   closePerp: (id: string, reason?: string) => boolean;
   setGuards: (id: string, guards: { tp?: number; sl?: number }) => void;
@@ -135,6 +141,7 @@ const BLANK = {
   closes: 0,
   chain: {} as Book,
   receipts: {} as Record<string, Receipt>,
+  adjustUsdt: 0,
 };
 
 type Ledger = typeof BLANK;
@@ -173,6 +180,7 @@ function snap(state: {
   closes: number;
   chain: Book;
   receipts: Record<string, Receipt>;
+  adjustUsdt: number;
 }): Ledger {
   return {
     balances: state.balances,
@@ -187,6 +195,7 @@ function snap(state: {
     closes: state.closes,
     chain: state.chain,
     receipts: state.receipts,
+    adjustUsdt: state.adjustUsdt,
   };
 }
 
@@ -208,6 +217,7 @@ function cloneLedger(raw?: Partial<Ledger> | null): Ledger {
     closes: raw?.closes ?? 0,
     chain: {},
     receipts: { ...(raw?.receipts ?? {}) },
+    adjustUsdt: raw?.adjustUsdt ?? 0,
   };
 }
 
@@ -257,7 +267,7 @@ export const useDesk = create<Desk>((set, get) => ({
     const copy = cloneBook(chain);
     const state = get();
     const locked = lockedMargin(state.positions, state.orders);
-    const usdt = Math.max(0, (copy.USDT ?? 0) - locked);
+    const usdt = Math.max(0, (copy.USDT ?? 0) + state.adjustUsdt - locked);
     set({ chain: copy, balances: { ...copy, USDT: usdt } });
   },
   setLending: (supplied, loans) => set({ supplied: cloneBook(supplied), loans: cloneBook(loans) }),
@@ -278,44 +288,61 @@ export const useDesk = create<Desk>((set, get) => ({
 
   placeOrder: (order) => {
     if (order.amount <= 0 || order.limit <= 0) return false;
-    const { balances, orders } = get();
-    if (order.kind === "spot" && (balances[order.pay] ?? 0) + 1e-9 < order.amount) return false;
-    if (order.kind === "perp") {
+    const state = get();
+    let balances = state.balances;
+    let locked = false;
+    if (order.kind === "perp" && !order.external) {
       const margin = order.amount / Math.max(order.leverage ?? 1, 1);
       const next = take(balances, "USDT", margin);
       if (!next) return false;
-      set({ balances: next, orders: [{ ...order, id: `${order.symbol}-${Date.now()}` }, ...orders].slice(0, 20) });
-      logTrade({ bucket: "order", symbol: order.base ?? order.symbol, title: `Limit ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "open", account: get().accountId });
-      return true;
+      balances = next;
+      locked = true;
+    } else if (order.kind !== "perp") {
+      const next = take(balances, order.pay, order.amount);
+      if (next) {
+        balances = next;
+        locked = true;
+      }
     }
-    set({ orders: [{ ...order, id: `${order.symbol}-${Date.now()}` }, ...orders].slice(0, 20) });
-    logTrade({ bucket: "order", symbol: order.symbol, title: `Limit ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "open", account: get().accountId });
+    const placed: RestingOrder = { ...order, id: `${order.symbol}-${Date.now()}`, locked };
+    const orders = [placed, ...state.orders];
+    const dropped = orders.slice(50);
+    for (const old of dropped) {
+      if (!old.locked) continue;
+      if (old.kind === "perp") balances = add(balances, "USDT", old.amount / Math.max(old.leverage ?? 1, 1));
+      else if (old.pay) balances = add(balances, old.pay, old.amount);
+    }
+    set({ balances, orders: orders.slice(0, 50) });
+    logTrade({ bucket: "order", symbol: order.base ?? order.symbol, title: `Limit ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "open", account: get().accountId });
     return true;
   },
 
-  cancelOrder: (id) => {
+  cancelOrder: (id, status = "canceled") => {
     const state = get();
     const order = state.orders.find((item) => item.id === id);
     if (!order) return;
     const orders = state.orders.filter((item) => item.id !== id);
+    if (order.hlOid && order.hlAsset != null && status === "canceled") {
+      void import("@/lib/hyperliquid").then((mod) => mod.cancelHyperliquid(order.hlAsset as number, order.hlOid as number)).catch(() => undefined);
+    }
+    const title = `${status === "filled" ? "Filled" : "Canceled"} ${order.side}`;
+    logTrade({ bucket: "order", symbol: order.base ?? order.symbol, title, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status, account: state.accountId });
     if (order.kind !== "perp") {
-      logTrade({ bucket: "order", symbol: order.symbol, title: `Canceled ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "canceled", account: state.accountId });
-      set({ orders });
+      set({ orders, balances: order.locked && order.pay ? add(state.balances, order.pay, order.amount) : state.balances });
       return;
     }
     const margin = order.amount / Math.max(order.leverage ?? 1, 1);
-    logTrade({ bucket: "order", symbol: order.base ?? order.symbol, title: `Canceled ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "canceled", account: state.accountId });
-    set({ orders, balances: add(state.balances, "USDT", margin) });
+    set({ orders, balances: order.locked && status !== "filled" ? add(state.balances, "USDT", margin) : state.balances });
   },
 
   openPerp: (market, base, side, notional, leverage, extra) => {
-    if (notional <= 0 || leverage < 1 || !canPerp(base)) return false;
+    if (notional <= 0 || leverage < 1 || (!extra?.external && !canPerp(base))) return false;
     const state = get();
     const mark = priceOf(base, state.marks);
     if (!(mark > 0)) return false;
     const limit = extra?.limit;
-    const marketable = !limit || (side === "long" ? mark <= limit : mark >= limit);
-    if (!marketable) {
+    const marketable = !extra?.external && (!limit || (mark > 0 && (side === "long" ? mark < limit : mark > limit)));
+    if (!marketable && !extra?.external) {
       return get().placeOrder({
         symbol: base,
         kind: "perp",
@@ -331,11 +358,11 @@ export const useDesk = create<Desk>((set, get) => ({
       });
     }
     if (extra?.reduceOnly) return reducePosition(base, side, notional);
-    const entry = limit && marketable ? limit : mark;
+    const entry = extra?.entry && extra.entry > 0 ? extra.entry : limit && marketable ? limit : mark;
     const margin = notional / leverage;
-    const nextBal = take(state.balances, "USDT", margin);
+    const nextBal = extra?.external ? state.balances : take(state.balances, "USDT", margin);
     if (!nextBal) return false;
-    const size = notional / entry;
+    const size = extra?.size && extra.size > 0 ? extra.size : notional / entry;
     const existing = state.positions.find((position) => position.base === base && position.side === side);
     const positions = existing
       ? state.positions.map((position) =>
@@ -344,7 +371,7 @@ export const useDesk = create<Desk>((set, get) => ({
                 ...position,
                 entry: (position.entry * position.size + entry * size) / (position.size + size),
                 size: position.size + size,
-                margin: position.margin + margin,
+                margin: position.margin + (extra?.external ? 0 : margin),
                 leverage,
                 tp: extra?.tp || position.tp,
                 sl: extra?.sl || position.sl,
@@ -363,6 +390,7 @@ export const useDesk = create<Desk>((set, get) => ({
             leverage,
             tp: extra?.tp,
             sl: extra?.sl,
+            external: extra?.external || undefined,
           },
           ...state.positions,
         ];
@@ -381,9 +409,11 @@ export const useDesk = create<Desk>((set, get) => ({
     if (!position) return false;
     const mark = priceOf(position.base, state.marks);
     const pnl = position.side === "long" ? (mark - position.entry) * position.size : (position.entry - mark) * position.size;
-    const back = position.margin;
+    const paper = !position.external;
+    const back = Math.max(0, position.margin + pnl);
     set({
-      balances: add(state.balances, "USDT", back),
+      balances: paper ? add(state.balances, "USDT", back) : state.balances,
+      adjustUsdt: paper ? state.adjustUsdt + pnl : state.adjustUsdt,
       positions: state.positions.filter((item) => item.id !== id),
       realized: state.realized + pnl,
       wins: state.wins + (pnl >= 0 ? 1 : 0),
@@ -579,9 +609,27 @@ export const useDesk = create<Desk>((set, get) => ({
     let closes = state.closes;
     const kept: RestingOrder[] = [];
     for (const order of orders) {
+      if (order.hlOid) {
+        kept.push(order);
+        continue;
+      }
       const mark = priceOf(order.base ?? order.symbol, marks);
-      const hit = order.side === "buy" || order.side === "long" ? mark <= order.limit : mark >= order.limit;
-      if (!hit || order.kind === "spot" || !order.base || !(order.limit > 0)) {
+      const hit = mark > 0 && (order.side === "buy" || order.side === "long" ? mark < order.limit : mark > order.limit);
+      if (!hit || !(order.limit > 0)) {
+        kept.push(order);
+        continue;
+      }
+      if (order.kind === "spot") {
+        if (!order.locked || !order.receive) {
+          kept.push(order);
+          continue;
+        }
+        const receive = order.side === "sell" ? order.amount * order.limit : order.amount / order.limit;
+        if (receive > 0) balances = add(balances, order.receive, receive);
+        logTrade({ bucket: "order", symbol: order.symbol, title: `Filled ${order.side}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "filled", account: state.accountId });
+        continue;
+      }
+      if (!order.base) {
         kept.push(order);
         continue;
       }
@@ -613,7 +661,7 @@ export const useDesk = create<Desk>((set, get) => ({
       const liquidated = position.side === "long" ? mark <= liq : mark >= liq;
       const stopped = position.sl ? (position.side === "long" ? mark <= position.sl : mark >= position.sl) : false;
       const targeted = position.tp ? (position.side === "long" ? mark >= position.tp : mark <= position.tp) : false;
-      if (!liquidated && !stopped && !targeted) {
+      if (position.external || (!liquidated && !stopped && !targeted)) {
         still.push(position);
         continue;
       }
@@ -666,9 +714,9 @@ useDesk.subscribe((state, prev) => {
 
 function lockedMargin(positions: Position[], orders: RestingOrder[]) {
   let locked = 0;
-  for (const position of positions) locked += Math.max(0, position.margin);
+  for (const position of positions) if (!position.external) locked += Math.max(0, position.margin);
   for (const order of orders) {
-    if (order.kind === "perp") locked += order.amount / Math.max(order.leverage ?? 1, 1);
+    if (order.kind === "perp" && order.locked) locked += order.amount / Math.max(order.leverage ?? 1, 1);
   }
   return locked;
 }

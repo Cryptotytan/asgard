@@ -318,7 +318,7 @@ async function fetchChain(account: string): Promise<ChainWallet> {
     ? ((await fastRes.json()) as { tokens?: { contract_id?: string; balance?: string }[]; state?: { balance?: string } })
     : null;
   let near = Number(fast?.state?.balance ?? "0") / 1e24;
-  let tokenRows = fast?.tokens ?? [];
+  const tokenRows = fast?.tokens ?? [];
   if (!fast) {
     const rpc = await fetch("https://rpc.mainnet.near.org", {
       method: "POST",
@@ -370,9 +370,28 @@ type ReceiptTxn = { transaction_hash?: string; block_timestamp?: string; receive
 type FtTxn = { transaction_hash?: string; delta_amount?: string; block_timestamp?: string; ft?: { symbol?: string; decimals?: number }; cause?: string };
 type NftTxn = { transaction_hash?: string; block_timestamp?: string; nft?: { token_id?: string }; token_id?: string; delta_amount?: string };
 
+function trimAmount(amount: number) {
+  if (amount >= 1000) return amount.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  if (amount >= 1) return amount.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+  const small = amount.toPrecision(4);
+  return small.replace(/\.?0+$/, "");
+}
+
+function ftKind(cause: string | undefined, incoming: boolean) {
+  const text = (cause || "").toLowerCase();
+  if (text.includes("swap") || text.includes("ft_transfer_call") || text.includes("execute")) return incoming ? "Swap in" : "Swap";
+  if (text.includes("bridge") || text.includes("intent")) return "Bridge";
+  if (text.includes("stake") || text.includes("lock") || text.includes("vault")) return incoming ? "Unlock" : "Lock";
+  return incoming ? "Receive" : "Send";
+}
+
 function actionKind(action?: string, method?: string) {
-  if (action === "FUNCTION_CALL") return method || "Function call";
-  if (action === "TRANSFER") return "NEAR transfer";
+  const methodName = (method || "").toLowerCase();
+  if (methodName.includes("swap") || methodName.includes("ft_transfer_call")) return "Swap";
+  if (methodName.includes("bridge") || methodName.includes("intent")) return "Bridge";
+  if (methodName.includes("stake") || methodName.includes("lock")) return "Lock";
+  if (action === "FUNCTION_CALL") return method || "Contract call";
+  if (action === "TRANSFER") return "Send NEAR";
   if (action === "STAKE") return "Stake";
   if (action === "ADD_KEY") return "Add key";
   if (action === "DELETE_KEY") return "Delete key";
@@ -416,8 +435,8 @@ function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[]): ChainF
       incoming,
       amount: Number.isFinite(amount) ? amount : 0,
       ago: time ? agoFrom(tx.block_timestamp || "0") : "—",
-      kind: incoming ? "Token in" : "Token out",
-      detail: tx.cause || "",
+      kind: ftKind(tx.cause, incoming),
+      detail: `${incoming ? "Received" : "Sent"} ${Number.isFinite(amount) ? trimAmount(amount) : 0} ${tx.ft?.symbol || "tokens"}${tx.cause ? ` · ${tx.cause}` : ""}`,
       time,
     });
   }

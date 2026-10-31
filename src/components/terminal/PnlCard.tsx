@@ -4,7 +4,7 @@ import { fmt, px, tokenBySymbol, usd } from "@/lib/market";
 import { useDesk, type Position } from "@/lib/store";
 import { PnlPoster } from "@/components/terminal/PnlPoster";
 
-export function PnlCard({ position, mark, onClose }: { position: Position; mark: number; onClose?: () => void }) {
+export function PnlCard({ position, mark, onClose, startShare = false }: { position: Position; mark: number; onClose?: () => void; startShare?: boolean }) {
   const marks = useDesk((state) => state.marks);
   const clock = useDesk((state) => state.clock);
   const live = marks[position.base] ?? marks[position.base.split(".")[0] ?? ""];
@@ -16,7 +16,10 @@ export function PnlCard({ position, mark, onClose }: { position: Position; mark:
   const up = pnl >= 0;
   const liq = position.side === "long" ? position.entry * (1 - 0.9 / position.leverage) : position.entry * (1 + 0.9 / position.leverage);
   const half = Math.min(48, Math.abs(roe) / 2);
-  const [share, setShare] = useState(false);
+  const [share, setShare] = useState(startShare);
+  useEffect(() => {
+    if (startShare) setShare(true);
+  }, [startShare, position.id]);
   const [confirm, setConfirm] = useState(false);
   const [guards, setGuardsOpen] = useState(false);
   const [tp, setTp] = useState(position.tp ? String(position.tp) : "");
@@ -194,7 +197,7 @@ function outcome(position: Position, target: number) {
 function signedUsd(n: number) {
   if (!Number.isFinite(n)) return "—";
   const abs = Math.abs(n);
-  const digits = abs >= 100 ? 2 : abs >= 1 ? 2 : abs >= 0.01 ? 4 : 6;
+  const digits = 2;
   const text = abs.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
   return `${n > 0 ? "+" : n < 0 ? "-" : ""}$${text}`;
 }
