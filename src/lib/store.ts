@@ -37,6 +37,8 @@ export type RestingOrder = {
   external?: boolean;
   hlOid?: number;
   hlAsset?: number;
+  guard?: "tp" | "sl";
+  positionId?: string;
 };
 
 export type Receipt = { asset: string; amount: number };
@@ -322,6 +324,15 @@ export const useDesk = create<Desk>((set, get) => ({
     const order = state.orders.find((item) => item.id === id);
     if (!order) return;
     const orders = state.orders.filter((item) => item.id !== id);
+    if (order.guard && order.positionId) {
+      const key = order.guard === "tp" ? "tp" : "sl";
+      logTrade({ bucket: "order", symbol: order.base ?? order.symbol, title: `Canceled ${order.guard === "tp" ? "take profit" : "stop"}`, detail: `${order.amount} @ ${order.limit}`, value: order.amount, status: "canceled", account: state.accountId });
+      set({
+        orders,
+        positions: state.positions.map((position) => (position.id === order.positionId ? { ...position, [key]: undefined } : position)),
+      });
+      return;
+    }
     if (order.hlOid && order.hlAsset != null && status === "canceled") {
       void import("@/lib/hyperliquid").then((mod) => mod.cancelHyperliquid(order.hlAsset as number, order.hlOid as number)).catch(() => undefined);
     }
@@ -415,6 +426,7 @@ export const useDesk = create<Desk>((set, get) => ({
       balances: paper ? add(state.balances, "USDT", back) : state.balances,
       adjustUsdt: paper ? state.adjustUsdt + pnl : state.adjustUsdt,
       positions: state.positions.filter((item) => item.id !== id),
+      orders: state.orders.filter((order) => order.positionId !== id),
       realized: state.realized + pnl,
       wins: state.wins + (pnl >= 0 ? 1 : 0),
       closes: state.closes + 1,
@@ -425,12 +437,18 @@ export const useDesk = create<Desk>((set, get) => ({
   },
 
   setGuards: (id, guards) => {
+    const state = get();
+    const position = state.positions.find((item) => item.id === id);
+    if (!position) return;
+    const tp = guards.tp && guards.tp > 0 ? guards.tp : undefined;
+    const sl = guards.sl && guards.sl > 0 ? guards.sl : undefined;
+    const rest = state.orders.filter((order) => order.positionId !== id);
+    const made: RestingOrder[] = [];
+    if (tp) made.push(guardOrder(position, "tp", tp));
+    if (sl) made.push(guardOrder(position, "sl", sl));
     set({
-      positions: get().positions.map((position) =>
-        position.id === id
-          ? { ...position, tp: guards.tp && guards.tp > 0 ? guards.tp : undefined, sl: guards.sl && guards.sl > 0 ? guards.sl : undefined }
-          : position,
-      ),
+      positions: state.positions.map((item) => (item.id === id ? { ...item, tp, sl } : item)),
+      orders: [...made, ...rest].slice(0, 50),
     });
   },
 
@@ -609,7 +627,7 @@ export const useDesk = create<Desk>((set, get) => ({
     let closes = state.closes;
     const kept: RestingOrder[] = [];
     for (const order of orders) {
-      if (order.hlOid) {
+      if (order.hlOid || order.guard) {
         kept.push(order);
         continue;
       }
@@ -674,6 +692,8 @@ export const useDesk = create<Desk>((set, get) => ({
       activity = push(activity, `${reason} ${position.market}`, position.side, pnl);
     }
     positions = still;
+    const live = new Set(positions.map((position) => position.id));
+    orders = orders.filter((order) => !order.positionId || live.has(order.positionId));
     const clock = state.clock + 1;
     let supplied = state.supplied;
     let loans = state.loans;
@@ -711,6 +731,24 @@ useDesk.subscribe((state, prev) => {
   }
   saveLedger(state.accountId, snap(state));
 });
+
+function guardOrder(position: Position, guard: "tp" | "sl", price: number): RestingOrder {
+  return {
+    id: `${position.id}:${guard}`,
+    symbol: position.base,
+    kind: "perp",
+    side: position.side === "long" ? "sell" : "buy",
+    amount: position.size,
+    limit: price,
+    pay: "USDT",
+    receive: position.base,
+    base: position.base,
+    leverage: position.leverage,
+    locked: false,
+    guard,
+    positionId: position.id,
+  };
+}
 
 function lockedMargin(positions: Position[], orders: RestingOrder[]) {
   let locked = 0;

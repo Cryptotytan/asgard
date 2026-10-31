@@ -597,8 +597,15 @@ function Positions({ symbol, mark, mode }: { symbol: string; mark: number; mode:
                   <td className={`px-2 py-2 font-mono ${up ? "text-primary" : "text-danger"}`}>{up ? "+" : "-"}${Math.abs(pnl).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="px-2 py-2 text-right">
                     <span className="inline-flex shrink-0 gap-1 whitespace-nowrap">
-                      <button type="button" onClick={() => { setOpenId(position.id); setShareId(position.id); }} className="h-8 rounded-full border border-line px-3">Share</button>
-                      <button type="button" onClick={() => setOpenId(openId === position.id ? null : position.id)} className="h-8 rounded-full border border-line px-3">
+                      <button type="button" onClick={() => { setShareId(position.id); setOpenId(position.id); }} className="h-8 rounded-full border border-line px-3">Share</button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShareId(null);
+                          setOpenId(openId === position.id ? null : position.id);
+                        }}
+                        className="h-8 rounded-full border border-line px-3"
+                      >
                         {openId === position.id ? "Hide" : "Manage"}
                       </button>
                     </span>
@@ -610,8 +617,14 @@ function Positions({ symbol, mark, mode }: { symbol: string; mark: number; mode:
         </table>
       </div>
       {perps.filter((position) => position.id === openId).map((position) => (
-        <div key={position.id} className="mt-3 max-w-md">
-          <PnlCard position={position} mark={marks[position.base] ?? position.entry} startShare={shareId === position.id} onClose={() => void closeLive(position, closePerp)} />
+        <div key={position.id} className="mt-3 w-full">
+          <PnlCard
+            position={position}
+            mark={marks[position.base] ?? position.entry}
+            startShare={shareId === position.id}
+            onShareClose={() => setShareId(null)}
+            onClose={() => void closeLive(position, closePerp)}
+          />
         </div>
       ))}
     </div>
@@ -620,7 +633,16 @@ function Positions({ symbol, mark, mode }: { symbol: string; mark: number; mode:
 
 function Orders({ symbol }: { symbol: string }) {
   const orders = useDesk((s) => s.orders);
+  const positions = useDesk((s) => s.positions);
   const cancelOrder = useDesk((s) => s.cancelOrder);
+  useEffect(() => {
+    const state = useDesk.getState();
+    for (const position of state.positions) {
+      const tp = state.orders.some((order) => order.positionId === position.id && order.guard === "tp");
+      const sl = state.orders.some((order) => order.positionId === position.id && order.guard === "sl");
+      if (Boolean(position.tp) !== tp || Boolean(position.sl) !== sl) state.setGuards(position.id, { tp: position.tp, sl: position.sl });
+    }
+  }, [positions, orders]);
   const list = [...orders].sort((a, b) => Number(b.symbol === symbol) - Number(a.symbol === symbol));
   if (list.length === 0) return <BookNote>No open orders. A limit stays here until the market trades through it, or you cancel it.</BookNote>;
   return (
@@ -637,7 +659,7 @@ function Orders({ symbol }: { symbol: string }) {
           {list.map((order) => (
             <tr key={order.id} className="border-b border-line">
               <td className="px-2 py-2 font-semibold">{order.symbol}/USDT</td>
-              <td className="px-2 py-2 capitalize">{order.kind} limit</td>
+              <td className="px-2 py-2 capitalize">{order.guard === "tp" ? "Take profit" : order.guard === "sl" ? "Stop loss" : `${order.kind} limit`}</td>
               <td className={`px-2 py-2 uppercase ${order.side === "buy" || order.side === "long" ? "text-primary" : "text-danger"}`}>{order.side}</td>
               <td className="px-2 py-2 font-mono">{fmt(order.limit)}</td>
               <td className="px-2 py-2 font-mono">{fmt(order.amount)}</td>

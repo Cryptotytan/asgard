@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { fmt, qty, tokenBySymbol, usd } from "@/lib/market";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { executeIntent, parseUnits } from "@/lib/intents";
@@ -25,8 +25,12 @@ export function VaultDesk() {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const staked = chain.STNEAR ?? 0;
+  const [withdrawing, setWithdrawing] = useState(false);
+  const staked = chain.STNEAR ?? chain.stNEAR ?? 0;
   const value = staked * tokenBySymbol("STNEAR").price;
+  useEffect(() => {
+    if (accountId) void syncWallet(accountId);
+  }, [accountId]);
 
   async function run(kind: "in" | "out") {
     if (!connected || !accountId) {
@@ -69,19 +73,19 @@ export function VaultDesk() {
         setAmount("");
         setNote(`Deposited into stNEAR. ${result.status}.`);
       } else {
-        const result = await executeIntent({
+        await executeIntent({
           from: "STNEAR",
-          to: symbol,
+          to: "NEAR",
           amount: String(n),
           accountId,
           purpose: "Vault withdraw",
-          swapType: "EXACT_OUTPUT",
           maxPay: staked,
         });
         if (useDesk.getState().accountId !== wallet) return;
         await syncWallet(wallet);
         setAmount("");
-        setNote(`Withdrew ${fmt(result.amountOutHuman)} ${symbol}.`);
+        setWithdrawing(false);
+        setNote(`Withdrew ${fmt(n)} stNEAR. NEAR returns to this wallet.`);
       }
     } catch (error) {
       setNote(cleanVaultError(error));
@@ -91,7 +95,7 @@ export function VaultDesk() {
   }
 
   return (
-    <div className="grid h-full min-h-0 content-center items-start gap-1.5 overflow-hidden sm:h-auto sm:content-start sm:gap-3 sm:overflow-visible lg:grid-cols-3">
+    <div className="grid h-full min-h-0 content-start items-start gap-1.5 overflow-y-auto sm:h-auto sm:gap-3 lg:grid-cols-3">
       <section className="deck panel p-2 sm:p-4 lg:col-span-2">
         <div className="flex items-end justify-between gap-3">
           <div>
@@ -102,7 +106,7 @@ export function VaultDesk() {
         <ul className="lift-deck mt-1">
           {SHOWN.map((item) => {
             const token = tokenBySymbol(item);
-            const held = item === "STNEAR" ? staked : 0;
+            const held = chain[item] ?? (item === "STNEAR" ? staked : 0);
             const on = symbol === item;
             return (
               <li key={item}>
@@ -117,7 +121,7 @@ export function VaultDesk() {
                     <TokenIcon token={token} className="size-5 sm:size-6" />
                     <div>
                       <p className="text-sm font-semibold">{token.symbol}</p>
-                      <p className="font-mono text-[10px] text-muted sm:text-xs">{item === "STNEAR" ? `${qty(held)} staked` : "pay with this"} · wallet {qty(chain[item] ?? 0)}</p>
+                      <p className="font-mono text-[10px] text-muted sm:text-xs">{qty(held)} in this wallet</p>
                     </div>
                   </div>
                   <p className="font-mono text-xs sm:text-sm">{usd(held * token.price)}</p>
@@ -152,12 +156,42 @@ export function VaultDesk() {
           <button type="button" disabled={busy} onClick={() => void run("in")} className="h-8 rounded-full bg-primary text-sm font-semibold text-primary-fg disabled:opacity-50 sm:h-10">
             {symbol === "NEAR" ? "Stake" : "Deposit"}
           </button>
-          <button type="button" disabled={busy} onClick={() => void run("out")} className="h-8 rounded-full border border-line text-sm disabled:opacity-50 sm:h-10">
+          <button type="button" disabled={busy} onClick={() => { setWithdrawing(true); setAmount(""); setNote(""); }} className="h-8 rounded-full border border-line text-sm disabled:opacity-50 sm:h-10">
             Withdraw
           </button>
         </div>
-        {note && <p className="mt-1.5 font-mono text-[11px] text-primary">{note}</p>}
+        {note && !withdrawing && <p className="mt-1.5 font-mono text-[11px] text-primary">{note}</p>}
       </section>
+      {withdrawing && (
+        <section className="deck panel p-2 sm:p-4 lg:col-span-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[10px] uppercase tracking-widest text-muted">Withdraw</p>
+            <button type="button" onClick={() => setWithdrawing(false)} className="text-xs text-muted">Close</button>
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-line bg-bg px-3 py-2">
+            <div className="flex items-center gap-2">
+              <TokenIcon token={tokenBySymbol("STNEAR")} className="size-6" />
+              <div>
+                <p className="text-sm font-semibold">stNEAR</p>
+                <p className="font-mono text-[11px] text-muted">{qty(staked)} in this wallet</p>
+              </div>
+            </div>
+            <p className="font-mono text-sm">{usd(value)}</p>
+          </div>
+          <input
+            inputMode="decimal"
+            value={amount}
+            onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))}
+            aria-label="stNEAR withdraw amount"
+            placeholder="stNEAR amount"
+            className="mt-2 h-10 w-full rounded-xl border border-line bg-bg px-3 font-mono text-sm outline-none"
+          />
+          <button type="button" disabled={busy} onClick={() => void run("out")} className="mt-2 h-10 w-full rounded-full bg-primary text-sm font-semibold text-primary-fg disabled:opacity-50">
+            {busy ? "Withdrawing…" : "Withdraw"}
+          </button>
+          {note && <p className="mt-1.5 font-mono text-[11px] text-primary">{note}</p>}
+        </section>
+      )}
     </div>
   );
 }

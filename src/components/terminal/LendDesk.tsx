@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { borrowRoom, fmt, healthFactor, LEND_MARKETS, qty, tokenBySymbol, TOKENS, usd } from "@/lib/market";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { borrowFromBurrow, repayOnBurrow, supplyOnBurrow, withdrawFromBurrow } from "@/lib/burrow";
@@ -25,6 +25,9 @@ export function LendDesk() {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   useDesk((s) => s.clock);
+  useEffect(() => {
+    if (accountId) void syncWallet(accountId);
+  }, [accountId]);
   const suppliedUsd = Object.entries(supplied).reduce((sum, [symbol, amount]) => sum + amount * (tokenBySymbol(symbol).price || 0), 0);
   const debtUsd = Object.entries(loans).reduce((sum, [symbol, amount]) => sum + amount * (tokenBySymbol(symbol).price || 0), 0);
   const health = healthFactor(supplied, loans);

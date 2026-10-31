@@ -6,15 +6,18 @@ const BURROW = "contract.main.burrow.near";
 const MIN_STORAGE = 100_000_000_000_000_000_000_000n;
 
 export async function readBurrow(accountId: string) {
-  const result = (await view(BURROW, "get_account", { account_id: accountId })) as {
-    supplied?: { token_id?: string; balance?: string }[];
-    collateral?: { token_id?: string; balance?: string }[];
-    borrowed?: { token_id?: string; balance?: string }[];
-  } | null;
+  const [result, extra] = await Promise.all([
+    view(BURROW, "get_account", { account_id: accountId }) as Promise<{
+      supplied?: { token_id?: string; balance?: string }[];
+      collateral?: { token_id?: string; balance?: string }[];
+      borrowed?: { token_id?: string; balance?: string }[];
+    } | null>,
+    extraDecimals(),
+  ]);
   const supplied: Record<string, number> = {};
   const borrowed: Record<string, number> = {};
-  for (const row of [...(result?.supplied ?? []), ...(result?.collateral ?? [])]) add(supplied, row.token_id, row.balance);
-  for (const row of result?.borrowed ?? []) add(borrowed, row.token_id, row.balance);
+  for (const row of [...(result?.supplied ?? []), ...(result?.collateral ?? [])]) add(supplied, row.token_id, row.balance, extra);
+  for (const row of result?.borrowed ?? []) add(borrowed, row.token_id, row.balance, extra);
   return { supplied, borrowed };
 }
 
@@ -79,16 +82,45 @@ async function sendToken(accountId: string, token: string, units: string, msg: s
   await sendNearTransactions(accountId, txs);
 }
 
-function add(book: Record<string, number>, tokenId: string | undefined, balance: string | undefined) {
+const TOKEN_DECIMALS: Record<string, number> = {
+  "wrap.near": 24,
+  "meta-pool.near": 24,
+  "usdt.tether-token.near": 6,
+  "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": 6,
+  "eth.bridge.near": 18,
+  "2260fac5e5542a773aa44fbcfedf7c193bc2c599.factory.bridge.near": 8,
+  "aaaaaa20d9e0e2461697782ef11675f668207961.factory.bridge.near": 18,
+};
+
+let extraCache: Record<string, number> | null = null;
+
+async function extraDecimals() {
+  if (extraCache) return extraCache;
+  const rows = (await view(BURROW, "get_assets_paged", { from_index: 0, limit: 200 })) as
+    | [string, { config?: { extra_decimals?: number } }][]
+    | null;
+  const book: Record<string, number> = {};
+  for (const row of rows ?? []) {
+    const id = row?.[0]?.toLowerCase();
+    if (!id) continue;
+    book[id] = Number(row[1]?.config?.extra_decimals) || 0;
+  }
+  extraCache = book;
+  return book;
+}
+
+function add(book: Record<string, number>, tokenId: string | undefined, balance: string | undefined, extra: Record<string, number>) {
   if (!tokenId || !balance) return;
-  const token = TOKENS.find((item) => item.address?.toLowerCase() === tokenId.toLowerCase());
-  const decimals = token?.decimals ?? (tokenId === "wrap.near" || tokenId === "meta-pool.near" ? 24 : 18);
+  const id = tokenId.toLowerCase();
+  const token = TOKENS.find((item) => item.address?.toLowerCase() === id);
+  const base = TOKEN_DECIMALS[id] ?? token?.decimals ?? 18;
+  const decimals = base + (extra[id] ?? 0);
   const pad = balance.padStart(decimals + 1, "0");
   const whole = pad.slice(0, -decimals) || "0";
   const frac = pad.slice(-decimals).slice(0, 8).replace(/0+$/, "");
   const amount = Number(frac ? `${whole}.${frac}` : whole);
   if (!(amount > 0)) return;
-  const symbol = token?.symbol ?? (tokenId === "wrap.near" ? "NEAR" : tokenId);
+  const symbol = token?.symbol ?? (id === "wrap.near" ? "NEAR" : tokenId);
   book[symbol] = (book[symbol] ?? 0) + amount;
 }
 
