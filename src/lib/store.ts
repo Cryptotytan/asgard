@@ -723,7 +723,7 @@ function lockedMargin(positions: Position[], orders: RestingOrder[]) {
 
 function reducePosition(base: string, side: Side, notional: number) {
   const state = useDesk.getState();
-  const position = state.positions.find((item) => item.base === base && item.side !== side);
+  const position = state.positions.find((item) => item.base === base && item.side !== side && !item.external);
   if (!position) return false;
   const mark = priceOf(base, state.marks);
   const closing = Math.min(position.size, notional / mark);
