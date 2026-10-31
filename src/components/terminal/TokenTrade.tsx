@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ChevronDown, Copy, Search, ShieldAlert } from "lucide-react";
 import { TradingViewChart } from "@/components/terminal/TradingViewChart";
-import { DexToolsChart } from "@/components/terminal/DexToolsChart";
+import { CandleChart } from "@/components/terminal/CandleChart";
 import { tradingViewPerp, tradingViewSpot } from "@/lib/tv";
 import { LiveBook } from "@/components/terminal/LiveBook";
 import { SecurityGate } from "@/components/terminal/SecurityGate";
@@ -28,7 +28,7 @@ import {
   type Token,
 } from "@/lib/market";
 import { useDesk, type Position, type Side } from "@/lib/store";
-import { candleMeta, liveCandles, livePrints, loadHolders, loadOlderCandles, loadPrints, warmCharts, watchCandles, type HolderRow } from "@/lib/live";
+import { candleMeta, liveCandles, loadHolders, loadOlderCandles, warmCharts, watchCandles, type HolderRow } from "@/lib/live";
 import { searchTokens, syncNearMarkets } from "@/lib/dex";
 import { logoOf } from "@/lib/logo-book";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
@@ -72,7 +72,10 @@ export function TokenTrade({
   const chartPane = useRef<HTMLElement>(null);
   const [chartH, setChartH] = useState(0);
 
-  useEffect(() => setFrame("15m"), [symbol]);
+  useEffect(() => {
+    setFrame("15m");
+    setScale("price");
+  }, [symbol]);
 
   useEffect(() => {
     let stop = false;
@@ -123,29 +126,24 @@ export function TokenTrade({
     observer.observe(node);
     return () => observer.disconnect();
   }, [symbol, tvChart]);
-  const last = scale === "price" ? (mark ?? token.price) : token.mcapN;
-  const series = scale === "price" ? liveCandles(symbol, frame) : undefined;
+  const quoted = mark ?? 0;
+  const priceNow = quoted > 0 ? quoted : token.price;
+  const mcapMode = scale === "mcap" && priceNow > 0 && token.mcapN > 0;
+  const ratio = mcapMode ? token.mcapN / priceNow : 1;
+  const rawSeries = liveCandles(symbol, frame);
+  const series = useMemo(() => {
+    if (!rawSeries || ratio === 1) return rawSeries;
+    return rawSeries.map((bar) => ({ t: bar.t, o: bar.o * ratio, h: bar.h * ratio, l: bar.l * ratio, c: bar.c * ratio }));
+  }, [rawSeries, ratio]);
   const history = candleMeta(symbol, frame);
   const needOlder = useCallback(() => {
-    if (scale !== "price") return;
     void loadOlderCandles(symbol, frame);
-  }, [symbol, frame, scale]);
-  const bars = series && series.length > 1 ? series : [];
-  const open = bars[0] ?? { o: last, h: last, l: last, c: last };
-  const close = bars[bars.length - 1] ?? open;
-  const high = bars.length ? Math.max(...bars.map((bar) => bar.h)) : last;
-  const low = bars.length ? Math.min(...bars.map((bar) => bar.l)) : last;
-  const delta = close.c - open.o;
-  const prints = livePrints(symbol) ?? [];
+  }, [symbol, frame]);
+  const last = mcapMode ? token.mcapN : priceNow;
   useEffect(() => {
     warmCharts(symbol);
-    if (scale !== "price") return;
     return watchCandles(symbol, frame);
-  }, [symbol, frame, scale]);
-  useEffect(() => {
-    if (scale !== "price") return;
-    void loadPrints(symbol).catch(() => undefined);
-  }, [symbol, scale]);
+  }, [symbol, frame]);
 
   return (
     <div className="flex flex-col lg:block">
@@ -185,7 +183,48 @@ export function TokenTrade({
           {tvChart ? (
             <TradingViewChart symbol={symbol} market={deskMode} />
           ) : (
-            <DexToolsChart token={token} />
+            <div className="bg-black">
+              <div className="flex items-center gap-2 border-b border-line px-2 py-1.5">
+                <div className="scroll-x flex min-w-0 flex-1 gap-0.5 overflow-x-auto">
+                  {FRAMES.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => setFrame(item)}
+                      className={`h-7 shrink-0 rounded px-2 text-[11px] font-semibold ${frame === item ? "bg-surface-2 text-fg" : "text-muted"}`}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex shrink-0 rounded-md bg-surface p-0.5 text-[10px] font-semibold">
+                  <button type="button" onClick={() => setScale("price")} className={`h-6 rounded px-2 ${mcapMode ? "text-muted" : "bg-surface-2 text-fg"}`}>
+                    Price
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!(token.mcapN > 0)}
+                    title="Market cap is this same price history times the current supply. It cannot draw a move the price did not make."
+                    onClick={() => setScale("mcap")}
+                    className={`h-6 rounded px-2 ${mcapMode ? "bg-surface-2 text-fg" : "text-muted"} disabled:opacity-40`}
+                  >
+                    MCap
+                  </button>
+                </div>
+              </div>
+              <CandleChart
+                seed={`${symbol}-${frame}`}
+                last={last}
+                live={last > 0 ? last : undefined}
+                frame={frame}
+                compact={mcapMode}
+                series={series}
+                historyEnded={history.exhausted}
+                historyTick={history.from}
+                onNeedHistory={needOlder}
+                className="h-[304px] sm:h-[404px] lg:h-[524px]"
+              />
+            </div>
           )}
         </section>
         <div className={showBook ? "order-2 grid grid-cols-2 items-start lg:contents" : "order-2 lg:contents"}>

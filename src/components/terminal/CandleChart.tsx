@@ -34,6 +34,7 @@ export function CandleChart({
   historyTick = 0,
   onHover,
   onNeedHistory,
+  className,
 }: {
   seed: string;
   last: number;
@@ -45,6 +46,7 @@ export function CandleChart({
   historyTick?: number;
   onHover?: (hover: ChartHover | null) => void;
   onNeedHistory?: () => void;
+  className?: string;
 }) {
   const all = series && series.length > 1 ? series : [];
   const [span, setSpan] = useState<number | null>(null);
@@ -216,7 +218,8 @@ export function CandleChart({
   const rawMin = data.length ? Math.min(...data.map((candle) => candle.l)) : 0;
   const rawSpan = rawMax - rawMin || Math.abs(rawMax) * 0.02 || 1;
   const baseMax = rawMax + rawSpan * 0.08;
-  const baseMin = rawMin - rawSpan * 0.08;
+  let baseMin = rawMin - rawSpan * 0.08;
+  if (rawMin >= 0 && baseMin < 0) baseMin = 0;
   const mid = (baseMax + baseMin) / 2;
   const half = (baseMax - baseMin) / 2 / yScale;
   const max = mid + half + yShift * (baseMax - baseMin);
@@ -409,7 +412,7 @@ export function CandleChart({
   }
 
   if (all.length < 2) {
-    return <div className="grid h-80 place-items-center px-6 text-center text-sm text-muted">Loading price history…</div>;
+    return <div className={`grid place-items-center px-6 text-center text-sm text-muted ${className || "h-80"}`}>Loading price history…</div>;
   }
 
   const timeMarks = [0, 0.25, 0.5, 0.75, 1];
@@ -417,7 +420,7 @@ export function CandleChart({
   return (
     <div
       ref={frameRef}
-      className="chart-frame relative h-80 touch-none overflow-hidden outline-none select-none sm:h-[28rem]"
+      className={`chart-frame relative touch-none overflow-hidden outline-none select-none ${className || "h-80 sm:h-[28rem]"}`}
       onKeyDown={key}
       onPointerLeave={leave}
       tabIndex={0}
