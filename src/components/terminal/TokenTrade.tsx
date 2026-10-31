@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ChevronDown, Copy, Search, ShieldAlert } from "lucide-react";
 import { TradingViewChart } from "@/components/terminal/TradingViewChart";
-import { CandleChart } from "@/components/terminal/CandleChart";
+import { GeckoChart } from "@/components/terminal/GeckoChart";
 import { tradingViewPerp, tradingViewSpot } from "@/lib/tv";
 import { LiveBook } from "@/components/terminal/LiveBook";
 import { SecurityGate } from "@/components/terminal/SecurityGate";
@@ -28,7 +28,7 @@ import {
   type Token,
 } from "@/lib/market";
 import { useDesk, type Position, type Side } from "@/lib/store";
-import { candleMeta, liveCandles, loadHolders, loadOlderCandles, warmCharts, watchCandles, type HolderRow } from "@/lib/live";
+import { loadHolders, warmCharts, type HolderRow } from "@/lib/live";
 import { searchTokens, syncNearMarkets } from "@/lib/dex";
 import { logoOf } from "@/lib/logo-book";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
@@ -66,7 +66,6 @@ export function TokenTrade({
   const orders = useDesk((s) => s.orders);
   const token = tokenBySymbol(symbol);
   const [frame, setFrame] = useState<(typeof FRAMES)[number]>("15m");
-  const [scale, setScale] = useState<"price" | "mcap">("price");
   const [book, setBook] = useState<(typeof BOOKS)[number]>("Trades");
   const scanning = false;
   const chartPane = useRef<HTMLElement>(null);
@@ -74,7 +73,6 @@ export function TokenTrade({
 
   useEffect(() => {
     setFrame("15m");
-    setScale("price");
   }, [symbol]);
 
   useEffect(() => {
@@ -115,7 +113,7 @@ export function TokenTrade({
 
   const deskMode: TicketMode = canPerp(symbol) ? mode : "spot";
   const plotted = deskMode === "perp" ? tradingViewPerp(symbol) : tradingViewSpot(symbol);
-  const tvChart = Boolean(plotted);
+  const tvChart = token.kind !== "meme" && Boolean(plotted);
   const showBook = Boolean(tradingViewSpot(symbol) || tradingViewPerp(symbol));
   useEffect(() => {
     const node = chartPane.current;
@@ -126,24 +124,6 @@ export function TokenTrade({
     observer.observe(node);
     return () => observer.disconnect();
   }, [symbol, tvChart]);
-  const quoted = mark ?? 0;
-  const priceNow = quoted > 0 ? quoted : token.price;
-  const mcapMode = scale === "mcap" && priceNow > 0 && token.mcapN > 0;
-  const ratio = mcapMode ? token.mcapN / priceNow : 1;
-  const rawSeries = liveCandles(symbol, frame);
-  const series = useMemo(() => {
-    if (!rawSeries || ratio === 1) return rawSeries;
-    return rawSeries.map((bar) => ({ t: bar.t, o: bar.o * ratio, h: bar.h * ratio, l: bar.l * ratio, c: bar.c * ratio }));
-  }, [rawSeries, ratio]);
-  const history = candleMeta(symbol, frame);
-  const needOlder = useCallback(() => {
-    void loadOlderCandles(symbol, frame);
-  }, [symbol, frame]);
-  const last = mcapMode ? token.mcapN : priceNow;
-  useEffect(() => {
-    warmCharts(symbol);
-    return watchCandles(symbol, frame);
-  }, [symbol, frame]);
 
   return (
     <div className="flex flex-col lg:block">
@@ -197,33 +177,9 @@ export function TokenTrade({
                     </button>
                   ))}
                 </div>
-                <div className="flex shrink-0 rounded-md bg-surface p-0.5 text-[10px] font-semibold">
-                  <button type="button" onClick={() => setScale("price")} className={`h-6 rounded px-2 ${mcapMode ? "text-muted" : "bg-surface-2 text-fg"}`}>
-                    Price
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!(token.mcapN > 0)}
-                    title="Market cap is this same price history times the current supply. It cannot draw a move the price did not make."
-                    onClick={() => setScale("mcap")}
-                    className={`h-6 rounded px-2 ${mcapMode ? "bg-surface-2 text-fg" : "text-muted"} disabled:opacity-40`}
-                  >
-                    MCap
-                  </button>
-                </div>
+                <span className="shrink-0 text-[10px] font-semibold text-muted">GeckoTerminal · Price</span>
               </div>
-              <CandleChart
-                seed={`${symbol}-${frame}`}
-                last={last}
-                live={last > 0 ? last : undefined}
-                frame={frame}
-                compact={mcapMode}
-                series={series}
-                historyEnded={history.exhausted}
-                historyTick={history.from}
-                onNeedHistory={needOlder}
-                className="h-[304px] sm:h-[404px] lg:h-[524px]"
-              />
+              <GeckoChart key={`${token.chain}:${token.address || token.symbol}:${frame}`} token={token} frame={frame} />
             </div>
           )}
         </section>

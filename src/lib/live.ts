@@ -1,4 +1,4 @@
-import { ensureToken, isCanonical, isMajorAsset, isVerifiedAsset, LEND_MARKETS, money, qualityScore, TOKENS, type Candle, type Print } from "@/lib/market";
+import { ensureToken, isCanonical, isMajorAsset, isVerifiedAsset, LEND_MARKETS, money, qualityScore, TOKENS, type Candle, type LendMarket, type Print } from "@/lib/market";
 import { iconFor, geckoIdFor, knownPool, loadIconBook, refreshDexMarkets, syncNearMarkets, applyIconBook, fillListedStats } from "@/lib/dex";
 import { syncPerpMarkets } from "@/lib/perps";
 import { useDesk } from "@/lib/store";
@@ -153,11 +153,72 @@ function toCandles(points: Point[]): Candle[] {
   });
 }
 
-async function rheaRows() {
-  const response = await fetch(RHEA);
-  if (!response.ok) return [] as RheaRow[];
-  const body = (await response.json()) as { data?: RheaRow[] };
-  return body.data ?? [];
+let rheaFlight: Promise<RheaRow[]> | null = null;
+let rheaAt = 0;
+
+function rheaRows() {
+  if (rheaFlight && Date.now() - rheaAt < 8_000) return rheaFlight;
+  rheaAt = Date.now();
+  rheaFlight = (async () => {
+    const response = await fetch(RHEA);
+    if (!response.ok) return [] as RheaRow[];
+    const body = (await response.json()) as { data?: RheaRow[] };
+    return body.data ?? [];
+  })();
+  return rheaFlight;
+}
+
+function indexRhea(rows: RheaRow[]) {
+  const book = new Map<string, RheaRow>();
+  for (const row of rows) {
+    const raw = row.symbol ?? "";
+    if (!raw || !row.token) continue;
+    const symbol = canon(raw);
+    if (raw.includes("$") && symbol !== "META") continue;
+    book.set(symbol, row);
+  }
+  return book;
+}
+
+function paintLend(book: Map<string, RheaRow>) {
+  const lend: LendMarket[] = [...book.entries()]
+    .map(([symbol, row]) => ({
+      symbol,
+      ticker: row.symbol || symbol,
+      token: row.token,
+      supplyApy: Number(row.supply_apy) || 0,
+      borrowApy: Number(row.borrow_apy) || 0,
+      price: Number(row.price) || 0,
+      supplied: Number(row.total_supplied_balance) || 0,
+      suppliedUsd: Number(row.total_supplied_price) || 0,
+      borrowed: Number(row.total_burrow_balance) || 0,
+      borrowedUsd: Number(row.total_burrow_price) || 0,
+      available: Number(row.available_liquidity_balance) || 0,
+      availableUsd: Number(row.available_liquidity_price) || 0,
+    }))
+    .filter((market) => Boolean(market.token) && (market.suppliedUsd > 0 || market.supplyApy > 0 || market.borrowApy > 0))
+    .sort((a, b) => b.suppliedUsd - a.suppliedUsd);
+  if (!lend.length) return false;
+  LEND_MARKETS.splice(0, LEND_MARKETS.length, ...lend);
+  try {
+    sessionStorage.setItem("asgard-lend-v1", JSON.stringify(lend));
+  } catch {
+    /* private mode */
+  }
+  return true;
+}
+
+function restoreLend() {
+  if (LEND_MARKETS.length || typeof sessionStorage === "undefined") return;
+  try {
+    const raw = sessionStorage.getItem("asgard-lend-v1");
+    if (!raw) return;
+    const lend = JSON.parse(raw) as LendMarket[];
+    if (!Array.isArray(lend) || !lend[0]?.token) return;
+    LEND_MARKETS.splice(0, LEND_MARKETS.length, ...lend);
+  } catch {
+    /* ignore a bad cache */
+  }
 }
 
 async function nearCap() {
@@ -452,6 +513,10 @@ async function geckoPool(network: string, address: string, expect = 0, remember 
     void job.finally(() => poolFlight.delete(key));
   }
   return job;
+}
+
+export function geckoNetwork(chain: string) {
+  return GECKO_NET[chain] ?? "";
 }
 
 async function geckoBars(network: string, pool: string, frame: string, before?: number, limit = 1000) {
@@ -813,16 +878,12 @@ async function refreshMarkets() {
     publish(batch);
   }).catch(() => ({}) as Record<string, number>);
 
-  const [rows, spots, icons] = await Promise.all([rheaPromise, spotPromise, iconsPromise]);
+  const rows = await rheaPromise;
+  const rheaBySymbol = indexRhea(rows);
+  if (paintLend(rheaBySymbol)) publish(marks);
+
+  const [spots, icons] = await Promise.all([spotPromise, iconsPromise]);
   applyIconBook(icons);
-  const rheaBySymbol = new Map<string, RheaRow>();
-  for (const row of rows) {
-    const raw = row.symbol ?? "";
-    if (!raw || !row.token) continue;
-    const symbol = canon(raw);
-    if (raw.includes("$") && symbol !== "META") continue;
-    rheaBySymbol.set(symbol, row);
-  }
   for (const [symbol, row] of rheaBySymbol) {
     const price = Number(row.price);
     if (!Number.isFinite(price) || price <= 0) continue;
@@ -842,24 +903,6 @@ async function refreshMarkets() {
     marks[token.symbol] = price;
   }
   const capPromise = nearCap().catch(() => 0);
-  const lend = [...rheaBySymbol.entries()]
-    .map(([symbol, row]) => ({
-      symbol,
-      ticker: row.symbol || symbol,
-      token: row.token,
-      supplyApy: Number(row.supply_apy) || 0,
-      borrowApy: Number(row.borrow_apy) || 0,
-      price: Number(row.price) || 0,
-      supplied: Number(row.total_supplied_balance) || 0,
-      suppliedUsd: Number(row.total_supplied_price) || 0,
-      borrowed: Number(row.total_burrow_balance) || 0,
-      borrowedUsd: Number(row.total_burrow_price) || 0,
-      available: Number(row.available_liquidity_balance) || 0,
-      availableUsd: Number(row.available_liquidity_price) || 0,
-    }))
-    .filter((market) => Boolean(market.token) && (market.suppliedUsd > 0 || market.supplyApy > 0 || market.borrowApy > 0))
-    .sort((a, b) => b.suppliedUsd - a.suppliedUsd);
-  if (lend.length) LEND_MARKETS.splice(0, LEND_MARKETS.length, ...lend);
   const [dexMarks, freshIcons, cap] = await Promise.all([dexPromise, iconsPromise, capPromise]);
   Object.assign(marks, dexMarks);
   if (cap > 0) {
@@ -1007,6 +1050,7 @@ let started = false;
 export function startLiveFeed() {
   if (started || typeof window === "undefined") return;
   started = true;
+  restoreLend();
   const run = () => {
     void refreshLive().catch(() => undefined);
   };
@@ -1024,4 +1068,13 @@ export function startLiveFeed() {
     void loadCandles("NEAR", "15m").catch(() => undefined);
     void loadCandles("NEAR", "5m").catch(() => undefined);
   }, 400);
+}
+
+if (typeof window !== "undefined") {
+  restoreLend();
+  void rheaRows()
+    .then((rows) => {
+      if (paintLend(indexRhea(rows))) publish({});
+    })
+    .catch(() => undefined);
 }

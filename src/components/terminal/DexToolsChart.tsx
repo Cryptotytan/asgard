@@ -64,44 +64,45 @@ function sameAddress(left: string, right: string) {
   return left === right;
 }
 
+function bareAddress(raw: string) {
+  return raw.trim().replace(/^(nep141:|nep245:)/i, "");
+}
+
 export function DexToolsChart({ token }: { token: Token }) {
   const chain = FROM_LABEL[token.chain] ?? "";
-  const pool = token.address ? knownPool(token.chain, token.address) : "";
-  const [src, setSrc] = useState(() => (chain && pool ? frame(chain, pool) : ""));
+  const address = bareAddress(token.address ?? "");
+  const pool = address ? knownPool(token.chain, address) : "";
+  const [src, setSrc] = useState("");
   const [miss, setMiss] = useState(false);
 
   useEffect(() => {
     let cancel = false;
-    const key = `asgard-dextools:v3:${token.chain}:${token.address || token.symbol}`;
-    const ready = chain && pool ? frame(chain, pool) : sessionStorage.getItem(key) || "";
+    const hinted = chain && address && pool ? frame(chain, pool) : "";
     setMiss(false);
-    setSrc(ready);
-    if (ready) return;
+    setSrc(hinted);
+    if (!address || address.includes(" ") || address.includes(":")) {
+      if (!hinted) setMiss(true);
+      return;
+    }
+    const key = `asgard-dextools:v4:${token.chain}:${address}`;
     void (async () => {
-      const address = token.address && !token.address.includes(" ") ? token.address : "";
-      const url = address
-        ? `https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(address)}`
-        : `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(token.symbol.split(".")[0] || token.symbol)}`;
-      const response = await fetch(url).catch(() => null);
-      if (!response?.ok || cancel) {
-        if (!cancel) setMiss(true);
+      const response = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(address)}`).catch(() => null);
+      if (cancel) return;
+      if (!response?.ok) {
+        if (!hinted) setMiss(true);
         return;
       }
       const body = (await response.json()) as { pairs?: Pair[] } | Pair[];
       const pairs = Array.isArray(body) ? body : body.pairs ?? [];
-      const wanted = (token.symbol.split(".")[0] || token.symbol).toUpperCase();
       const ranked = pairs
         .filter((pair) => pair.pairAddress && FROM_SLUG[pair.chainId ?? ""])
         .filter((pair) => !chain || FROM_SLUG[pair.chainId ?? ""] === chain)
-        .filter((pair) => {
-          if (address) return sameAddress(pair.baseToken?.address ?? "", address);
-          return pair.baseToken?.symbol?.toUpperCase() === wanted;
-        })
+        .filter((pair) => sameAddress(pair.baseToken?.address ?? "", address))
         .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
       const pair = ranked[0];
       const nextChain = pair ? FROM_SLUG[pair.chainId ?? ""] : "";
       if (!pair?.pairAddress || !nextChain) {
-        if (!cancel) setMiss(true);
+        if (!hinted && !cancel) setMiss(true);
         return;
       }
       const next = frame(nextChain, pair.pairAddress);
@@ -111,7 +112,7 @@ export function DexToolsChart({ token }: { token: Token }) {
     return () => {
       cancel = true;
     };
-  }, [chain, pool, token.address, token.chain, token.symbol]);
+  }, [address, chain, pool, token.symbol]);
 
   if (!src) {
     return (

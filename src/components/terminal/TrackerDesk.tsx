@@ -43,12 +43,10 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
   const [form, setForm] = useState(blank);
   const [walletOpen, setWalletOpen] = useState(false);
   const [tokenOpen, setTokenOpen] = useState(false);
-  const [folderDraft, setFolderDraft] = useState("");
   const [active, setActive] = useState<string | null>(null);
   const [range, setRange] = useState<"1D" | "7D" | "30D" | "1Y">("30D");
   const [pane, setPane] = useState<"balances" | "performance" | "activity">("balances");
   const [spam, setSpam] = useState(false);
-  const [research, setResearch] = useState("");
   const [chainRev, setChainRev] = useState(0);
   const [statsRev, setStatsRev] = useState(0);
   const watchedKey = data.tokens.join("|");
@@ -223,7 +221,7 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
                 const value = live ? `${(live.usdt ?? live.value).toFixed(2)} USDT` : "Reading…";
                 return (
                   <li key={item.id}>
-                    <button type="button" onClick={() => { setActive(item.id); setResearch(""); }} className="w-full rounded-2xl border border-line bg-surface p-3 text-left">
+                    <button type="button" onClick={() => setActive(item.id)} className="w-full rounded-2xl border border-line bg-surface p-3 text-left">
                       <span className="flex items-center gap-3">
                         <i className="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-sm font-bold text-primary-fg not-italic">{item.name.slice(0, 1).toUpperCase()}</i>
                         <span className="min-w-0 flex-1">
@@ -255,7 +253,7 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
                   {data.wallets.map((item) => {
                     const live = peekChain(item.address);
                     return (
-                      <tr key={item.id} className="cursor-pointer border-b border-line hover:bg-surface" onClick={() => { setActive(item.id); setResearch(""); }}>
+                      <tr key={item.id} className="cursor-pointer border-b border-line hover:bg-surface" onClick={() => setActive(item.id)}>
                         <td className="px-3 py-2.5">
                           <span className="flex items-center gap-2">
                             <i className="grid size-8 place-items-center rounded-full bg-primary text-xs font-bold text-black not-italic">{item.name.slice(0, 1).toUpperCase()}</i>
@@ -291,11 +289,9 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
             range={range}
             pane={pane}
             spam={spam}
-            research={research}
             onRange={setRange}
             onPane={setPane}
             onSpam={setSpam}
-            onResearch={() => setResearch(`${wallet.name} is a watched NEAR account. Balances and transfers are read from the chain.`)}
             onTrade={onTrade}
             onBack={() => setActive(null)}
           />
@@ -377,15 +373,6 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
           <Field label="Name">
             <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Whale #1" className="mt-1.5 h-12 w-full rounded-2xl border border-line bg-surface px-3 text-sm outline-none focus:border-primary" />
           </Field>
-          <Field label="Folder">
-            <div className="mt-1.5 flex flex-wrap gap-2">
-              <button type="button" onClick={() => setForm({ ...form, folder: "" })} className={`h-9 rounded-full px-3 text-xs ${form.folder === "" ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>None</button>
-              {data.folders.map((folder) => (
-                <button key={folder} type="button" onClick={() => setForm({ ...form, folder })} className={`h-9 rounded-full px-3 text-xs ${form.folder === folder ? "bg-primary font-semibold text-primary-fg" : "bg-surface text-muted ring-1 ring-line ring-inset"}`}>{folder}</button>
-              ))}
-              <input value={folderDraft} onChange={(event) => setFolderDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && folderDraft.trim()) { setForm({ ...form, folder: folderDraft.trim() }); setFolderDraft(""); } }} placeholder="New folder" className="h-9 w-28 rounded-full border border-line bg-surface px-3 text-xs outline-none focus:border-primary" />
-            </div>
-          </Field>
           <Field label="Labels">
             <div className="mt-1.5 flex flex-wrap gap-1.5">
               {LABELS.map((label) => {
@@ -437,17 +424,15 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
 }
 
 function WalletDetail({
-  wallet, range, pane, spam, research, onRange, onPane, onSpam, onResearch, onTrade, onBack,
+  wallet, range, pane, spam, onRange, onPane, onSpam, onTrade, onBack,
 }: {
   wallet: TrackedWallet;
   range: "1D" | "7D" | "30D" | "1Y";
   pane: "balances" | "performance" | "activity";
   spam: boolean;
-  research: string;
   onRange: (range: "1D" | "7D" | "30D" | "1Y") => void;
   onPane: (pane: "balances" | "performance" | "activity") => void;
   onSpam: (value: boolean) => void;
-  onResearch: () => void;
   onTrade: (symbol: string) => void;
   onBack: () => void;
 }) {
@@ -469,10 +454,8 @@ function WalletDetail({
           {(["1D", "7D", "30D", "1Y"] as const).map((item) => (
             <button key={item} type="button" onClick={() => onRange(item)} className={`h-9 rounded-full px-3 text-xs ${range === item ? "bg-primary text-black" : "bg-bg text-muted"}`}>{item}</button>
           ))}
-          <button type="button" onClick={onResearch} className="h-9 rounded-full border border-line px-3 text-xs">AI research</button>
         </div>
       </div>
-      {research && <p className="rounded-2xl border border-line bg-surface px-4 py-3 text-sm text-muted">{research}</p>}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Stat k="Total value" v={live ? usd(live.value) : "…"} />
         <Stat k="Holdings" v={live ? String(live.holdings.length) : "…"} />
@@ -570,10 +553,9 @@ function ActivityTable({ rows, empty = "No recent account activity." }: { rows: 
           {rows.map((row) => {
             const hash = row.hash || "";
             const signer = row.by || "";
-            const tokens = row.tokens?.length ? row.tokens : [row.symbol];
-            const programs = row.programs?.filter(Boolean) ?? [];
-            const near = row.symbol === "NEAR" && row.amount > 0 ? row.amount : row.value ?? 0;
-            const extra = row.extra ?? 0;
+            const legs = row.legs?.filter((leg) => leg.amount > 0) ?? [];
+            const programs = (row.programs?.filter(Boolean) ?? []).filter((program, index, all) => all.indexOf(program) === index);
+            const near = row.value ?? 0;
             return (
               <tr key={row.id} className="hover:bg-white/[0.03]">
                 <td className="border-b border-line px-3 py-3">
@@ -594,9 +576,8 @@ function ActivityTable({ rows, empty = "No recent account activity." }: { rows: 
                 <td className="whitespace-nowrap border-b border-line px-3 py-3 text-muted">{row.ago}</td>
                 <td className="border-b border-line px-3 py-3">
                   <span className="inline-flex items-center gap-2">
-                    <Mark symbol={tokens[0] || "NEAR"} />
+                    <Mark symbol={legs[0]?.symbol || row.symbol || "NEAR"} />
                     <span className="font-medium">{titleCase(row.kind)}</span>
-                    {extra > 0 && <Count n={extra} />}
                   </span>
                 </td>
                 <td className="border-b border-line px-3 py-3">
@@ -611,30 +592,38 @@ function ActivityTable({ rows, empty = "No recent account activity." }: { rows: 
                   </span>
                 </td>
                 <td className="border-b border-line px-3 py-3">
-                  <span className="inline-flex items-center">
-                    {tokens.slice(0, 3).map((symbol, index) => (
-                      <span key={`${row.id}-${symbol}`} className={index === 0 ? "" : "-ml-1.5"}>
-                        <Mark symbol={symbol} />
-                      </span>
-                    ))}
-                    {tokens.length > 1 && <span className="ml-1.5"><Count n={tokens.length - 1} /></span>}
-                  </span>
+                  {legs.length === 0 ? (
+                    <span className="text-muted">—</span>
+                  ) : (
+                    <span className="flex flex-col gap-1">
+                      {legs.map((leg) => (
+                        <span key={`${row.id}-${leg.symbol}`} className="inline-flex items-center gap-1.5">
+                          <Mark symbol={leg.symbol} />
+                          <span className="font-mono">{amountText(leg.amount)} {leg.symbol}</span>
+                        </span>
+                      ))}
+                    </span>
+                  )}
                 </td>
                 <td className="border-b border-line px-3 py-3">
                   <span className="inline-flex items-center gap-1.5 font-mono">
                     <Mark symbol="NEAR" />
-                    {near > 0 ? qty(near) : "—"}
+                    {near > 0 ? amountText(near) : "—"}
                   </span>
                 </td>
                 <td className="border-b border-line px-3 py-3">
-                  <span className="inline-flex items-center">
-                    {(programs.length ? programs : [row.detail]).filter(Boolean).slice(0, 3).map((program, index) => (
-                      <span key={`${row.id}-p-${program}`} title={program} className={`grid size-5 place-items-center rounded-full bg-surface-2 text-[9px] font-bold uppercase ring-2 ring-bg ${index === 0 ? "" : "-ml-1.5"}`}>
-                        {(program.split(".")[0] || "?").slice(0, 1)}
-                      </span>
-                    ))}
-                    {programs.length > 1 && <span className="ml-1.5"><Count n={programs.length - 1} /></span>}
-                  </span>
+                  {programs.length === 0 ? (
+                    <span className="text-muted">—</span>
+                  ) : (
+                    <span className="flex flex-col gap-1">
+                      {programs.map((program) => (
+                        <span key={`${row.id}-p-${program}`} title={program} className="inline-flex items-center gap-1.5 font-mono text-xs">
+                          <span className="grid size-5 shrink-0 place-items-center rounded-full bg-surface-2 text-[9px] font-bold uppercase">{(program.split(".")[0] || "?").slice(0, 1)}</span>
+                          {program}
+                        </span>
+                      ))}
+                    </span>
+                  )}
                 </td>
               </tr>
             );
@@ -645,15 +634,18 @@ function ActivityTable({ rows, empty = "No recent account activity." }: { rows: 
   );
 }
 
+function amountText(n: number) {
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  if (n >= 1000) return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
+  if (n >= 1) return n.toLocaleString("en-US", { maximumFractionDigits: 6 });
+  return n.toLocaleString("en-US", { maximumSignificantDigits: 6 });
+}
+
 function Mark({ symbol }: { symbol: string }) {
   const key = symbol.toLowerCase();
   const token = TOKENS.find((item) => item.symbol.toLowerCase() === key || item.symbol.split(".")[0]?.toLowerCase() === key);
   if (token?.icon) return <TokenIcon token={token} className="size-5 ring-2 ring-bg" />;
   return <span className="grid size-5 place-items-center rounded-full bg-surface-2 text-[9px] font-bold ring-2 ring-bg">{(symbol || "?").slice(0, 1)}</span>;
-}
-
-function Count({ n }: { n: number }) {
-  return <span className="rounded-full bg-primary/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-primary">+{n}</span>;
 }
 
 function shortId(value: string, head: number, tail: number) {

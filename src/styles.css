@@ -151,6 +151,25 @@
     transform: rotate(180deg);
   }
 
+  .yaw-scene {
+    perspective: 1100px;
+  }
+
+  .yaw-swap {
+    transform: rotateY(0deg);
+    transform-origin: center;
+    transition: transform 0.28s ease;
+  }
+
+  .yaw-swap.is-out {
+    transform: rotateY(90deg);
+  }
+
+  .yaw-swap.is-in {
+    transform: rotateY(-90deg);
+    transition: none;
+  }
+
   .stage {
     animation: deal 0.34s cubic-bezier(0.2, 0, 0, 1);
   }

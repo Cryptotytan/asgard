@@ -27,6 +27,7 @@ export function VaultDesk() {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
+  const [turn, setTurn] = useState<"idle" | "out" | "in">("idle");
   const [flight, setFlight] = useState<{ title: string; detail: string } | null>(null);
   const flightGen = useRef(0);
   const staked = chain.STNEAR ?? chain.stNEAR ?? 0;
@@ -115,6 +116,20 @@ export function VaultDesk() {
     setNote("Cancelled.");
   }
 
+  function flipFunds(next: boolean) {
+    if (turn !== "idle" || next === withdrawing) return;
+    setTurn("out");
+    window.setTimeout(() => {
+      setWithdrawing(next);
+      setAmount("");
+      setNote("");
+      setTurn("in");
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => setTurn("idle"));
+      });
+    }, 280);
+  }
+
   return (
     <div className="grid h-full min-h-0 content-start items-start gap-1.5 overflow-y-auto sm:h-auto sm:gap-3 lg:grid-cols-3">
       <section className="deck panel p-2 sm:p-4 lg:col-span-2">
@@ -152,67 +167,72 @@ export function VaultDesk() {
           })}
         </ul>
       </section>
-      <section className="deck panel p-2 sm:p-4">
-        <p className="text-[10px] uppercase tracking-widest text-muted">Move funds</p>
-        <div className="mt-1.5 flex gap-1.5">
-          {PAY.map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setSymbol(item)}
-              className={`h-8 flex-1 rounded-full text-xs sm:h-10 sm:text-sm ${symbol === item ? "bg-primary text-primary-fg" : "border border-line text-muted"}`}
-            >
-              {item}
-            </button>
-          ))}
-        </div>
-        <input
-          inputMode="decimal"
-          value={amount}
-          onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))}
-          aria-label="Vault amount"
-          className="mt-1.5 h-8 w-full rounded-xl border border-line bg-bg px-3 font-mono text-sm outline-none sm:mt-3 sm:h-10 sm:rounded-2xl"
-        />
-        <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-          <button type="button" disabled={busy} onClick={() => void run("in")} className="h-8 rounded-full bg-primary text-sm font-semibold text-primary-fg disabled:opacity-50 sm:h-10">
-            {symbol === "NEAR" ? "Stake" : "Deposit"}
-          </button>
-          <button type="button" disabled={busy} onClick={() => { setWithdrawing(true); setAmount(""); setNote(""); }} className="h-8 rounded-full border border-line text-sm disabled:opacity-50 sm:h-10">
-            Withdraw
-          </button>
-        </div>
-        {note && !withdrawing && <p className="mt-1.5 font-mono text-[11px] text-primary">{note}</p>}
-      </section>
-      {withdrawing && (
-        <section className="deck panel p-2 sm:p-4 lg:col-span-3">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[10px] uppercase tracking-widest text-muted">Withdraw</p>
-            <button type="button" onClick={() => setWithdrawing(false)} className="text-xs text-muted">Close</button>
-          </div>
-          <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-line bg-bg px-3 py-2">
-            <div className="flex items-center gap-2">
-              <TokenIcon token={tokenBySymbol("STNEAR")} className="size-6" />
-              <div>
-                <p className="text-sm font-semibold">stNEAR</p>
-                <p className="font-mono text-[11px] text-muted">{qty(staked)} in this wallet</p>
-              </div>
+      <section className="yaw-scene deck panel p-2 sm:p-4">
+        <div className={`yaw-swap ${turn === "out" ? "is-out" : turn === "in" ? "is-in" : ""}`}>
+        {withdrawing ? (
+          <>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[10px] uppercase tracking-widest text-muted">Withdraw</p>
+              <button type="button" onClick={() => flipFunds(false)} className="text-xs text-muted">Back</button>
             </div>
-            <p className="font-mono text-sm">{usd(value)}</p>
-          </div>
-          <input
-            inputMode="decimal"
-            value={amount}
-            onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))}
-            aria-label="stNEAR withdraw amount"
-            placeholder="stNEAR amount"
-            className="mt-2 h-10 w-full rounded-xl border border-line bg-bg px-3 font-mono text-sm outline-none"
-          />
-          <button type="button" disabled={busy} onClick={() => void run("out")} className="mt-2 h-10 w-full rounded-full bg-primary text-sm font-semibold text-primary-fg disabled:opacity-50">
-            {busy ? "Withdrawing…" : "Withdraw"}
-          </button>
-          {note && <p className="mt-1.5 font-mono text-[11px] text-primary">{note}</p>}
-        </section>
-      )}
+            <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-line bg-bg px-3 py-2">
+              <div className="flex items-center gap-2">
+                <TokenIcon token={tokenBySymbol("STNEAR")} className="size-6" />
+                <div>
+                  <p className="text-sm font-semibold">stNEAR</p>
+                  <p className="font-mono text-[11px] text-muted">{qty(staked)} in this wallet</p>
+                </div>
+              </div>
+              <p className="font-mono text-sm">{usd(value)}</p>
+            </div>
+            <input
+              inputMode="decimal"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))}
+              aria-label="stNEAR withdraw amount"
+              placeholder="stNEAR amount"
+              className="mt-2 h-10 w-full rounded-xl border border-line bg-bg px-3 font-mono text-sm outline-none"
+            />
+            <button type="button" disabled={busy} onClick={() => void run("out")} className="mt-2 h-10 w-full rounded-full bg-primary text-sm font-semibold text-primary-fg disabled:opacity-50">
+              {busy ? "Withdrawing…" : "Withdraw"}
+            </button>
+            {note && <p className="mt-1.5 font-mono text-[11px] text-primary">{note}</p>}
+          </>
+        ) : (
+          <>
+            <p className="text-[10px] uppercase tracking-widest text-muted">Move funds</p>
+            <div className="mt-1.5 flex gap-1.5">
+              {PAY.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setSymbol(item)}
+                  className={`h-8 flex-1 rounded-full text-xs sm:h-10 sm:text-sm ${symbol === item ? "bg-primary text-primary-fg" : "border border-line text-muted"}`}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+            <input
+              inputMode="decimal"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))}
+              aria-label="Vault amount"
+              className="mt-1.5 h-8 w-full rounded-xl border border-line bg-bg px-3 font-mono text-sm outline-none sm:mt-3 sm:h-10 sm:rounded-2xl"
+            />
+            <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+              <button type="button" disabled={busy} onClick={() => void run("in")} className="h-8 rounded-full bg-primary text-sm font-semibold text-primary-fg disabled:opacity-50 sm:h-10">
+                {symbol === "NEAR" ? "Stake" : "Deposit"}
+              </button>
+              <button type="button" disabled={busy} onClick={() => flipFunds(true)} className="h-8 rounded-full border border-line text-sm disabled:opacity-50 sm:h-10">
+                Withdraw
+              </button>
+            </div>
+            {note && <p className="mt-1.5 font-mono text-[11px] text-primary">{note}</p>}
+          </>
+        )}
+        </div>
+      </section>
       {flight && <ConfirmGate title={flight.title} detail={flight.detail} onDismiss={dismissFlight} />}
     </div>
   );

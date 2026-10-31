@@ -142,6 +142,7 @@ export function fillsOf(wallets: TrackedWallet[]): Fill[] {
 }
 
 export type ChainHolding = { symbol: string; amount: number; usd: number; share: number; contract?: string };
+export type ChainLeg = { symbol: string; amount: number };
 export type ChainFill = {
   id: string;
   symbol: string;
@@ -157,6 +158,7 @@ export type ChainFill = {
   programs?: string[];
   value?: number;
   extra?: number;
+  legs?: ChainLeg[];
 };
 export type ChainWallet = { value: number; usdt: number; holdings: ChainHolding[]; trades: number; txCount: number; ago: string; fills: ChainFill[] };
 
@@ -383,9 +385,69 @@ async function fetchChain(account: string): Promise<ChainWallet> {
   return next;
 }
 
-type ReceiptTxn = { transaction_hash?: string; block_timestamp?: string; receiver_account_id?: string; predecessor_account_id?: string; actions?: { action?: string; method?: string }[] };
-type FtTxn = { transaction_hash?: string; delta_amount?: string; block_timestamp?: string; ft?: { symbol?: string; decimals?: number }; cause?: string };
-type NftTxn = { transaction_hash?: string; block_timestamp?: string; nft?: { token_id?: string }; token_id?: string; delta_amount?: string };
+type ReceiptTxn = {
+  transaction_hash?: string;
+  block_timestamp?: string;
+  receiver_account_id?: string;
+  predecessor_account_id?: string;
+  actions?: { action?: string; method?: string; deposit?: string | number; args?: string | null }[];
+};
+type FtTxn = {
+  transaction_hash?: string;
+  delta_amount?: string;
+  block_timestamp?: string;
+  cause?: string;
+  ft?: { contract?: string; symbol?: string; decimals?: number };
+};
+type NftTxn = { transaction_hash?: string; block_timestamp?: string; nft?: { contract?: string; token_id?: string }; token_id?: string; delta_amount?: string };
+
+function yoctoToNear(raw: string | number | undefined) {
+  if (raw == null || raw === "" || raw === 0 || raw === "0") return 0;
+  if (typeof raw === "number") return Number.isFinite(raw) && raw > 0 ? raw / 1e24 : 0;
+  const text = raw.trim();
+  if (!/^\d+$/.test(text)) return 0;
+  if (text.length <= 24) return Number(text) / 1e24;
+  const whole = text.slice(0, -24) || "0";
+  const frac = text.slice(-24, -16);
+  const value = Number(`${whole}.${frac}`);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function argsNear(args?: string | null) {
+  if (!args) return 0;
+  try {
+    const body = JSON.parse(args) as { amount?: string };
+    return yoctoToNear(body.amount);
+  } catch {
+    return 0;
+  }
+}
+
+function addLeg(row: ChainFill, symbol: string, amount: number) {
+  if (!symbol || !(amount > 1e-8)) return;
+  const legs = row.legs ?? [];
+  const hit = legs.find((leg) => leg.symbol.toLowerCase() === symbol.toLowerCase());
+  if (hit) hit.amount += amount;
+  else legs.push({ symbol, amount });
+  row.legs = legs;
+  row.tokens = legs.map((leg) => leg.symbol);
+  row.symbol = legs[0]?.symbol ?? row.symbol;
+  row.amount = legs[0]?.amount ?? row.amount;
+}
+
+function asNear(legs: ChainLeg[]) {
+  const nearPx = tokenPrice("NEAR") || 0;
+  let near = 0;
+  for (const leg of legs) {
+    const base = leg.symbol.toUpperCase();
+    if (base === "NEAR" || base === "WNEAR") near += leg.amount;
+    else if (nearPx > 0) {
+      const px = tokenPrice(leg.symbol);
+      if (px > 0) near += (leg.amount * px) / nearPx;
+    }
+  }
+  return near;
+}
 
 function trimAmount(amount: number) {
   if (amount >= 1000) return amount.toLocaleString("en-US", { maximumFractionDigits: 2 });
@@ -444,6 +506,7 @@ function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[]): ChainF
         programs: [],
         value: 0,
         extra: 0,
+        legs: [],
       };
       rows.set(id, row);
     }
@@ -468,9 +531,10 @@ function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[]): ChainF
     row.by = tx.predecessor_account_id || row.by;
     row.detail = tx.receiver_account_id || row.detail;
     row.programs = pushUnique(row.programs, tx.receiver_account_id || "");
-    if (action?.action === "TRANSFER") {
-      row.symbol = "NEAR";
-      row.tokens = pushUnique(row.tokens, "NEAR");
+    for (const action of tx.actions ?? []) {
+      const method = (action.method || "").toLowerCase();
+      if (action.action === "TRANSFER") addLeg(row, "NEAR", yoctoToNear(action.deposit));
+      else if (method === "near_deposit") addLeg(row, "NEAR", argsNear(action.args) || yoctoToNear(action.deposit));
     }
     row.extra = Math.max(row.extra ?? 0, Math.max(0, (tx.actions?.length ?? 1) - 1));
   }
@@ -488,10 +552,8 @@ function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[]): ChainF
     row.amount = Number.isFinite(amount) ? amount : 0;
     if (row.kind === "Transaction") row.kind = ftKind(tx.cause, incoming);
     row.detail = row.detail || `${incoming ? "Received" : "Sent"} ${Number.isFinite(amount) ? trimAmount(row.amount) : 0} ${symbol}`;
-    row.tokens = pushUnique(row.tokens, symbol);
-    const price = tokenPrice(symbol);
-    const near = tokenPrice("NEAR") || 0;
-    if (price > 0 && near > 0 && row.amount > 0) row.value = (row.amount * price) / near;
+    addLeg(row, symbol, row.amount);
+    row.programs = pushUnique(row.programs, tx.ft?.contract || "");
   }
   for (const tx of nfts) {
     const time = stamp(tx.block_timestamp);
@@ -503,10 +565,14 @@ function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[]): ChainF
     row.incoming = incoming;
     row.symbol = symbol;
     row.amount = 1;
-    row.tokens = pushUnique(row.tokens, "NFT");
+    addLeg(row, "NFT", 1);
+    row.programs = pushUnique(row.programs, tx.nft?.contract || "");
   }
   return [...rows.values()]
     .map((row) => {
+      const legs = row.legs ?? [];
+      row.tokens = legs.length ? legs.map((leg) => leg.symbol) : row.tokens;
+      row.value = asNear(legs);
       const marks = Math.max(0, (row.tokens?.length ?? 0) - 1, (row.programs?.length ?? 1) - 1);
       row.extra = Math.max(row.extra ?? 0, marks);
       return row;
