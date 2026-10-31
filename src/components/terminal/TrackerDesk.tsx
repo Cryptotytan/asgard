@@ -39,13 +39,13 @@ const blank = {
 export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) => void; onFlash: (message: string) => void }) {
   const [data, setData] = useState<TrackerState>(EMPTY_TRACKER);
   const [ready, setReady] = useState(false);
-  const [tab, setTab] = useState<"wallets" | "live" | "tokens">("wallets");
+  const [tab, setTab] = useState<"wallets" | "tokens">("wallets");
   const [form, setForm] = useState(blank);
   const [walletOpen, setWalletOpen] = useState(false);
   const [tokenOpen, setTokenOpen] = useState(false);
   const [active, setActive] = useState<string | null>(null);
   const [range, setRange] = useState<"1D" | "7D" | "30D" | "1Y">("30D");
-  const [pane, setPane] = useState<"balances" | "performance" | "activity">("balances");
+  const [pane, setPane] = useState<"balances" | "activity">("balances");
   const [spam, setSpam] = useState(false);
   const [chainRev, setChainRev] = useState(0);
   const [statsRev, setStatsRev] = useState(0);
@@ -61,8 +61,6 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
     };
   }, [watchedKey]);
   void statsRev;
-  const [walletFilter, setWalletFilter] = useState("all");
-  const [folderFilter, setFolderFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState(TOKENS[0]?.symbol ?? "NEAR");
   const accountId = useDesk((s) => s.accountId);
@@ -89,12 +87,6 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
   useEffect(() => subscribeChain(() => setChainRev((value) => value + 1)), []);
 
   const wallet = data.wallets.find((item) => item.id === active) ?? null;
-  const liveRows = data.wallets.flatMap((item) => {
-    if (walletFilter !== "all" && item.id !== walletFilter) return [];
-    if (folderFilter !== "all" && item.folder !== folderFilter) return [];
-    const live = peekChain(item.address);
-    return (live?.fills ?? []).map((fill) => ({ ...fill, wallet: item.name }));
-  });
 
   function saveWallet() {
     const problem = nearProblem(form.address, form.kind);
@@ -181,7 +173,6 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
           {(
             [
               ["wallets", "Wallets"],
-              ["live", "Live trades"],
               ["tokens", "Tokens"],
             ] as const
           ).map(([id, label]) => (
@@ -191,8 +182,7 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
           ))}
         </div>
         <span className="ml-auto font-mono text-xs text-muted">{tab === "tokens" ? data.tokens.length : data.wallets.length}/100</span>
-        {tab !== "live" && (
-          <button
+        <button
             type="button"
             onClick={() => {
               if (tab === "tokens") setTokenOpen(true);
@@ -206,7 +196,6 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
             <Plus className="size-3.5" />
             {tab === "tokens" ? "Add token" : "Add wallet"}
           </button>
-        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
@@ -295,26 +284,6 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
             onTrade={onTrade}
             onBack={() => setActive(null)}
           />
-        )}
-
-        {tab === "live" && (
-          <div>
-            <div className="flex gap-2 px-3 py-2">
-              <select value={walletFilter} onChange={(event) => setWalletFilter(event.target.value)} className="h-8 rounded-full border border-line bg-surface px-2 text-xs">
-                <option value="all">All wallets</option>
-                {data.wallets.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-              <select value={folderFilter} onChange={(event) => setFolderFilter(event.target.value)} className="h-8 rounded-full border border-line bg-surface px-2 text-xs">
-                <option value="all">All folders</option>
-                {data.folders.map((folder) => <option key={folder}>{folder}</option>)}
-              </select>
-            </div>
-            {liveRows.length === 0 ? (
-              <Empty title="No live transfers yet" body="Track a NEAR account. Recent fungible transfers from the chain show up here." action="Add wallet" onClick={() => { setForm(blank); setWalletOpen(true); }} />
-            ) : (
-              <ActivityTable rows={liveRows} />
-            )}
-          </div>
         )}
 
         {tab === "tokens" && (
@@ -428,17 +397,16 @@ function WalletDetail({
 }: {
   wallet: TrackedWallet;
   range: "1D" | "7D" | "30D" | "1Y";
-  pane: "balances" | "performance" | "activity";
+  pane: "balances" | "activity";
   spam: boolean;
   onRange: (range: "1D" | "7D" | "30D" | "1Y") => void;
-  onPane: (pane: "balances" | "performance" | "activity") => void;
+  onPane: (pane: "balances" | "activity") => void;
   onSpam: (value: boolean) => void;
   onTrade: (symbol: string) => void;
   onBack: () => void;
 }) {
   const live = peekChain(wallet.address);
   const held = live?.holdings ?? [];
-  const top = (live?.holdings ?? []).slice(0, 3);
   return (
     <div className="flex flex-col gap-4 p-3 sm:p-5">
       <div className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -466,43 +434,57 @@ function WalletDetail({
         <p className="mt-1 font-mono text-2xl">{live ? usd(live.value) : "Reading balances…"}</p>
         <p className="mt-1 text-xs text-muted">{live ? `${live.holdings.length} tokens · ${(live.txCount || live.trades).toLocaleString("en-US")} transactions` : "Balances show as soon as the account is read. Transfers follow."}</p>
       </div>
-      <div className="flex items-center gap-4 border-b border-line">
-        {(["balances", "performance", "activity"] as const).map((item) => (
-          <button key={item} type="button" onClick={() => onPane(item)} className={`h-9 capitalize ${pane === item ? "text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}>{item}</button>
-        ))}
-        <label className="ml-auto flex items-center gap-2 text-xs text-muted"><input type="checkbox" checked={spam} onChange={(event) => onSpam(event.target.checked)} /> Show spam</label>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface p-2">
+        <div className="flex rounded-full bg-bg p-1">
+          {(["balances", "activity"] as const).map((item) => (
+            <button key={item} type="button" onClick={() => onPane(item)} className={`h-9 rounded-full px-4 text-sm font-semibold capitalize ${pane === item ? "bg-primary text-black" : "text-muted"}`}>
+              {item}
+            </button>
+          ))}
+        </div>
+        {pane === "activity" && (
+          <label className="mr-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" checked={spam} onChange={(event) => onSpam(event.target.checked)} className="size-3.5 accent-[var(--color-primary)]" />
+            Show spam
+          </label>
+        )}
       </div>
       {pane === "balances" && (
-        <div className="scroll-x">
+        <div className="scroll-x overflow-hidden rounded-2xl border border-line bg-surface">
           <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="text-[11px] uppercase text-muted">
-              <tr>
+            <thead className="text-[11px] uppercase tracking-wide text-muted">
+              <tr className="border-b border-line">
                 {["Token", "Amount", "USD", "Share", ""].map((label) => (
-                  <th key={label} className="py-2 font-medium">{label}</th>
+                  <th key={label} className="px-4 py-3 font-medium">{label}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {!live && (
-                <tr><td colSpan={5} className="py-4 text-sm text-muted">Reading balances…</td></tr>
+                <tr><td colSpan={5} className="px-4 py-6 text-sm text-muted">Reading balances…</td></tr>
               )}
               {live && held.length === 0 && (
-                <tr><td colSpan={5} className="py-4 text-sm text-muted">This wallet has no tokens.</td></tr>
+                <tr><td colSpan={5} className="px-4 py-6 text-sm text-muted">This wallet has no tokens.</td></tr>
               )}
               {held.map((row) => {
                 const token = TOKENS.find((item) => item.symbol.toLowerCase() === row.symbol.toLowerCase() && item.chain === "NEAR") ?? TOKENS.find((item) => item.symbol.toLowerCase() === row.symbol.toLowerCase());
                 return (
-                  <tr key={row.contract || row.symbol} className="border-t border-line">
-                    <td className="py-2">
+                  <tr key={row.contract || row.symbol} className="border-b border-line last:border-b-0">
+                    <td className="px-4 py-3">
                       <span className="flex items-center gap-2 font-semibold">
                         {token ? <TokenIcon token={token} className="size-5" /> : <span className="grid size-5 place-items-center rounded-full bg-bg text-[10px] font-bold">{row.symbol.slice(0, 1)}</span>}
                         {row.symbol}
                       </span>
                     </td>
-                    <td className="font-mono">{row.amount > 0 ? qty(row.amount) : "—"}</td>
-                    <td className="font-mono">{row.usd ? usd(row.usd) : "—"}</td>
-                    <td><span className="block h-1.5 w-24 overflow-hidden rounded-full bg-bg"><i className="block h-full bg-primary" style={{ width: `${row.share}%` }} /></span></td>
-                    <td className="text-right"><button type="button" onClick={() => onTrade(row.symbol)} className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-black">Buy</button></td>
+                    <td className="px-4 font-mono">{row.amount > 0 ? qty(row.amount) : "—"}</td>
+                    <td className="px-4 font-mono">{row.usd ? usd(row.usd) : "—"}</td>
+                    <td className="px-4">
+                      <span className="flex items-center gap-2">
+                        <span className="block h-1.5 w-20 overflow-hidden rounded-full bg-bg"><i className="block h-full bg-primary" style={{ width: `${Math.min(100, row.share)}%` }} /></span>
+                        <span className="font-mono text-xs text-muted">{row.share > 0 ? `${row.share.toFixed(0)}%` : "—"}</span>
+                      </span>
+                    </td>
+                    <td className="px-4 text-right"><button type="button" onClick={() => onTrade(row.symbol)} className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-black">Buy</button></td>
                   </tr>
                 );
               })}
@@ -510,20 +492,13 @@ function WalletDetail({
           </table>
         </div>
       )}
-      {pane === "performance" && (
-        <div className="grid grid-cols-2 gap-2 py-3 sm:grid-cols-3">
-          <Stat k="Token worth" v={live ? usd(live.value) : "…"} />
-          <Stat k="Holdings" v={live ? String(live.holdings.length) : "…"} />
-          <Stat k="Largest" v={top[0] ? `${top[0].symbol} ${top[0].share.toFixed(0)}%` : "—"} />
-          <Stat k="In" v={live ? String(live.fills.filter((fill) => fill.incoming).length) : "…"} />
-          <Stat k="Out" v={live ? String(live.fills.filter((fill) => !fill.incoming).length) : "…"} />
-        </div>
-      )}
       {pane === "activity" && (
+        <div className="overflow-hidden rounded-2xl border border-line bg-surface px-2">
         <ActivityTable
           rows={(live?.fills ?? []).filter((fill) => spam || !/spam|airdrop|scam/i.test(`${fill.kind} ${fill.detail} ${fill.symbol}`))}
           empty={live ? (live.ago === "…" ? "Reading transfers…" : "No recent account activity.") : "Reading transfers…"}
         />
+        </div>
       )}
     </div>
   );
