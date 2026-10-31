@@ -182,7 +182,7 @@ function agoFrom(ns: string) {
 function remember(key: string, row: ChainWallet) {
   chainCache.set(key, row);
   try {
-    localStorage.setItem(`asgard-chain:${key}`, JSON.stringify(row));
+    localStorage.setItem(`asgard-chain-v2:${key}`, JSON.stringify(row));
   } catch {
     /* private mode */
   }
@@ -202,7 +202,7 @@ export function peekChain(address: string) {
   if (cached) return cached;
   if (typeof localStorage === "undefined") return null;
   try {
-    const raw = localStorage.getItem(`asgard-chain:${key}`) ?? sessionStorage.getItem(`asgard-chain:${key}`);
+    const raw = localStorage.getItem(`asgard-chain-v2:${key}`) ?? sessionStorage.getItem(`asgard-chain-v2:${key}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as ChainWallet;
     if (!parsed || !Array.isArray(parsed.holdings)) return null;
@@ -458,19 +458,24 @@ async function loadFtPrices() {
   return book;
 }
 
-function asNear(legs: ChainLeg[], prices: Map<string, number>) {
+function asUsdt(legs: ChainLeg[], prices: Map<string, number>) {
   const nearUsd = prices.get("wrap.near") || tokenPrice("NEAR") || 0;
-  let near = 0;
+  let usd = 0;
   for (const leg of legs) {
-    const base = leg.symbol.toUpperCase();
-    if (base === "NEAR" || base === "WNEAR") {
-      near += leg.amount;
+    const base = leg.symbol.toUpperCase().replace(/\.E$/, "");
+    if (base === "USDT" || base === "USDC" || base === "DAI" || base === "FRAX") {
+      const stable = (leg.contract ? prices.get(leg.contract.toLowerCase()) : 0) || 1;
+      usd += leg.amount * stable;
       continue;
     }
-    const usd = (leg.contract ? prices.get(leg.contract.toLowerCase()) : 0) || tokenPrice(leg.symbol, leg.contract) || 0;
-    if (usd > 0 && nearUsd > 0) near += (leg.amount * usd) / nearUsd;
+    if (base === "NEAR" || base === "WNEAR") {
+      if (nearUsd > 0) usd += leg.amount * nearUsd;
+      continue;
+    }
+    const px = (leg.contract ? prices.get(leg.contract.toLowerCase()) : 0) || tokenPrice(leg.symbol, leg.contract) || 0;
+    if (px > 0) usd += leg.amount * px;
   }
-  return near;
+  return usd;
 }
 
 function trimAmount(amount: number) {
@@ -596,7 +601,7 @@ function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[], prices 
     .map((row) => {
       const legs = row.legs ?? [];
       row.tokens = legs.length ? legs.map((leg) => leg.symbol) : row.tokens;
-      row.value = asNear(legs, prices);
+      row.value = asUsdt(legs, prices);
       const marks = Math.max(0, (row.tokens?.length ?? 0) - 1, (row.programs?.length ?? 1) - 1);
       row.extra = Math.max(row.extra ?? 0, marks);
       return row;

@@ -544,7 +544,7 @@ function ActivityTable({ rows, empty = "No recent account activity." }: { rows: 
       <table className="w-full min-w-[980px] border-separate border-spacing-0 text-left text-[13px]">
         <thead className="text-[11px] uppercase tracking-wide text-muted">
           <tr>
-            {["Signature", "Time", "Action", "By", "Tokens", "Value (NEAR)", "Program"].map((label) => (
+            {["Signature", "Time", "Action", "By", "Tokens", "Value (USDT)", "Program"].map((label) => (
               <th key={label} className="border-b border-line px-3 py-2.5 font-medium">{label}</th>
             ))}
           </tr>
@@ -555,7 +555,7 @@ function ActivityTable({ rows, empty = "No recent account activity." }: { rows: 
             const signer = row.by || "";
             const legs = row.legs?.filter((leg) => leg.amount > 0) ?? [];
             const programs = (row.programs?.filter(Boolean) ?? []).filter((program, index, all) => all.indexOf(program) === index);
-            const near = row.value ?? 0;
+            const value = row.value ?? 0;
             return (
               <tr key={row.id} className="hover:bg-white/[0.03]">
                 <td className="border-b border-line px-3 py-3">
@@ -607,8 +607,8 @@ function ActivityTable({ rows, empty = "No recent account activity." }: { rows: 
                 </td>
                 <td className="border-b border-line px-3 py-3">
                   <span className="inline-flex items-center gap-1.5 font-mono">
-                    <Mark symbol="NEAR" />
-                    {near > 0 ? amountText(near) : "—"}
+                    <Mark symbol="USDT" />
+                    {value > 0 ? usdtText(value) : "—"}
                   </span>
                 </td>
                 <td className="border-b border-line px-3 py-3">
@@ -632,6 +632,12 @@ function ActivityTable({ rows, empty = "No recent account activity." }: { rows: 
       </table>
     </div>
   );
+}
+
+function usdtText(n: number) {
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  if (n >= 1) return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n.toLocaleString("en-US", { maximumSignificantDigits: 4 });
 }
 
 function amountText(n: number) {
