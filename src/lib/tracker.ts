@@ -142,7 +142,22 @@ export function fillsOf(wallets: TrackedWallet[]): Fill[] {
 }
 
 export type ChainHolding = { symbol: string; amount: number; usd: number; share: number; contract?: string };
-export type ChainFill = { id: string; symbol: string; incoming: boolean; amount: number; ago: string; kind: string; detail: string; time: number };
+export type ChainFill = {
+  id: string;
+  symbol: string;
+  incoming: boolean;
+  amount: number;
+  ago: string;
+  kind: string;
+  detail: string;
+  time: number;
+  hash?: string;
+  by?: string;
+  tokens?: string[];
+  programs?: string[];
+  value?: number;
+  extra?: number;
+};
 export type ChainWallet = { value: number; usdt: number; holdings: ChainHolding[]; trades: number; txCount: number; ago: string; fills: ChainFill[] };
 
 const chainCache = new Map<string, ChainWallet>();
@@ -152,12 +167,14 @@ const listeners = new Set<() => void>();
 function agoFrom(ns: string) {
   const ms = Number(BigInt(ns) / 1_000_000n);
   const delta = Math.max(0, Date.now() - ms);
-  const min = Math.round(delta / 60000);
-  if (min < 1) return "just now";
+  const sec = Math.round(delta / 1000);
+  if (sec < 60) return `${Math.max(1, sec)}s ago`;
+  const min = Math.floor(sec / 60);
   if (min < 60) return `${min}m ago`;
-  const hours = Math.round(min / 60);
-  if (hours < 48) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
+  const hours = Math.floor(min / 60);
+  const rem = min % 60;
+  if (hours < 24) return rem > 0 && hours < 8 ? `${hours}h ${rem}m ago` : `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 function remember(key: string, row: ChainWallet) {
@@ -407,59 +424,92 @@ function stamp(ns?: string) {
 }
 
 function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[]): ChainFill[] {
-  const rows: ChainFill[] = [];
+  const rows = new Map<string, ChainFill>();
+  const touch = (hash: string, time: number, ago: string) => {
+    const id = hash || `t-${time}-${rows.size}`;
+    let row = rows.get(id);
+    if (!row) {
+      row = {
+        id,
+        symbol: "NEAR",
+        incoming: false,
+        amount: 0,
+        ago,
+        kind: "Transaction",
+        detail: "",
+        time,
+        hash,
+        by: "",
+        tokens: [],
+        programs: [],
+        value: 0,
+        extra: 0,
+      };
+      rows.set(id, row);
+    }
+    if (time > row.time) {
+      row.time = time;
+      row.ago = ago;
+    }
+    return row;
+  };
+  const pushUnique = (list: string[] | undefined, value: string) => {
+    if (!value) return list ?? [];
+    const next = list ?? [];
+    if (!next.includes(value)) next.push(value);
+    return next;
+  };
   for (const tx of txns) {
     const action = tx.actions?.[0];
-    const kind = actionKind(action?.action, action?.method);
     const time = stamp(tx.block_timestamp);
-    rows.push({
-      id: tx.transaction_hash || `${time}-${kind}`,
-      symbol: action?.action === "TRANSFER" ? "NEAR" : action?.method || tx.receiver_account_id || "NEAR",
-      incoming: false,
-      amount: 0,
-      ago: time ? agoFrom(tx.block_timestamp || "0") : "—",
-      kind,
-      detail: tx.receiver_account_id || tx.predecessor_account_id || "",
-      time,
-    });
+    const ago = time ? agoFrom(tx.block_timestamp || "0") : "—";
+    const row = touch(tx.transaction_hash || "", time, ago);
+    row.kind = actionKind(action?.action, action?.method);
+    row.by = tx.predecessor_account_id || row.by;
+    row.detail = tx.receiver_account_id || row.detail;
+    row.programs = pushUnique(row.programs, tx.receiver_account_id || "");
+    if (action?.action === "TRANSFER") {
+      row.symbol = "NEAR";
+      row.tokens = pushUnique(row.tokens, "NEAR");
+    }
+    row.extra = Math.max(row.extra ?? 0, Math.max(0, (tx.actions?.length ?? 1) - 1));
   }
   for (const tx of fts) {
     const decimals = tx.ft?.decimals ?? 0;
     const raw = tx.delta_amount ?? "0";
-    const amount = Number(raw.replace("-", "")) / 10 ** decimals;
+    const amount = Number(raw.replace("-", "")) / 10 ** Math.max(decimals, 0);
     const incoming = !raw.startsWith("-");
     const time = stamp(tx.block_timestamp);
-    rows.push({
-      id: `${tx.transaction_hash ?? time}-ft-${tx.ft?.symbol ?? ""}`,
-      symbol: tx.ft?.symbol || "FT",
-      incoming,
-      amount: Number.isFinite(amount) ? amount : 0,
-      ago: time ? agoFrom(tx.block_timestamp || "0") : "—",
-      kind: ftKind(tx.cause, incoming),
-      detail: `${incoming ? "Received" : "Sent"} ${Number.isFinite(amount) ? trimAmount(amount) : 0} ${tx.ft?.symbol || "tokens"}${tx.cause ? ` · ${tx.cause}` : ""}`,
-      time,
-    });
+    const ago = time ? agoFrom(tx.block_timestamp || "0") : "—";
+    const symbol = tx.ft?.symbol || "FT";
+    const row = touch(tx.transaction_hash || `${time}-ft`, time, ago);
+    row.symbol = symbol;
+    row.incoming = incoming;
+    row.amount = Number.isFinite(amount) ? amount : 0;
+    if (row.kind === "Transaction") row.kind = ftKind(tx.cause, incoming);
+    row.detail = row.detail || `${incoming ? "Received" : "Sent"} ${Number.isFinite(amount) ? trimAmount(row.amount) : 0} ${symbol}`;
+    row.tokens = pushUnique(row.tokens, symbol);
+    const price = tokenPrice(symbol);
+    const near = tokenPrice("NEAR") || 0;
+    if (price > 0 && near > 0 && row.amount > 0) row.value = (row.amount * price) / near;
   }
   for (const tx of nfts) {
     const time = stamp(tx.block_timestamp);
+    const ago = time ? agoFrom(tx.block_timestamp || "0") : "—";
     const incoming = !String(tx.delta_amount ?? "").startsWith("-");
-    rows.push({
-      id: `${tx.transaction_hash ?? time}-nft`,
-      symbol: tx.nft?.token_id || tx.token_id || "NFT",
-      incoming,
-      amount: 1,
-      ago: time ? agoFrom(tx.block_timestamp || "0") : "—",
-      kind: incoming ? "NFT in" : "NFT out",
-      detail: "",
-      time,
-    });
+    const symbol = tx.nft?.token_id || tx.token_id || "NFT";
+    const row = touch(tx.transaction_hash || `${time}-nft`, time, ago);
+    row.kind = incoming ? "NFT in" : "NFT out";
+    row.incoming = incoming;
+    row.symbol = symbol;
+    row.amount = 1;
+    row.tokens = pushUnique(row.tokens, "NFT");
   }
-  const seen = new Set<string>();
-  return rows
-    .filter((row) => {
-      if (seen.has(row.id)) return false;
-      seen.add(row.id);
-      return true;
+  return [...rows.values()]
+    .map((row) => {
+      const marks = Math.max(0, (row.tokens?.length ?? 0) - 1, (row.programs?.length ?? 1) - 1);
+      row.extra = Math.max(row.extra ?? 0, marks);
+      return row;
     })
     .sort((a, b) => b.time - a.time)
     .slice(0, 40);

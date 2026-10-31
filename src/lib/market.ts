@@ -302,11 +302,65 @@ const CANONICAL_ADDR = new Set([
   "6b175474e89094c44da98b954eedeac495271d0f.factory.bridge.near",
 ]);
 
+const KNOWN_REAL = new Set([
+  "0xdac17f958d2ee523a2206206994597c13d831ec7",
+  "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+  "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+  "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",
+  "0x6b175474e89094c44da98b954eedeac495271d0f",
+  "0x853d955acef822db058eb8505911ed77f175b99e",
+  "0x55d398326f99059ff775485246999027b3197955",
+  "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d",
+  "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
+  "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",
+  "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+  "0x82af49447d8a07e3bd95bd0d56f35241523fbab1",
+  "0x2f2a2543b76a4166549f7aab2e75bef0aefc5b0f",
+  "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58",
+  "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+  "0x4200000000000000000000000000000000000006",
+  "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+  "0xc2132d05d31c914a87c6611c10748aeb04b58e8f",
+  "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359",
+  "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619",
+  "0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7",
+  "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e",
+  "0x49d5c2bdffac6ce2bfdb6640f4f80f226bc10bab",
+  "es9vmfrzacermjfrf4h2fyd4kconky11mcce8benwnyb",
+  "epjfwdd5aufqssqem2qn1xzybapc8g4weggkzwytdt1v",
+  "so11111111111111111111111111111111111111112",
+  "tr7nhqjekqxgtci8q8zy4pl8otszgjlj6t",
+]);
+
+const BLUE_CHIP = new Set([
+  "NEAR", "WNEAR", "ETH", "WETH", "BTC", "WBTC", "CBBTC", "SOL", "WSOL", "BNB", "WBNB",
+  "AVAX", "WAVAX", "POL", "MATIC", "ARB", "OP", "USDC", "USDC.E", "USDT", "USDT.E", "DAI",
+  "FRAX", "LINK", "UNI", "AAVE", "STETH", "WSTETH", "AURORA", "STNEAR", "XRP", "ADA", "DOGE",
+  "LTC", "BCH", "TRX", "TON", "SUI", "APT", "DOT", "ATOM", "INJ", "TIA", "SEI", "HBAR", "XLM",
+  "ZEC", "OKB", "GNO", "XDAI", "MNT", "FTM", "USDE", "USD1", "BUSD", "TUSD", "PYUSD", "USDS",
+  "RHEA", "LINEAR",
+]);
+
 export function isCanonical(token: { symbol: string; address?: string }) {
   const base = token.symbol.split(".")[0]?.toUpperCase() ?? "";
   if (CANONICAL_SYMBOLS.has(base) || CANONICAL_SYMBOLS.has(token.symbol.toUpperCase())) return true;
   const address = token.address?.toLowerCase();
   return Boolean(address && CANONICAL_ADDR.has(address));
+}
+
+function knownContract(address?: string) {
+  if (!address) return false;
+  const key = address.toLowerCase();
+  return CANONICAL_ADDR.has(key) || KNOWN_REAL.has(key);
+}
+
+export function isVerifiedAsset(token: { symbol: string; address?: string; chain?: string; assetId?: string; kind?: string }) {
+  if (knownContract(token.address)) return true;
+  const base = token.symbol.split(".")[0]?.toUpperCase() ?? "";
+  if (token.assetId && BLUE_CHIP.has(base)) return true;
+  if (token.kind === "meme") return false;
+  if (!token.address && token.chain && isMajorAsset(base, token.chain)) return true;
+  return false;
 }
 
 const MAJOR_HOME: Record<string, "*" | readonly string[]> = {
@@ -351,9 +405,7 @@ export function isMajorAsset(symbol: string, chain: string) {
 }
 
 export function sealMajors() {
-  for (const token of TOKENS) {
-    if (!token.verified && isMajorAsset(token.symbol, token.chain)) token.verified = true;
-  }
+  for (const token of TOKENS) token.verified = isVerifiedAsset(token);
 }
 
 export function qualityScore(token: { liqN: number; volN: number; txnsN: number; ageH: number; mcapN?: number }): number | null {
@@ -391,7 +443,7 @@ for (const token of TOKENS) {
   token.volBy = { m5: 0, h1: 0, h6: 0, h24: 0 };
   token.listed = false;
   token.score = qualityScore(token) ?? 0;
-  token.verified = isCanonical(token);
+  token.verified = isVerifiedAsset(token);
   token.safety = { top10: 0, insiders: 0, snipers: 0, bundlers: 0, dev: 0, lp: 0, buyTax: 0, sellTax: 0, holders: "—" };
   token.notes = isCanonical(token) ? ["Widely used NEAR asset"] : ["NEAR market"];
 }

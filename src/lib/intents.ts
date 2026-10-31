@@ -144,7 +144,7 @@ export async function quoteIntent(input: {
       recipientType: "DESTINATION_CHAIN",
       deadline: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       referral: "asgard",
-      quoteWaitingTimeMs: input.dry ? 7000 : 5000,
+      quoteWaitingTimeMs: input.dry ? 4000 : 2200,
     }),
   });
   if (!response.ok) throw new Error(await readError(response));
@@ -289,8 +289,8 @@ async function pollStatus(depositAddress: string, depositMemo?: string | null) {
   const url = new URL(`${BASE}/v0/status`);
   url.searchParams.set("depositAddress", depositAddress);
   if (depositMemo) url.searchParams.set("depositMemo", depositMemo);
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    await wait(attempt === 0 ? 2000 : 3000);
+  for (let attempt = 0; attempt < 36; attempt += 1) {
+    await wait(attempt === 0 ? 600 : 1500);
     try {
       const response = await fetch(url);
       if (!response.ok) continue;

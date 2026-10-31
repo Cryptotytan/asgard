@@ -1,4 +1,4 @@
-import { ensureToken, isCanonical, isMajorAsset, money, preferIcon, qualityScore, TOKENS, type WindowId } from "@/lib/market";
+import { ensureToken, isCanonical, isVerifiedAsset, money, preferIcon, qualityScore, TOKENS, type WindowId } from "@/lib/market";
 import { logoOf } from "@/lib/logo-book";
 import { chainById, chainByLabel } from "@/lib/chains";
 import { loadIntentAssets, type IntentAsset } from "@/lib/intents";
@@ -207,7 +207,7 @@ function publishTradable(map: Map<string, IntentAsset>) {
     token.price = Number(asset.price);
     token.listed = true;
     token.rails = ["NEAR"];
-    token.verified = isCanonical({ symbol: token.symbol, address });
+    token.verified = isVerifiedAsset({ symbol: token.symbol, address, chain: token.chain, assetId: token.assetId, kind: token.kind });
     token.notes = token.verified ? ["Widely used NEAR asset"] : ["Tradable on NEAR Intents"];
     const booked = logoOf(token.symbol);
     if (booked) token.icon = booked;
@@ -245,7 +245,7 @@ function publishForeign(assets: IntentAsset[]) {
     token.price = Number(asset.price);
     token.listed = true;
     token.rails = [chain];
-    token.verified = isMajorAsset(base, chain);
+    token.verified = isVerifiedAsset({ symbol: base, address: token.address, chain, assetId: asset.assetId, kind: token.kind });
     token.notes = [`Crosschain on ${chain} via NEAR Intents`];
     const booked = logoOf(base) || logoOf(token.symbol);
     if (booked) token.icon = booked;
@@ -653,7 +653,7 @@ function ingestForeignPairs(pairs: DexPair[], icons: Map<string, string>, loose 
     token.chain = chain;
     token.listed = true;
     token.price = num(pair.priceUsd);
-    token.verified = isMajorAsset(base, chain);
+    token.verified = isVerifiedAsset({ symbol: base, address, chain, assetId: token.assetId, kind: token.assetId ? token.kind : "meme" });
     if (!token.assetId) {
       token.kind = token.verified ? "defi" : "meme";
       token.rails = [chain];
@@ -932,7 +932,7 @@ function applyLiveStats(token: (typeof TOKENS)[number], pair: DexPair, asQuote =
   token.score = qualityScore(token) ?? token.score;
   const image = safeIcon(pair.info?.imageUrl);
   if (image && !asQuote) token.icon = image;
-  if (!token.verified && token.kind === "meme" && token.liqN >= 25_000 && token.ageH >= 24) token.verified = true;
+  token.verified = isVerifiedAsset(token);
 }
 
 function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
@@ -994,7 +994,7 @@ function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
     token.ageH = pair.pairCreatedAt ? Math.max(0.05, (Date.now() - pair.pairCreatedAt) / 3_600_000) : token.ageH;
     if (meme) token.kind = "meme";
     token.listed = canTrade(address) || (meme && liq > 0 && (vol.h24 > 0 || buys + sells > 0));
-    token.verified = isCanonical({ symbol, address });
+    token.verified = isVerifiedAsset({ symbol, address, chain: "NEAR", assetId: token.assetId, kind: meme ? "meme" : token.kind });
     token.score = qualityScore(token) ?? 0;
     token.notes = token.verified ? ["Widely used NEAR asset"] : meme ? ["NEAR meme"] : [pair.dexId || "NEAR market"];
     owned.set(symbol, address);

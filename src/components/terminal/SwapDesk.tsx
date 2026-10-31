@@ -275,10 +275,19 @@ export function SwapDesk({ focus }: { focus?: string }) {
 
       <section className="deck panel flex h-full max-h-full min-h-0 min-w-0 w-full flex-col justify-center overflow-hidden p-3 sm:p-4">
         <h2 className="text-base font-semibold tracking-tight sm:text-xl">Swap your assets</h2>
-        <p className="mt-1 hidden text-sm text-muted lg:block">Pick a connected wallet on each side. You sign on the chain you sell.</p>
-        <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-muted sm:mt-3 sm:text-xs">
-          <span className="min-w-0 truncate font-mono">{sellHold.loading ? "Reading wallet…" : sellActive ? `Bal ${qty(held)} · ${usd(held * sell.price)}` : "No wallet"}</span>
-          <span className="flex gap-1">
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-bg px-2 py-1.5">
+            <TokenIcon token={sell} className="size-7 shrink-0" />
+            <div className="min-w-0 leading-tight">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">Available</p>
+              <p className="truncate font-mono text-sm text-fg">
+                {sellHold.loading ? "Reading…" : sellActive ? qty(held) : "No wallet"}
+                <span className="ml-1 text-muted">{tokenLabel(sell)}</span>
+              </p>
+            </div>
+            <p className="ml-auto shrink-0 font-mono text-sm text-primary">{sellHold.loading || !sellActive ? "—" : usd(held * sell.price)}</p>
+          </div>
+          <span className="flex shrink-0 gap-1">
             {[
               [0.25, "25%"],
               [0.5, "50%"],

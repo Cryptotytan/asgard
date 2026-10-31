@@ -7,6 +7,7 @@ import { LiveBook } from "@/components/terminal/LiveBook";
 import { SecurityGate } from "@/components/terminal/SecurityGate";
 import { TokenIcon, VerifiedMark, ChainBadge } from "@/components/terminal/TokenIcon";
 import { PnlCard } from "@/components/terminal/PnlCard";
+import { PnlPoster } from "@/components/terminal/PnlPoster";
 import {
   canPerp,
   displayName,
@@ -597,13 +598,10 @@ function Positions({ symbol, mark, mode }: { symbol: string; mark: number; mode:
                   <td className={`px-2 py-2 font-mono ${up ? "text-primary" : "text-danger"}`}>{up ? "+" : "-"}${Math.abs(pnl).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="px-2 py-2 text-right">
                     <span className="inline-flex shrink-0 gap-1 whitespace-nowrap">
-                      <button type="button" onClick={() => { setShareId(position.id); setOpenId(position.id); }} className="h-8 rounded-full border border-line px-3">Share</button>
+                      <button type="button" onClick={() => setShareId(position.id)} className="h-8 rounded-full border border-line px-3">Share</button>
                       <button
                         type="button"
-                        onClick={() => {
-                          setShareId(null);
-                          setOpenId(openId === position.id ? null : position.id);
-                        }}
+                        onClick={() => setOpenId(openId === position.id ? null : position.id)}
                         className="h-8 rounded-full border border-line px-3"
                       >
                         {openId === position.id ? "Hide" : "Manage"}
@@ -621,12 +619,22 @@ function Positions({ symbol, mark, mode }: { symbol: string; mark: number; mode:
           <PnlCard
             position={position}
             mark={marks[position.base] ?? position.entry}
-            startShare={shareId === position.id}
-            onShareClose={() => setShareId(null)}
             onClose={() => void closeLive(position, closePerp)}
           />
         </div>
       ))}
+      {perps.filter((position) => position.id === shareId).map((position) => {
+        const price = marks[position.base] ?? position.entry;
+        const pnl = position.side === "long" ? (price - position.entry) * position.size : (position.entry - price) * position.size;
+        const roe = position.margin > 0 ? (pnl / position.margin) * 100 : 0;
+        return (
+          <PnlPoster
+            key={position.id}
+            data={{ market: position.market, side: position.side, leverage: position.leverage, pnl, roe, entry: position.entry, mark: price }}
+            onClose={() => setShareId(null)}
+          />
+        );
+      })}
     </div>
   );
 }

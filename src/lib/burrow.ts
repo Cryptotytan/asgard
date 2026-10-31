@@ -24,20 +24,22 @@ export async function readBurrow(accountId: string) {
 export async function supplyOnBurrow(accountId: string, token: string, amount: string, decimals: number) {
   const units = parseUnits(amount, decimals);
   if (!units) throw new Error("Enter an amount.");
-  const msg = JSON.stringify({ Execute: { actions: [{ IncreaseCollateral: { token_id: token, amount: units, max_amount: units } }] } });
+  const inner = await innerAmount(token, units);
+  const msg = JSON.stringify({ Execute: { actions: [{ IncreaseCollateral: { token_id: token, max_amount: inner } }] } });
   await sendToken(accountId, token, units, msg);
 }
 
 export async function withdrawFromBurrow(accountId: string, token: string, amount: string, decimals: number) {
   const units = parseUnits(amount, decimals);
   if (!units) throw new Error("Enter an amount.");
+  const inner = await innerAmount(token, units);
   const actions = [
     nearCall("execute", {
       actions: [
-        { DecreaseCollateral: { token_id: token, amount: units, max_amount: units } },
-        { Withdraw: { token_id: token, amount: units, max_amount: units } },
+        { DecreaseCollateral: { token_id: token, amount: inner } },
+        { Withdraw: { token_id: token, max_amount: inner } },
       ],
-    }, 180_000_000_000_000n, 1n),
+    }, 220_000_000_000_000n, 1n),
   ];
   await sendNearTransactions(accountId, [{ receiverId: BURROW, actions }]);
 }
@@ -45,10 +47,11 @@ export async function withdrawFromBurrow(accountId: string, token: string, amoun
 export async function borrowFromBurrow(accountId: string, token: string, amount: string, decimals: number) {
   const units = parseUnits(amount, decimals);
   if (!units) throw new Error("Enter an amount.");
+  const inner = await innerAmount(token, units);
   await sendNearTransactions(accountId, [
     {
       receiverId: BURROW,
-      actions: [nearCall("execute", { actions: [{ Borrow: { token_id: token, amount: units, max_amount: units } }] }, 120_000_000_000_000n, 1n)],
+      actions: [nearCall("execute", { actions: [{ Borrow: { token_id: token, amount: inner } }] }, 150_000_000_000_000n, 1n)],
     },
   ]);
 }
@@ -56,23 +59,29 @@ export async function borrowFromBurrow(accountId: string, token: string, amount:
 export async function repayOnBurrow(accountId: string, token: string, amount: string, decimals: number) {
   const units = parseUnits(amount, decimals);
   if (!units) throw new Error("Enter an amount.");
-  const msg = JSON.stringify({ Execute: { actions: [{ Repay: { token_id: token, amount: units, max_amount: units } }] } });
+  const inner = await innerAmount(token, units);
+  const msg = JSON.stringify({ Execute: { actions: [{ Repay: { token_id: token, max_amount: inner } }] } });
   await sendToken(accountId, token, units, msg);
 }
 
 async function sendToken(accountId: string, token: string, units: string, msg: string) {
   const txs: { receiverId: string; actions: NearCall[] }[] = [];
-  if (!(await isRegisteredOn(BURROW, accountId))) {
+  const [onBurrow, onToken, raw] = await Promise.all([
+    isRegisteredOn(BURROW, accountId),
+    isRegisteredOn(token, accountId),
+    token === "wrap.near" ? ftRaw(accountId, token) : Promise.resolve("0"),
+  ]);
+  if (!onBurrow) {
     txs.push({ receiverId: BURROW, actions: [nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, MIN_STORAGE)] });
   }
   if (token === "wrap.near") {
-    const wrapped = BigInt(await ftRaw(accountId, token));
+    const wrapped = BigInt(raw || "0");
     const need = BigInt(units);
     const prep: NearCall[] = [];
-    if (!(await isRegisteredOn(token, accountId))) prep.push(nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, MIN_STORAGE));
+    if (!onToken) prep.push(nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, MIN_STORAGE));
     if (wrapped < need) prep.push(nearCall("near_deposit", {}, 30_000_000_000_000n, need - wrapped));
     if (prep.length) txs.push({ receiverId: token, actions: prep });
-  } else if (!(await isRegisteredOn(token, accountId))) {
+  } else if (!onToken) {
     txs.push({ receiverId: token, actions: [nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, MIN_STORAGE)] });
   }
   txs.push({
@@ -80,6 +89,13 @@ async function sendToken(accountId: string, token: string, units: string, msg: s
     actions: [nearCall("ft_transfer_call", { receiver_id: BURROW, amount: units, msg }, 180_000_000_000_000n, 1n)],
   });
   await sendNearTransactions(accountId, txs);
+}
+
+async function innerAmount(token: string, units: string) {
+  const extra = (await extraDecimals())[token.toLowerCase()] ?? 0;
+  if (!/^\d+$/.test(units)) throw new Error("Enter an amount.");
+  if (extra <= 0) return units;
+  return (BigInt(units) * 10n ** BigInt(extra)).toString();
 }
 
 const TOKEN_DECIMALS: Record<string, number> = {

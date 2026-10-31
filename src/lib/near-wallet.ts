@@ -409,7 +409,7 @@ export async function stakeNear(accountId: string, yocto: string) {
   const outcome = await sendNearTransactions(accountId, [
     {
       receiverId: "meta-pool.near",
-      actions: [call("deposit_and_stake", {}, 80_000_000_000_000n, BigInt(yocto))],
+      actions: [call("deposit_and_stake", {}, 150_000_000_000_000n, BigInt(yocto))],
     },
   ]);
   return hashOf(outcome);
@@ -518,17 +518,23 @@ export async function isRegisteredOn(contractId: string, accountId: string) {
   return isRegistered(contractId, accountId);
 }
 
+const registeredYes = new Set<string>();
+
 async function isRegistered(contractId: string, accountId: string) {
+  const key = `${contractId}:${accountId}`;
+  if (registeredYes.has(key)) return true;
   try {
     const result = (await rpc({
       request_type: "call_function",
-      finality: "final",
+      finality: "optimistic",
       account_id: contractId,
       method_name: "storage_balance_of",
       args_base64: btoa(JSON.stringify({ account_id: accountId })),
     })) as { result?: number[] };
     const text = new TextDecoder().decode(new Uint8Array(result.result ?? [])).trim();
-    return text !== "" && text !== "null";
+    const yes = text !== "" && text !== "null";
+    if (yes) registeredYes.add(key);
+    return yes;
   } catch {
     return false;
   }

@@ -111,15 +111,19 @@ export function PnlCard({ position, mark, onClose, startShare = false, onShareCl
             </div>
             <div>
               <button type="button" onClick={() => setGuardsOpen(true)} className="grid w-full grid-cols-2 gap-2 text-left">
-                <span className="rounded-lg border border-white/10 bg-black/25 px-2 py-2">
-                  <span className="block text-[10px] uppercase tracking-wide text-muted">Take profit</span>
-                  <span className="mt-0.5 block font-mono text-xs text-primary">{position.tp ? px(position.tp) : "—"}</span>
-                  <span className="block font-mono text-[11px] text-primary">{savedTp == null ? "—" : signedUsd(savedTp)}</span>
+                <span className="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5">
+                  <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted">Take profit</span>
+                  <span className="mt-2 block text-[10px] uppercase tracking-wide text-muted">Trigger price</span>
+                  <span className="mt-0.5 block font-mono text-sm text-fg">{position.tp ? px(position.tp) : "—"}</span>
+                  <span className="mt-2 block text-[10px] uppercase tracking-wide text-primary">Est. profit</span>
+                  <span className="mt-0.5 block font-mono text-sm text-primary">{savedTp == null ? "—" : signedUsd(savedTp)}</span>
                 </span>
-                <span className="rounded-lg border border-white/10 bg-black/25 px-2 py-2">
-                  <span className="block text-[10px] uppercase tracking-wide text-muted">Stop loss</span>
-                  <span className="mt-0.5 block font-mono text-xs text-danger">{position.sl ? px(position.sl) : "—"}</span>
-                  <span className="block font-mono text-[11px] text-danger">{savedSl == null ? "—" : signedUsd(savedSl)}</span>
+                <span className="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5">
+                  <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted">Stop loss</span>
+                  <span className="mt-2 block text-[10px] uppercase tracking-wide text-muted">Trigger price</span>
+                  <span className="mt-0.5 block font-mono text-sm text-fg">{position.sl ? px(position.sl) : "—"}</span>
+                  <span className="mt-2 block text-[10px] uppercase tracking-wide text-danger">Est. loss</span>
+                  <span className="mt-0.5 block font-mono text-sm text-danger">{savedSl == null ? "—" : signedUsd(savedSl)}</span>
                 </span>
               </button>
               <button type="button" onClick={() => setGuardsOpen(true)} className="mt-2 h-8 w-full rounded-lg border border-line text-xs">

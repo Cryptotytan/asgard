@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Pencil, Plus, Search, Trash2, Wallet, X } from "lucide-react";
+import { Copy, Eye, Pencil, Plus, Search, Trash2, Wallet, X } from "lucide-react";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { qty, signedPct, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
@@ -18,6 +18,7 @@ import {
   type NotifyVia,
   type TrackedWallet,
   type TrackerState,
+  type ChainFill,
 } from "@/lib/tracker";
 import { refreshWatch } from "@/lib/watch-stats";
 
@@ -315,25 +316,7 @@ export function TrackerDesk({ onTrade, onFlash }: { onTrade: (symbol: string) =>
             {liveRows.length === 0 ? (
               <Empty title="No live transfers yet" body="Track a NEAR account. Recent fungible transfers from the chain show up here." action="Add wallet" onClick={() => { setForm(blank); setWalletOpen(true); }} />
             ) : (
-              <div className="scroll-x">
-                <table className="w-full min-w-[720px] text-left text-sm">
-                  <thead className="text-[11px] uppercase tracking-wide text-muted">
-                    <tr className="border-b border-line">{["Activity", "Wallet", "Detail", "Amount", "Time", ""].map((label) => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {liveRows.map((fill) => (
-                      <tr key={`${fill.wallet}-${fill.id}`} className="border-b border-line">
-                        <td className={`px-3 py-2 font-semibold ${fill.incoming ? "text-primary" : "text-fg"}`}>{fill.kind}</td>
-                        <td className="px-3">{fill.wallet}</td>
-                        <td className="max-w-48 truncate px-3">{fill.symbol}</td>
-                        <td className="px-3 font-mono">{fill.amount ? fill.amount.toPrecision(4) : "—"}</td>
-                        <td className="px-3 text-muted">{fill.ago}</td>
-                        <td className="px-3 text-right"><button type="button" onClick={() => onTrade(fill.symbol)} className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-black">Trade</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <ActivityTable rows={liveRows} />
             )}
           </div>
         )}
@@ -554,21 +537,132 @@ function WalletDetail({
         </div>
       )}
       {pane === "activity" && (
-        <ul className="divide-y divide-line text-sm">
-          {!live && <li className="py-3 text-muted">Reading transfers…</li>}
-          {(live?.fills ?? []).map((fill) => (
-            <li key={fill.id} className="flex items-center justify-between gap-3 py-2">
-              <span className={`w-24 shrink-0 ${fill.incoming ? "text-primary" : "text-fg"}`}>{fill.kind}</span>
-              <span className="min-w-0 flex-1 truncate">{fill.symbol}{fill.detail ? ` · ${fill.detail}` : ""}</span>
-              <span className="font-mono">{fill.amount ? qty(fill.amount) : "—"}</span>
-              <span className="text-muted">{fill.ago}</span>
-            </li>
-          ))}
-          {live && live.fills.length === 0 && <li className="py-3 text-muted">{live.ago === "…" ? "Reading transfers…" : "No recent account activity."}</li>}
-        </ul>
+        <ActivityTable
+          rows={(live?.fills ?? []).filter((fill) => spam || !/spam|airdrop|scam/i.test(`${fill.kind} ${fill.detail} ${fill.symbol}`))}
+          empty={live ? (live.ago === "…" ? "Reading transfers…" : "No recent account activity.") : "Reading transfers…"}
+        />
       )}
     </div>
   );
+}
+
+function ActivityTable({ rows, empty = "No recent account activity." }: { rows: ChainFill[]; empty?: string }) {
+  const [copied, setCopied] = useState("");
+  function copy(value: string) {
+    if (!value) return;
+    void navigator.clipboard?.writeText(value).then(() => {
+      setCopied(value);
+      window.setTimeout(() => setCopied((current) => (current === value ? "" : current)), 1200);
+    }).catch(() => undefined);
+  }
+  if (rows.length === 0) return <p className="py-4 text-sm text-muted">{empty}</p>;
+  return (
+    <div className="scroll-x">
+      <table className="w-full min-w-[980px] border-separate border-spacing-0 text-left text-[13px]">
+        <thead className="text-[11px] uppercase tracking-wide text-muted">
+          <tr>
+            {["Signature", "Time", "Action", "By", "Tokens", "Value (NEAR)", "Program"].map((label) => (
+              <th key={label} className="border-b border-line px-3 py-2.5 font-medium">{label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const hash = row.hash || "";
+            const signer = row.by || "";
+            const tokens = row.tokens?.length ? row.tokens : [row.symbol];
+            const programs = row.programs?.filter(Boolean) ?? [];
+            const near = row.symbol === "NEAR" && row.amount > 0 ? row.amount : row.value ?? 0;
+            const extra = row.extra ?? 0;
+            return (
+              <tr key={row.id} className="hover:bg-white/[0.03]">
+                <td className="border-b border-line px-3 py-3">
+                  <span className="inline-flex items-center gap-2 font-mono text-[#7eb6ff]">
+                    {hash && (
+                      <button type="button" aria-label="Open transaction" onClick={() => window.open(`https://nearblocks.io/txns/${hash}`, "_blank", "noopener,noreferrer")} className="text-muted hover:text-fg">
+                        <Eye className="size-3.5" />
+                      </button>
+                    )}
+                    <span>{hash ? shortId(hash, 4, 4) : "—"}</span>
+                    {hash && (
+                      <button type="button" aria-label="Copy signature" onClick={() => copy(hash)} className="text-muted hover:text-fg">
+                        <Copy className="size-3.5" />
+                      </button>
+                    )}
+                  </span>
+                </td>
+                <td className="whitespace-nowrap border-b border-line px-3 py-3 text-muted">{row.ago}</td>
+                <td className="border-b border-line px-3 py-3">
+                  <span className="inline-flex items-center gap-2">
+                    <Mark symbol={tokens[0] || "NEAR"} />
+                    <span className="font-medium">{titleCase(row.kind)}</span>
+                    {extra > 0 && <Count n={extra} />}
+                  </span>
+                </td>
+                <td className="border-b border-line px-3 py-3">
+                  <span className="inline-flex items-center gap-2 font-mono text-[#7eb6ff]">
+                    <span className="grid size-4 place-items-center rounded-full border border-[#7eb6ff]/50 text-[9px]">○</span>
+                    <span>{signer ? shortId(signer, 6, 6) : "—"}</span>
+                    {signer && (
+                      <button type="button" aria-label="Copy account" onClick={() => copy(signer)} className={`text-muted hover:text-fg ${copied === signer ? "text-primary" : ""}`}>
+                        <Copy className="size-3.5" />
+                      </button>
+                    )}
+                  </span>
+                </td>
+                <td className="border-b border-line px-3 py-3">
+                  <span className="inline-flex items-center">
+                    {tokens.slice(0, 3).map((symbol, index) => (
+                      <span key={`${row.id}-${symbol}`} className={index === 0 ? "" : "-ml-1.5"}>
+                        <Mark symbol={symbol} />
+                      </span>
+                    ))}
+                    {tokens.length > 1 && <span className="ml-1.5"><Count n={tokens.length - 1} /></span>}
+                  </span>
+                </td>
+                <td className="border-b border-line px-3 py-3">
+                  <span className="inline-flex items-center gap-1.5 font-mono">
+                    <Mark symbol="NEAR" />
+                    {near > 0 ? qty(near) : "—"}
+                  </span>
+                </td>
+                <td className="border-b border-line px-3 py-3">
+                  <span className="inline-flex items-center">
+                    {(programs.length ? programs : [row.detail]).filter(Boolean).slice(0, 3).map((program, index) => (
+                      <span key={`${row.id}-p-${program}`} title={program} className={`grid size-5 place-items-center rounded-full bg-surface-2 text-[9px] font-bold uppercase ring-2 ring-bg ${index === 0 ? "" : "-ml-1.5"}`}>
+                        {(program.split(".")[0] || "?").slice(0, 1)}
+                      </span>
+                    ))}
+                    {programs.length > 1 && <span className="ml-1.5"><Count n={programs.length - 1} /></span>}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Mark({ symbol }: { symbol: string }) {
+  const key = symbol.toLowerCase();
+  const token = TOKENS.find((item) => item.symbol.toLowerCase() === key || item.symbol.split(".")[0]?.toLowerCase() === key);
+  if (token?.icon) return <TokenIcon token={token} className="size-5 ring-2 ring-bg" />;
+  return <span className="grid size-5 place-items-center rounded-full bg-surface-2 text-[9px] font-bold ring-2 ring-bg">{(symbol || "?").slice(0, 1)}</span>;
+}
+
+function Count({ n }: { n: number }) {
+  return <span className="rounded-full bg-primary/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-primary">+{n}</span>;
+}
+
+function shortId(value: string, head: number, tail: number) {
+  if (value.length <= head + tail + 1) return value;
+  return `${value.slice(0, head)}…${value.slice(-tail)}`;
+}
+
+function titleCase(value: string) {
+  return value.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function TokenPreview({ token, tracked, onTrade, onWatch }: { token: Token; tracked: boolean; onTrade: () => void; onWatch: () => void }) {

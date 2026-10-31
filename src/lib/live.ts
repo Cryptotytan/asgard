@@ -1,4 +1,4 @@
-import { ensureToken, isCanonical, isMajorAsset, LEND_MARKETS, money, qualityScore, TOKENS, type Candle, type Print } from "@/lib/market";
+import { ensureToken, isCanonical, isMajorAsset, isVerifiedAsset, LEND_MARKETS, money, qualityScore, TOKENS, type Candle, type Print } from "@/lib/market";
 import { iconFor, geckoIdFor, knownPool, loadIconBook, refreshDexMarkets, syncNearMarkets, applyIconBook, fillListedStats } from "@/lib/dex";
 import { syncPerpMarkets } from "@/lib/perps";
 import { useDesk } from "@/lib/store";
@@ -869,7 +869,7 @@ async function refreshMarkets() {
   }
   applyIconBook(icons);
   for (const token of TOKENS) {
-    token.verified = isCanonical(token);
+    token.verified = isVerifiedAsset(token);
     token.score = qualityScore(token) ?? 0;
   }
   publish(marks);

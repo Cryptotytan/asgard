@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { fmt, qty, tokenBySymbol, usd } from "@/lib/market";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
-import { executeIntent, parseUnits } from "@/lib/intents";
+import { executeIntent, loadIntentAssets, parseUnits } from "@/lib/intents";
 import { stakeNear, syncWallet } from "@/lib/near-wallet";
 import { useDesk } from "@/lib/store";
+import { ConfirmGate } from "@/components/terminal/ConfirmGate";
 
 const PAY = ["USDC", "NEAR", "ETH"];
 const SHOWN = ["STNEAR", "USDC", "NEAR", "ETH"];
@@ -26,10 +27,12 @@ export function VaultDesk() {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
+  const [flight, setFlight] = useState<{ title: string; detail: string } | null>(null);
   const staked = chain.STNEAR ?? chain.stNEAR ?? 0;
   const value = staked * tokenBySymbol("STNEAR").price;
   useEffect(() => {
     if (accountId) void syncWallet(accountId);
+    void loadIntentAssets().catch(() => undefined);
   }, [accountId]);
 
   async function run(kind: "in" | "out") {
@@ -57,6 +60,8 @@ export function VaultDesk() {
       return;
     }
     setBusy(true);
+    const title = kind === "out" ? "Withdraw stNEAR" : symbol === "NEAR" ? "Stake NEAR" : `Deposit ${symbol}`;
+    setFlight({ title, detail: `${fmt(n)} ${kind === "out" ? "stNEAR" : symbol}` });
     setNote(kind === "in" && symbol === "NEAR" ? "Confirm the stake in your NEAR wallet. Meta Pool mints stNEAR." : kind === "in" ? "Confirm the swap into stNEAR on NEAR Intents." : "Confirm the swap out of stNEAR on NEAR Intents.");
     try {
       if (kind === "in" && symbol === "NEAR") {
@@ -91,6 +96,7 @@ export function VaultDesk() {
       setNote(cleanVaultError(error));
     } finally {
       setBusy(false);
+      setFlight(null);
     }
   }
 
@@ -192,6 +198,7 @@ export function VaultDesk() {
           {note && <p className="mt-1.5 font-mono text-[11px] text-primary">{note}</p>}
         </section>
       )}
+      {flight && <ConfirmGate title={flight.title} detail={flight.detail} />}
     </div>
   );
 }

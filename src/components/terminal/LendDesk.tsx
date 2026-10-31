@@ -3,6 +3,7 @@ import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Too
 import { ArrowLeft, Search, TriangleAlert } from "lucide-react";
 import { borrowRoom, healthFactor, LEND_MARKETS, px, qty, tokenBySymbol, TOKENS, usd, type LendMarket } from "@/lib/market";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
+import { ConfirmGate } from "@/components/terminal/ConfirmGate";
 import { borrowFromBurrow, lendDecimals, readMarketConfigs, repayOnBurrow, supplyOnBurrow, withdrawFromBurrow, type MarketConfig, type RatePoint } from "@/lib/burrow";
 import { syncWallet } from "@/lib/near-wallet";
 import { useDesk } from "@/lib/store";
@@ -58,6 +59,7 @@ export function LendDesk() {
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState<Kind | "">("");
+  const [flight, setFlight] = useState<{ title: string; detail: string } | null>(null);
   const [configs, setConfigs] = useState<Record<string, MarketConfig>>({});
 
   useEffect(() => {
@@ -187,6 +189,8 @@ export function LendDesk() {
       }
     }
     setBusy(kind);
+    const verb = kind === "supply" ? "Supply" : kind === "withdraw" ? "Withdraw" : kind === "borrow" ? "Borrow" : "Repay";
+    setFlight({ title: `${verb} ${tickerOf(market)}`, detail: `${qty(qtyN)} ${tickerOf(market)}` });
     try {
       setNote("Confirm the transaction in your NEAR wallet.");
       if (kind === "supply") await supplyOnBurrow(wallet, token, String(qtyN), decimals);
@@ -201,6 +205,7 @@ export function LendDesk() {
       setNote(error instanceof Error ? error.message : "Lending move failed.");
     } finally {
       setBusy("");
+      setFlight(null);
     }
   }
 
@@ -370,6 +375,7 @@ export function LendDesk() {
           {note && <p className="text-sm text-muted">{note}</p>}
         </div>
       )}
+      {flight && <ConfirmGate title={flight.title} detail={flight.detail} />}
     </div>
   );
 }
