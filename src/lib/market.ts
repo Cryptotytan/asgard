@@ -488,7 +488,22 @@ export function canPerp(symbol: string) {
   return Boolean(tradingViewPerp(symbol)) && MARKETS.some((market) => market.base === base);
 }
 
-export const LEND_MARKETS: { symbol: string; token?: string; supplyApy: number; borrowApy: number }[] = [];
+export type LendMarket = {
+  symbol: string;
+  ticker?: string;
+  token?: string;
+  supplyApy: number;
+  borrowApy: number;
+  price: number;
+  supplied: number;
+  suppliedUsd: number;
+  borrowed: number;
+  borrowedUsd: number;
+  available: number;
+  availableUsd: number;
+};
+
+export const LEND_MARKETS: LendMarket[] = [];
 
 const LTV = 0.7;
 

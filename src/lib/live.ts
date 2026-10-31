@@ -118,7 +118,12 @@ type RheaRow = {
   price?: number | string;
   supply_apy?: string;
   borrow_apy?: string;
+  available_liquidity_balance?: string;
   available_liquidity_price?: string;
+  total_burrow_balance?: string;
+  total_burrow_price?: string;
+  total_supplied_balance?: string;
+  total_supplied_price?: string;
 };
 
 const candles = new Map<string, Candle[]>();
@@ -837,12 +842,20 @@ async function refreshMarkets() {
   const lend = [...rheaBySymbol.entries()]
     .map(([symbol, row]) => ({
       symbol,
+      ticker: row.symbol || symbol,
       token: row.token,
       supplyApy: Number(row.supply_apy) || 0,
       borrowApy: Number(row.borrow_apy) || 0,
+      price: Number(row.price) || 0,
+      supplied: Number(row.total_supplied_balance) || 0,
+      suppliedUsd: Number(row.total_supplied_price) || 0,
+      borrowed: Number(row.total_burrow_balance) || 0,
+      borrowedUsd: Number(row.total_burrow_price) || 0,
+      available: Number(row.available_liquidity_balance) || 0,
+      availableUsd: Number(row.available_liquidity_price) || 0,
     }))
-    .filter((market) => market.supplyApy > 0 || market.borrowApy > 0)
-    .sort((a, b) => b.supplyApy - a.supplyApy);
+    .filter((market) => Boolean(market.token) && (market.suppliedUsd > 0 || market.supplyApy > 0 || market.borrowApy > 0))
+    .sort((a, b) => b.suppliedUsd - a.suppliedUsd);
   if (lend.length) LEND_MARKETS.splice(0, LEND_MARKETS.length, ...lend);
   const [dexMarks, icons, cap] = await Promise.all([dexPromise, iconsPromise, capPromise]);
   Object.assign(marks, dexMarks);

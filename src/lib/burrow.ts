@@ -93,6 +93,145 @@ const TOKEN_DECIMALS: Record<string, number> = {
 };
 
 let extraCache: Record<string, number> | null = null;
+let configCache: Record<string, MarketConfig> | null = null;
+
+export type RatePoint = { util: number; supply: number; borrow: number };
+
+export type MarketConfig = {
+  token: string;
+  decimals: number;
+  ltv: number;
+  reserve: number;
+  target: number;
+  collateral: boolean;
+  borrowable: boolean;
+  deposit: boolean;
+  withdraw: boolean;
+  supplyCap: number;
+  borrowCap: number;
+  name: string;
+  curve: RatePoint[];
+};
+
+export function lendDecimals(token: string) {
+  const id = token.toLowerCase();
+  return TOKEN_DECIMALS[id] ?? TOKENS.find((item) => item.address?.toLowerCase() === id)?.decimals ?? (id === "wrap.near" || id === "meta-pool.near" ? 24 : 18);
+}
+
+export async function readMarketConfigs() {
+  if (configCache) return configCache;
+  const rows = (await view("contract.main.burrow.near", "get_assets_paged", { from_index: 0, limit: 200 })) as
+    | [string, { config?: AssetConfig }][]
+    | null;
+  const book: Record<string, MarketConfig> = {};
+  const pending: Promise<void>[] = [];
+  for (const row of rows ?? []) {
+    const id = row?.[0];
+    const config = row?.[1]?.config;
+    if (!id || !config) continue;
+    const key = id.toLowerCase();
+    const extra = Number(config.extra_decimals) || 0;
+    const base = TOKEN_DECIMALS[key] ?? TOKENS.find((item) => item.address?.toLowerCase() === key)?.decimals ?? 18;
+    const ltv = (Number(config.volatility_ratio) || 0) / 100;
+    const reserve = (Number(config.reserve_ratio) || 0) / 100;
+    const target = (Number(config.target_utilization) || 0) / 100;
+    book[key] = {
+      token: id,
+      decimals: base,
+      ltv,
+      reserve,
+      target,
+      collateral: Boolean(config.can_use_as_collateral),
+      borrowable: Boolean(config.can_borrow),
+      deposit: config.can_deposit !== false,
+      withdraw: config.can_withdraw !== false,
+      supplyCap: humanUnits(config.supplied_limit, base + extra),
+      borrowCap: humanUnits(config.borrowed_limit, base + extra),
+      name: "",
+      curve: rateCurve(config, target, reserve),
+    };
+    pending.push(
+      view(id, "ft_metadata", {})
+        .then((meta) => {
+          const body = meta as { decimals?: number; name?: string } | null;
+          const decimals = Number(body?.decimals);
+          if (Number.isFinite(decimals) && decimals >= 0 && decimals <= 24) {
+            TOKEN_DECIMALS[key] = decimals;
+            book[key].decimals = decimals;
+            book[key].supplyCap = humanUnits(config.supplied_limit, decimals + extra);
+            book[key].borrowCap = humanUnits(config.borrowed_limit, decimals + extra);
+          }
+          if (body?.name) book[key].name = body.name;
+        })
+        .catch(() => undefined),
+    );
+  }
+  await Promise.all(pending);
+  configCache = book;
+  return book;
+}
+
+type AssetConfig = {
+  reserve_ratio?: number;
+  target_utilization?: number;
+  target_utilization_rate?: string;
+  max_utilization_rate?: string;
+  volatility_ratio?: number;
+  extra_decimals?: number;
+  can_deposit?: boolean;
+  can_withdraw?: boolean;
+  can_use_as_collateral?: boolean;
+  can_borrow?: boolean;
+  supplied_limit?: string | null;
+  borrowed_limit?: string | null;
+};
+
+function humanUnits(raw: string | null | undefined, decimals: number) {
+  if (!raw || !/^\d+$/.test(raw) || raw === "0") return 0;
+  if (decimals <= 0) {
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : 0;
+  }
+  const pad = raw.padStart(decimals + 1, "0");
+  const whole = pad.slice(0, -decimals) || "0";
+  const frac = pad.slice(-decimals).slice(0, 6).replace(/0+$/, "");
+  const value = Number(frac ? `${whole}.${frac}` : whole);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function rateCurve(config: AssetConfig, targetPct: number, reservePct: number) {
+  const target = targetPct / 100;
+  const reserve = reservePct / 100;
+  const low = BigInt(config.target_utilization_rate || "0");
+  const high = BigInt(config.max_utilization_rate || "0");
+  const scale = 10n ** 27n;
+  if (low <= scale || high <= scale || !(target > 0 && target < 1)) return [];
+  const marks = new Set<number>([0, 100, Math.round(targetPct)]);
+  for (let step = 0; step <= 100; step += 4) marks.add(step);
+  return [...marks]
+    .sort((a, b) => a - b)
+    .map((util) => {
+      const borrow = aprAt(util / 100, target, low, high, scale) * 100;
+      const supply = borrow * (util / 100) * (1 - reserve);
+      return { util, borrow, supply };
+    });
+}
+
+function aprAt(util: number, target: number, low: bigint, high: bigint, scale: bigint) {
+  const rate = util <= target ? mix(scale, low, target <= 0 ? 0 : util / target) : mix(low, high, (util - target) / (1 - target));
+  if (rate <= scale) return 0;
+  const product = (rate - scale) * 31_536_000_000n;
+  const span = Number(product / scale) + Number(product % scale) / 1e27;
+  const apr = Math.exp(span) - 1;
+  return Number.isFinite(apr) && apr > 0 ? apr : 0;
+}
+
+function mix(from: bigint, to: bigint, t: number) {
+  const clamped = Math.max(0, Math.min(1, t));
+  const parts = 1_000_000n;
+  const weight = BigInt(Math.round(clamped * 1_000_000));
+  return from + ((to - from) * weight) / parts;
+}
 
 async function extraDecimals() {
   if (extraCache) return extraCache;
