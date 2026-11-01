@@ -400,11 +400,14 @@ function overlayBalances(book: Record<string, number>) {
       continue;
     }
     const got = book[symbol] ?? 0;
-    if (got > 0) {
+    if (item.dir > 0) {
+      if (got + 1e-8 >= item.target * 0.8 && got > 0) pendingBalances.delete(symbol);
+      else if (item.target > got) book[symbol] = item.target;
+    } else if (got <= item.target + 1e-8) {
       pendingBalances.delete(symbol);
-      continue;
+    } else {
+      book[symbol] = item.target;
     }
-    if (item.dir > 0 && item.target > 0) book[symbol] = item.target;
   }
   return book;
 }
@@ -544,24 +547,25 @@ function assembleWallet(fast: FastAccount | null, inventory: InventoryAccount | 
   return book;
 }
 
-export async function syncWallet(accountId: string, _focus: string[] = []) {
+export async function syncWallet(accountId: string, _focus: string[] = [], fresh = false) {
   const key = accountId.trim().toLowerCase();
   if (useDesk.getState().accountId !== key) return;
   if (!Object.keys(useDesk.getState().chain).length) {
     const cached = peekHoldings(key);
     if (cached) publishHoldings(key, cached);
   }
-  if (syncFlight && syncFor === key) return syncFlight;
+  if (!fresh && syncFlight && syncFor === key) return syncFlight;
   syncFor = key;
-  syncFlight = loadWallet(key).finally(() => {
-    if (syncFor === key) syncFlight = null;
+  const run = loadWallet(key);
+  syncFlight = run.finally(() => {
+    if (syncFlight === run) syncFlight = null;
   });
-  return syncFlight;
+  return run;
 }
 
 async function loadWallet(key: string) {
-  const fastP = fetch(`https://api.fastnear.com/v1/account/${encodeURIComponent(key)}/full`).catch(() => null);
-  const invP = fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(key)}/inventory`).catch(() => null);
+  const fastP = fetch(`https://api.fastnear.com/v1/account/${encodeURIComponent(key)}/full`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+  const invP = fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(key)}/inventory`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
   const meta = refMeta ?? new Map<string, { symbol: string; decimals: number }>();
   const winner = await Promise.race([
     fastP.then((res) => ({ which: "fast" as const, res })),

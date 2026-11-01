@@ -259,13 +259,17 @@ export async function resumeIntent() {
 
 async function finishDeposit(quote: IntentQuote, txHash: string | null, purpose: Purpose, from: string, to: string, fromChain?: string, toChain?: string) {
   await submitDeposit(quote, txHash);
-  const status = quote.depositAddress ? await pollStatus(quote.depositAddress, quote.depositMemo) : "SUCCESS";
+  const status = quote.depositAddress ? await pollStatus(quote.depositAddress, quote.depositMemo, 5) : "SUCCESS";
+  if (status === "REFUNDED" || status === "FAILED") {
+    sessionStorage.removeItem(PENDING_KEY);
+    throw new Error(`NEAR Intents ${status.toLowerCase()} this swap. Funds were not delivered.`);
+  }
   sessionStorage.removeItem(PENDING_KEY);
   const nearAccount = useDesk.getState().accountId;
-  if (nearAccount && quote.amountInHuman > 0) {
+  const moves = quote.amountInHuman > 0 ? [{ symbol: from, delta: -quote.amountInHuman }] : [];
+  if ((!toChain || toChain === "NEAR") && quote.amountOutHuman > 0) moves.push({ symbol: to, delta: quote.amountOutHuman });
+  if (nearAccount && moves.length) {
     const { settleHoldings } = await import("@/lib/near-wallet");
-    const moves = [{ symbol: from, delta: -quote.amountInHuman }];
-    if (!toChain || toChain === "NEAR") moves.push({ symbol: to, delta: quote.amountOutHuman });
     settleHoldings(nearAccount, moves);
   }
   if (toChain && toChain !== "NEAR" && quote.amountOutHuman > 0) {
@@ -277,26 +281,27 @@ async function finishDeposit(quote: IntentQuote, txHash: string | null, purpose:
     expectHolding(fromChain, from, -quote.amountInHuman);
   }
   const value = quote.amountInUsd || quote.amountOutUsd;
-  useDesk.getState().log(`${purpose} · NEAR Intents`, `${from} → ${to} · ${status}`, value);
-  if (status === "REFUNDED" || status === "FAILED") {
-    if (nearAccount) {
-      const { syncWallet } = await import("@/lib/near-wallet");
-      await syncWallet(nearAccount, [from, to]);
-    }
-    throw new Error(`NEAR Intents ${status.toLowerCase()} this swap. Funds were not delivered.`);
-  }
+  useDesk.getState().log(`${purpose} · NEAR Intents`, `${from} → ${to} · ${status === "SUCCESS" ? "SUCCESS" : "SUBMITTED"}`, value);
   if (status !== "SUCCESS" && quote.depositAddress) {
     const address = quote.depositAddress;
     const memo = quote.depositMemo;
     void pollStatus(address, memo, 40).then(async (later) => {
       const current = useDesk.getState().accountId;
-      if (!current) return;
-      const { syncWallet } = await import("@/lib/near-wallet");
-      await syncWallet(current, [from, to]);
-      if (later === "REFUNDED" || later === "FAILED") useDesk.getState().log(`${purpose} · NEAR Intents`, `${from} → ${to} · ${later}`, value);
+      if (later === "REFUNDED" || later === "FAILED") {
+        if (current && moves.length) {
+          const { settleHoldings } = await import("@/lib/near-wallet");
+          settleHoldings(current, moves.map((move) => ({ symbol: move.symbol, delta: -move.delta })));
+        }
+        useDesk.getState().log(`${purpose} · NEAR Intents`, `${from} → ${to} · ${later}`, value);
+        return;
+      }
+      if (current) {
+        const { syncWallet } = await import("@/lib/near-wallet");
+        await syncWallet(current, [from, to], true);
+      }
     });
   }
-  return status === "SUCCESS" ? status : "SUCCESS";
+  return "SUCCESS";
 }
 
 async function submitDeposit(quote: IntentQuote, txHash: string | null) {

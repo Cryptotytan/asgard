@@ -217,7 +217,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
         value: amountN * sell.price,
       });
       useDesk.getState().log(`Swap via ${best.name}`, `${tokenLabel(sell)} → ${tokenLabel(buy)}`, amountN * sell.price);
-      await refreshBalances(touched);
+      await Promise.race([refreshBalances(touched), new Promise((resolve) => window.setTimeout(resolve, 4000))]);
       setAmount("");
       setNote(`Settled ${fmt(result.amountOutHuman)} ${tokenLabel(buy)} on ${buy.chain}.`);
     } catch (error) {

@@ -24,11 +24,14 @@ function overlayForeign(key: string, book: Record<string, number>) {
     }
     const symbol = id.slice(key.length + 1);
     const got = book[symbol] ?? 0;
-    if (got > 0) {
+    if (item.dir > 0) {
+      if (got + 1e-8 >= item.target * 0.8 && got > 0) pendingForeign.delete(id);
+      else if (item.target > got) book[symbol] = item.target;
+    } else if (got <= item.target + 1e-8) {
       pendingForeign.delete(id);
-      continue;
+    } else {
+      book[symbol] = item.target;
     }
-    if (item.dir > 0 && item.target > 0) book[symbol] = item.target;
   }
   return book;
 }
@@ -84,7 +87,7 @@ export async function refreshBalances(wallets: LinkedWallet[]) {
       inflight.delete(key);
       if (wallet.id === "near") {
         const { syncWallet } = await import("@/lib/near-wallet");
-        await syncWallet(wallet.address).catch(() => undefined);
+        await syncWallet(wallet.address, [], true).catch(() => undefined);
       } else {
         await loadHoldings(wallet.id, wallet.address, true).catch(() => undefined);
         notifyHoldings(key);
@@ -423,6 +426,7 @@ async function rpcCall(rpc: string, method: string, params: unknown[]) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal: AbortSignal.timeout(6000),
   }).catch(() => null);
   if (!response?.ok) return "0x0";
   const body = (await response.json()) as { result?: string };
