@@ -1013,7 +1013,7 @@ function Ticket({
       return;
     }
     if (!picked) {
-      onFlash("No route inside your slippage.");
+      onFlash(quoting ? "Still finding a route." : "No pool can fill this size yet.");
       return;
     }
     onFlash(`Confirm the deposit. ${picked.name} has the lowest fee inside your slippage.`);

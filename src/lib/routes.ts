@@ -153,7 +153,7 @@ async function runLifi(steps: LifiStep[], fallback: string) {
   return hash || "SENT";
 }
 
-async function reloadLifiSteps(from: Token, to: Token, amount: string, sender: string, recipient: string, name: string) {
+async function reloadLifiSteps(from: Token, to: Token, amount: string, sender: string, recipient: string, name: string, slip = 0.15) {
   const origin = lifiAsset(from);
   const destination = lifiAsset(to);
   if (!origin || !destination) return null;
@@ -170,7 +170,7 @@ async function reloadLifiSteps(from: Token, to: Token, amount: string, sender: s
       fromAmount: units,
       fromAddress: sender,
       toAddress: recipient,
-      options: { slippage: 0.01, maxPriceImpact: 0.05, order: "CHEAPEST" },
+      options: { slippage: slip, maxPriceImpact: 0.9, order: "CHEAPEST" },
     }),
   });
   if (!response.ok) return null;
@@ -183,7 +183,7 @@ async function reloadLifiSteps(from: Token, to: Token, amount: string, sender: s
   return body.routes?.[0]?.steps ?? null;
 }
 
-async function lifiRoutes(from: Token, to: Token, amount: string, sender: string, recipient: string): Promise<LiveRoute[]> {
+async function lifiRoutes(from: Token, to: Token, amount: string, sender: string, recipient: string, slip = 0.15): Promise<LiveRoute[]> {
   const origin = lifiAsset(from);
   const destination = lifiAsset(to);
   if (!origin || !destination) return [];
@@ -201,7 +201,7 @@ async function lifiRoutes(from: Token, to: Token, amount: string, sender: string
       fromAmount: units,
       fromAddress: sender,
       toAddress: recipient,
-      options: { slippage: 0.01, maxPriceImpact: 0.05, order: "CHEAPEST" },
+      options: { slippage: slip, maxPriceImpact: 0.9, order: "CHEAPEST" },
     }),
   });
   if (!response.ok) return [];
@@ -233,7 +233,7 @@ async function lifiRoutes(from: Token, to: Token, amount: string, sender: string
           const hash = await runLifi(stepsCopy, from.chain);
           return { status: hash, amountOutHuman: receive };
         } catch (error) {
-          const again = await reloadLifiSteps(from, to, amount, sender, recipient, label);
+          const again = await reloadLifiSteps(from, to, amount, sender, recipient, label, slip);
           if (!again?.length) throw error;
           const hash = await runLifi(again, from.chain);
           return { status: hash, amountOutHuman: receive };
@@ -245,14 +245,14 @@ async function lifiRoutes(from: Token, to: Token, amount: string, sender: string
   return routes;
 }
 
-async function jupiterRoute(from: Token, to: Token, amount: string, sender: string): Promise<LiveRoute | null> {
+async function jupiterRoute(from: Token, to: Token, amount: string, sender: string, slippageBps = 1500): Promise<LiveRoute | null> {
   if (from.chain !== "Solana" || to.chain !== "Solana") return null;
   const origin = lifiAsset(from);
   const destination = lifiAsset(to);
   if (!origin || !destination || !validAddress(from.chain, sender)) return null;
   const units = parseUnits(amount, origin.decimals);
   if (!units) return null;
-  const quoteUrl = `${JUP}/quote?inputMint=${origin.address}&outputMint=${destination.address}&amount=${units}&slippageBps=50`;
+  const quoteUrl = `${JUP}/quote?inputMint=${origin.address}&outputMint=${destination.address}&amount=${units}&slippageBps=${slippageBps}`;
   const response = await fetch(quoteUrl);
   if (!response.ok) return null;
   const quote = (await response.json()) as { outAmount?: string; priceImpactPct?: string; routePlan?: { swapInfo?: { label?: string } }[] };
@@ -374,8 +374,9 @@ async function debridgeRoute(from: Token, to: Token, amount: string, sender: str
 function intearId(token: Token) {
   if (token.chain !== "NEAR") return "";
   const base = token.symbol.split(".")[0]?.toUpperCase() ?? "";
-  if (base === "NEAR") return "near";
-  return token.address ? `nep141:${token.address}` : "";
+  if (base === "NEAR" || base === "WNEAR") return "near";
+  const raw = (token.address ?? "").trim().replace(/^nep141:/i, "");
+  return raw ? `nep141:${raw}` : "";
 }
 
 function decodeCallArgs(args: string) {
@@ -383,7 +384,7 @@ function decodeCallArgs(args: string) {
   return JSON.parse(text) as object;
 }
 
-async function intearRoute(from: Token, to: Token, amount: string, accountId: string): Promise<LiveRoute | null> {
+async function intearRoute(from: Token, to: Token, amount: string, accountId: string, slippageBps = 1500): Promise<LiveRoute | null> {
   const tokenIn = intearId(from);
   const tokenOut = intearId(to);
   const decimals = decimalsOf(from);
@@ -391,7 +392,8 @@ async function intearRoute(from: Token, to: Token, amount: string, accountId: st
   if (!tokenIn || !tokenOut || tokenIn === tokenOut || decimals == null || outDecimals == null) return null;
   const units = parseUnits(amount, decimals);
   if (!units) return null;
-  const url = `https://router.intear.tech/route?token_in=${encodeURIComponent(tokenIn)}&token_out=${encodeURIComponent(tokenOut)}&amount_in=${units}&max_wait_ms=2500&slippage_type=Fixed&slippage=0.01`;
+  const slip = Math.min(0.5, Math.max(0.005, slippageBps / 10_000));
+  const url = `https://router.intear.tech/route?token_in=${encodeURIComponent(tokenIn)}&token_out=${encodeURIComponent(tokenOut)}&amount_in=${units}&max_wait_ms=4000&slippage_type=Fixed&slippage=${slip}`;
   const response = await fetch(url);
   if (!response.ok) return null;
   const routes = (await response.json()) as {
@@ -474,6 +476,117 @@ async function intentsRoute(from: Token, to: Token, amount: string, accountId: s
   };
 }
 
+function nearContract(token: Token) {
+  const base = token.symbol.split(".")[0]?.toUpperCase() ?? "";
+  if (base === "NEAR" || base === "WNEAR") return "wrap.near";
+  return (token.address ?? "").trim().replace(/^nep141:/i, "");
+}
+
+async function refRoute(from: Token, to: Token, amount: string, accountId: string, slippageBps = 1500): Promise<LiveRoute | null> {
+  const tokenIn = nearContract(from);
+  const tokenOut = nearContract(to);
+  const decimals = decimalsOf(from);
+  const outDecimals = decimalsOf(to);
+  if (!tokenIn || !tokenOut || tokenIn === tokenOut || decimals == null || outDecimals == null) return null;
+  const units = parseUnits(amount, decimals);
+  if (!units) return null;
+  const slip = Math.min(0.5, Math.max(0.005, slippageBps / 10_000));
+  const quoted = `https://smartrouter.ref.finance/findPath?amountIn=${units}&tokenIn=${encodeURIComponent(tokenIn)}&tokenOut=${encodeURIComponent(tokenOut)}&pathDeep=3&slippage=${slip}`;
+  const response = await fetch(quoted);
+  if (!response.ok) return null;
+  const body = (await response.json()) as {
+    result_code?: number;
+    result_data?: { amount_out?: string; routes?: { pools?: { pool_id?: string; token_in?: string; token_out?: string; amount_in?: string; min_amount_out?: string }[] }[] };
+  };
+  const pools = body.result_data?.routes?.[0]?.pools?.filter((pool) => pool.pool_id && pool.token_in && pool.token_out && pool.amount_in && pool.min_amount_out) ?? [];
+  const out = Number(body.result_data?.amount_out);
+  if (body.result_code !== 0 || !pools.length || !(out > 0)) return null;
+  const receive = out / 10 ** outDecimals;
+  return {
+    id: "ref",
+    name: "Ref Finance",
+    kind: "Swap",
+    feeBps: 30,
+    impact: gap(Number(amount) * (from.price || 0), receive * (to.price || 0)),
+    receive,
+    eta: "live",
+    execute: async () => {
+      const fresh = await fetch(quoted);
+      if (!fresh.ok) throw new Error("Ref Finance did not return a route. Nothing was sent.");
+      const next = (await fresh.json()) as typeof body;
+      const nextPools = next.result_data?.routes?.[0]?.pools?.filter((pool) => pool.pool_id && pool.amount_in && pool.min_amount_out) ?? pools;
+      const hash = await sendNearTransactions(accountId, [
+        {
+          receiverId: "v2.ref-finance.near",
+          actions: [nearFunctionCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, 10_000_000_000_000_000_000n)],
+        },
+        {
+          receiverId: tokenIn,
+          actions: [
+            nearFunctionCall(
+              "ft_transfer_call",
+              {
+                receiver_id: "v2.ref-finance.near",
+                amount: units,
+                msg: JSON.stringify({
+                  force: 0,
+                  actions: nextPools.map((pool) => ({
+                    pool_id: Number(pool.pool_id),
+                    token_in: pool.token_in,
+                    token_out: pool.token_out,
+                    amount_in: pool.amount_in,
+                    min_amount_out: pool.min_amount_out,
+                  })),
+                }),
+              },
+              280_000_000_000_000n,
+              1n,
+            ),
+          ],
+        },
+      ]);
+      const got = Number(next.result_data?.amount_out);
+      return { status: typeof hash === "string" ? hash : "SENT", amountOutHuman: got > 0 ? got / 10 ** outDecimals : receive };
+    },
+  };
+}
+
+async function collectRoutes(input: {
+  from: Token;
+  to: Token;
+  amount: string;
+  accountId: string;
+  refundTo: string;
+  recipient: string;
+  slippageBps: number;
+  purpose: "Swap" | "Spot";
+}) {
+  const slip = input.slippageBps;
+  const cross = input.from.chain !== input.to.chain;
+  const intentsJob = () =>
+    timeout(intentsRoute(input.from, input.to, input.amount, input.accountId || input.refundTo, input.refundTo, input.recipient, slip, input.purpose), 16000)
+      .then((route) => ({ route, error: "" }))
+      .catch((error: unknown) => ({ route: null, error: error instanceof Error && error.message !== "timeout" ? error.message : "NEAR Intents has no quote for this pair." }));
+  const sameKind = chainByLabel(input.from.chain)?.kind;
+  const usd = Number(input.amount) * (input.from.price || 0);
+  const nearPair = input.from.chain === "NEAR" && input.to.chain === "NEAR";
+  const [intents, evm, lifi, jupiter, debridge, intear, ref] = await Promise.all([
+    usd >= 1000 ? intentsJob() : Promise.resolve({ route: null as LiveRoute | null, error: "" }),
+    !cross && sameKind === "evm"
+      ? timeout(evmDexRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient, slip), 8000).catch(() => [] as LiveRoute[])
+      : Promise.resolve([] as LiveRoute[]),
+    timeout(lifiRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient, slip / 10_000), cross ? 12000 : 8000).catch(() => [] as LiveRoute[]),
+    !cross && sameKind === "sol" ? timeout(jupiterRoute(input.from, input.to, input.amount, input.refundTo, slip), 8000).catch(() => null) : Promise.resolve(null),
+    timeout(debridgeRoute(input.from, input.to, input.amount, input.refundTo, input.recipient), 10000).catch(() => null),
+    nearPair ? timeout(intearRoute(input.from, input.to, input.amount, input.accountId || input.refundTo, slip), 8000).catch(() => null) : Promise.resolve(null),
+    nearPair ? timeout(refRoute(input.from, input.to, input.amount, input.accountId || input.refundTo, slip), 8000).catch(() => null) : Promise.resolve(null),
+  ]);
+  const routes = [...(intents.route ? [intents.route] : []), ...evm, ...lifi, ...(jupiter ? [jupiter] : []), ...(debridge ? [debridge] : []), ...(intear ? [intear] : []), ...(ref ? [ref] : [])];
+  const minimum = /1,000|minimum swap/i.test(intents.error);
+  const error = minimum ? "No venue quoted this size. NEAR Intents currently requires $1,000, and the other exchanges did not return a route." : intents.error || (cross ? "No route for this pair." : "No live route for this pair.");
+  return { routes, error };
+}
+
 export async function quoteRoutes(input: {
   from: Token;
   to: Token;
@@ -484,29 +597,14 @@ export async function quoteRoutes(input: {
   slippageBps?: number;
   purpose?: "Swap" | "Spot";
 }) {
-  const slip = input.slippageBps ?? 100;
+  const asked = input.slippageBps ?? 100;
   const purpose = input.purpose ?? "Swap";
-  const cross = input.from.chain !== input.to.chain;
-  const intentsJob = () =>
-    timeout(intentsRoute(input.from, input.to, input.amount, input.accountId || input.refundTo, input.refundTo, input.recipient, slip, purpose), 16000)
-      .then((route) => ({ route, error: "" }))
-      .catch((error: unknown) => ({ route: null, error: error instanceof Error && error.message !== "timeout" ? error.message : "NEAR Intents has no quote for this pair." }));
-
-  const sameKind = chainByLabel(input.from.chain)?.kind;
-  const usd = Number(input.amount) * (input.from.price || 0);
-  const nearPair = input.from.chain === "NEAR" && input.to.chain === "NEAR";
-  const [intents, evm, lifi, jupiter, debridge, intear] = await Promise.all([
-    usd >= 1000 ? intentsJob() : Promise.resolve({ route: null as LiveRoute | null, error: "" }),
-    !cross && sameKind === "evm"
-      ? timeout(evmDexRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), 8000).catch(() => [] as LiveRoute[])
-      : Promise.resolve([] as LiveRoute[]),
-    timeout(lifiRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient), cross ? 12000 : 8000).catch(() => [] as LiveRoute[]),
-    !cross && sameKind === "sol" ? timeout(jupiterRoute(input.from, input.to, input.amount, input.refundTo), 8000).catch(() => null) : Promise.resolve(null),
-    timeout(debridgeRoute(input.from, input.to, input.amount, input.refundTo, input.recipient), 10000).catch(() => null),
-    nearPair ? timeout(intearRoute(input.from, input.to, input.amount, input.accountId || input.refundTo), 8000).catch(() => null) : Promise.resolve(null),
-  ]);
-  const routes = [...(intents.route ? [intents.route] : []), ...evm, ...lifi, ...(jupiter ? [jupiter] : []), ...(debridge ? [debridge] : []), ...(intear ? [intear] : [])];
-  const minimum = /1,000|minimum swap/i.test(intents.error);
-  if (!routes.length) throw new Error(minimum ? "No venue quoted this size. NEAR Intents currently requires $1,000, and the other exchanges did not return a route." : intents.error || (cross ? "No route for this pair." : "No live route for this pair."));
-  return routes.sort((a, b) => a.impact - b.impact || b.receive - a.receive);
+  const bands = purpose === "Spot" ? [...new Set([Math.max(asked, 1500), 5000])] : [asked];
+  let last = "";
+  for (const slippageBps of bands) {
+    const found = await collectRoutes({ ...input, slippageBps, purpose });
+    if (found.routes.length) return found.routes.sort((a, b) => a.impact - b.impact || b.receive - a.receive);
+    last = found.error;
+  }
+  throw new Error(last || "No live route for this pair.");
 }

@@ -49,7 +49,7 @@ function label(exchange: string) {
   return clean.replace(/V3/g, "v3").replace(/V2/g, "v2");
 }
 
-async function kyber(from: Side, to: Side, units: string, sender: string, recipient: string, amount: string): Promise<BuiltSwap | null> {
+async function kyber(from: Side, to: Side, units: string, sender: string, recipient: string, amount: string, slippageBps = 1500): Promise<BuiltSwap | null> {
   const slug = KYBER[from.chainId];
   if (!slug) return null;
   const quote = async () => {
@@ -78,7 +78,7 @@ async function kyber(from: Side, to: Side, units: string, sender: string, recipi
       const built = await fetch(`https://aggregator-api.kyberswap.com/${slug}/api/v1/route/build`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ routeSummary: fresh, sender, recipient, slippageTolerance: 50 }),
+        body: JSON.stringify({ routeSummary: fresh, sender, recipient, slippageTolerance: slippageBps }),
       });
       if (!built.ok) throw new Error("KyberSwap did not return a transaction. Nothing was sent.");
       const body = (await built.json()) as { data?: { routerAddress?: string; data?: string; transactionValue?: string; amountOut?: string } };
@@ -92,7 +92,7 @@ async function kyber(from: Side, to: Side, units: string, sender: string, recipi
   };
 }
 
-async function paraswap(from: Side, to: Side, units: string, sender: string, recipient: string, amount: string): Promise<BuiltSwap | null> {
+async function paraswap(from: Side, to: Side, units: string, sender: string, recipient: string, amount: string, slippageBps = 1500): Promise<BuiltSwap | null> {
   if (!PARASWAP.has(from.chainId)) return null;
   const quote = async (nextUnits: string) => {
     const url = `https://apiv5.paraswap.io/prices?srcToken=${from.address}&destToken=${to.address}&amount=${nextUnits}&srcDecimals=${from.decimals}&destDecimals=${to.decimals}&side=SELL&network=${from.chainId}&userAddress=${sender}`;
@@ -130,7 +130,7 @@ async function paraswap(from: Side, to: Side, units: string, sender: string, rec
           receiver: recipient,
           srcDecimals: from.decimals,
           destDecimals: to.decimals,
-          slippage: 100,
+          slippage: slippageBps,
         }),
       });
       if (!response.ok) throw new Error("ParaSwap did not return a transaction. Nothing was sent.");
@@ -149,7 +149,7 @@ async function paraswap(from: Side, to: Side, units: string, sender: string, rec
   };
 }
 
-export async function evmDexRoutes(from: Token, to: Token, amount: string, sender: string, recipient: string): Promise<BuiltSwap[]> {
+export async function evmDexRoutes(from: Token, to: Token, amount: string, sender: string, recipient: string, slippageBps = 1500): Promise<BuiltSwap[]> {
   if (from.chain !== to.chain) return [];
   const origin = sideOf(from);
   const destination = sideOf(to);
@@ -158,8 +158,8 @@ export async function evmDexRoutes(from: Token, to: Token, amount: string, sende
   const units = parseUnits(amount, origin.decimals);
   if (!units) return [];
   const found = await Promise.all([
-    kyber(origin, destination, units, sender, recipient, amount).catch(() => null),
-    paraswap(origin, destination, units, sender, recipient, amount).catch(() => null),
+    kyber(origin, destination, units, sender, recipient, amount, slippageBps).catch(() => null),
+    paraswap(origin, destination, units, sender, recipient, amount, slippageBps).catch(() => null),
   ]);
   return found.filter((route): route is BuiltSwap => Boolean(route && route.receive > 0));
 }
