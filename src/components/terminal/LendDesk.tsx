@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ArrowLeft, Search, TriangleAlert } from "lucide-react";
-import { borrowRoom, healthFactor, LEND_MARKETS, px, qty, tokenBySymbol, TOKENS, usd, type LendMarket } from "@/lib/market";
+import { LEND_MARKETS, px, qty, tokenBySymbol, TOKENS, usd, type LendMarket } from "@/lib/market";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { ConfirmGate } from "@/components/terminal/ConfirmGate";
 import { borrowFromBurrow, lendDecimals, readMarketConfigs, repayOnBurrow, supplyOnBurrow, warmBurrow, withdrawFromBurrow, type MarketConfig, type RatePoint } from "@/lib/burrow";
-import { armWalletPopup, cancelNearSigning, syncWallet } from "@/lib/near-wallet";
+import { armWalletPopup, cancelNearSigning, syncWallet, warmNearSigner } from "@/lib/near-wallet";
 import { iconFor, lendIcon, loadIconBook } from "@/lib/dex";
 import { useDesk } from "@/lib/store";
 import { cn } from "@/lib/cn";
@@ -74,6 +74,7 @@ export function LendDesk() {
   }
 
   useEffect(() => {
+    warmNearSigner();
     if (accountId) void syncWallet(accountId);
   }, [accountId]);
   useEffect(() => {
@@ -110,10 +111,11 @@ export function LendDesk() {
     if (!accountId || !warmKey) return;
     warmBurrow(accountId, warmKey.split(","));
   }, [accountId, warmKey]);
-  const suppliedUsd = Object.entries(supplied).reduce((sum, [symbol, value]) => sum + value * (tokenBySymbol(symbol).price || 0), 0);
-  const debtUsd = Object.entries(loans).reduce((sum, [symbol, value]) => sum + value * (tokenBySymbol(symbol).price || 0), 0);
-  const health = healthFactor(supplied, loans);
-  const room = borrowRoom(supplied, loans);
+  const suppliedUsd = Object.entries(supplied).reduce((sum, [symbol, value]) => sum + value * priceOf(symbol), 0);
+  const debtUsd = Object.entries(loans).reduce((sum, [symbol, value]) => sum + value * priceOf(symbol), 0);
+  const credit = collateralCredit(supplied, configs);
+  const health = debtUsd <= 0 ? (credit > 0 ? 99 : 0) : credit / debtUsd;
+  const room = Math.max(0, credit - debtUsd);
   const totals = useMemo(() => {
     return markets.reduce(
       (sum, market) => {
@@ -836,6 +838,28 @@ function SortButton({ label, active, dir, align, onClick }: { label: string; act
       <span className={cn("w-3 text-center", active ? "text-fg" : "text-transparent")}>{dir === "asc" ? "↑" : "↓"}</span>
     </button>
   );
+}
+
+function priceOf(symbol: string) {
+  const market = LEND_MARKETS.find((item) => item.symbol === symbol || item.ticker === symbol || item.token?.toLowerCase() === symbol.toLowerCase());
+  if (market && market.price > 0) return market.price;
+  const listed = tokenBySymbol(symbol).price;
+  if (listed > 0) return listed;
+  if (STABLES.has(symbol.toUpperCase())) return 1;
+  return 0;
+}
+
+function collateralCredit(book: Record<string, number>, configs: Record<string, MarketConfig>) {
+  let credit = 0;
+  for (const [symbol, amount] of Object.entries(book)) {
+    if (!(amount > 0)) continue;
+    const market = LEND_MARKETS.find((item) => item.symbol === symbol || item.ticker === symbol || item.token?.toLowerCase() === symbol.toLowerCase());
+    const config = market?.token ? configs[market.token.toLowerCase()] : configs[symbol.toLowerCase()];
+    if (config && !config.collateral) continue;
+    const ltv = config && config.ltv > 1 ? config.ltv / 100 : config && config.ltv > 0 ? config.ltv : 0.75;
+    credit += amount * priceOf(symbol) * ltv;
+  }
+  return credit;
 }
 
 function blank(symbol: string, token: string): LendMarket {

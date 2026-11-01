@@ -1,6 +1,6 @@
 import { parseUnits } from "@/lib/intents";
 import { TOKENS } from "@/lib/market";
-import { isRegisteredOn, nearFunctionCall, sendNearTransactions, type NearCall } from "@/lib/near-wallet";
+import { isRegisteredOn, nearFunctionCall, registrationCached, sendNearTransactions, type NearCall } from "@/lib/near-wallet";
 
 const BURROW = "contract.main.burrow.near";
 const MIN_STORAGE = 100_000_000_000_000_000_000_000n;
@@ -64,24 +64,38 @@ export async function repayOnBurrow(accountId: string, token: string, amount: st
   await sendToken(accountId, token, units, msg);
 }
 
+const KNOWN_EXTRA: Record<string, number> = {
+  "usdt.tether-token.near": 12,
+  "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": 12,
+};
+
+function extraOf(token: string) {
+  const id = token.toLowerCase();
+  return extraCache?.[id] ?? KNOWN_EXTRA[id] ?? 0;
+}
+
+function innerAmount(token: string, units: string) {
+  const extra = extraOf(token);
+  if (!/^\d+$/.test(units)) throw new Error("Enter an amount.");
+  if (extra <= 0) return units;
+  return (BigInt(units) * 10n ** BigInt(extra)).toString();
+}
+
 async function sendToken(accountId: string, token: string, units: string, msg: string) {
   const txs: { receiverId: string; actions: NearCall[] }[] = [];
-  const [onBurrow, onToken, raw] = await Promise.all([
-    isRegisteredOn(BURROW, accountId),
-    isRegisteredOn(token, accountId),
-    token === "wrap.near" ? ftRaw(accountId, token) : Promise.resolve("0"),
-  ]);
-  if (!onBurrow) {
+  if (!registrationCached(BURROW, accountId)) {
     txs.push({ receiverId: BURROW, actions: [nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, MIN_STORAGE)] });
   }
   if (token === "wrap.near") {
+    const cached = wrappedCache.get(accountId);
+    const raw = cached && Date.now() - cached.at < 30_000 ? cached.raw : await ftRaw(accountId, token);
     const wrapped = BigInt(raw || "0");
     const need = BigInt(units);
     const prep: NearCall[] = [];
-    if (!onToken) prep.push(nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, MIN_STORAGE));
+    if (!registrationCached(token, accountId)) prep.push(nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, MIN_STORAGE));
     if (wrapped < need) prep.push(nearCall("near_deposit", {}, 30_000_000_000_000n, need - wrapped));
     if (prep.length) txs.push({ receiverId: token, actions: prep });
-  } else if (!onToken) {
+  } else if (!registrationCached(token, accountId)) {
     txs.push({ receiverId: token, actions: [nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, MIN_STORAGE)] });
   }
   txs.push({
@@ -89,13 +103,6 @@ async function sendToken(accountId: string, token: string, units: string, msg: s
     actions: [nearCall("ft_transfer_call", { receiver_id: BURROW, amount: units, msg }, 180_000_000_000_000n, 1n)],
   });
   await sendNearTransactions(accountId, txs);
-}
-
-async function innerAmount(token: string, units: string) {
-  const extra = (await extraDecimals())[token.toLowerCase()] ?? 0;
-  if (!/^\d+$/.test(units)) throw new Error("Enter an amount.");
-  if (extra <= 0) return units;
-  return (BigInt(units) * 10n ** BigInt(extra)).toString();
 }
 
 const TOKEN_DECIMALS: Record<string, number> = {
@@ -249,10 +256,15 @@ function mix(from: bigint, to: bigint, t: number) {
   return from + ((to - from) * weight) / parts;
 }
 
+const wrappedCache = new Map<string, { at: number; raw: string }>();
+
 export function warmBurrow(accountId: string, tokens: string[]) {
   void extraDecimals().catch(() => undefined);
-  const ids = new Set([BURROW, ...tokens.filter(Boolean)]);
+  const ids = new Set([BURROW, "wrap.near", ...tokens.filter(Boolean)]);
   for (const id of ids) void isRegisteredOn(id, accountId).catch(() => undefined);
+  void ftRaw(accountId, "wrap.near")
+    .then((raw) => wrappedCache.set(accountId, { at: Date.now(), raw }))
+    .catch(() => undefined);
 }
 
 if (typeof window !== "undefined") void extraDecimals().catch(() => undefined);

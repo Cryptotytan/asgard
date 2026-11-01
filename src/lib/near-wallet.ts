@@ -159,6 +159,15 @@ function boot() {
   return booted;
 }
 
+export function warmNearSigner() {
+  void boot()
+    .then(async () => {
+      const selector = await selectorPromise;
+      if (selector) await selector.wallet().catch(() => undefined);
+    })
+    .catch(() => undefined);
+}
+
 export function openNearWallets() {
   return boot().then(() => {
     if (!modalShow) throw new Error("Wallet list did not open.");
@@ -499,6 +508,98 @@ export async function stakeNear(accountId: string, yocto: string) {
   return hashOf(outcome);
 }
 
+const VAULT_IN: Record<string, { contract: string; decimals: number }> = {
+  USDC: { contract: "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", decimals: 6 },
+  ETH: { contract: "eth.bridge.near", decimals: 18 },
+};
+
+type RefHop = { pool_id?: string; token_in?: string; token_out?: string; amount_in?: string; min_amount_out?: string };
+type RefReady = { tokenIn: string; hops: { pool_id: number; token_in: string; token_out: string; amount_in: string; min_amount_out: string }[]; unwrap?: string };
+
+const vaultQuotes = new Map<string, Promise<RefReady | null>>();
+
+function unitsOf(amount: string, decimals: number) {
+  const cleaned = amount.trim();
+  if (!/^\d+(\.\d*)?$/.test(cleaned)) return "";
+  const [whole, frac = ""] = cleaned.split(".");
+  return `${whole}${frac.slice(0, decimals).padEnd(decimals, "0")}`.replace(/^0+/, "") || "0";
+}
+
+async function findRef(tokenIn: string, tokenOut: string, units: string): Promise<RefReady | null> {
+  if (!units || units === "0") return null;
+  const response = await fetch(
+    `https://smartrouter.ref.finance/findPath?amountIn=${units}&tokenIn=${encodeURIComponent(tokenIn)}&tokenOut=${encodeURIComponent(tokenOut)}&pathDeep=3&slippage=0.05`,
+  );
+  if (!response.ok) return null;
+  const body = (await response.json()) as { result_code?: number; result_data?: { routes?: { pools?: RefHop[] }[] } };
+  const hops = (body.result_data?.routes?.[0]?.pools ?? [])
+    .map((pool) => ({
+      pool_id: Number(pool.pool_id),
+      token_in: pool.token_in || "",
+      token_out: pool.token_out || "",
+      amount_in: pool.amount_in || "",
+      min_amount_out: pool.min_amount_out || "",
+    }))
+    .filter((pool) => pool.pool_id > 0 && pool.token_in && pool.token_out && pool.amount_in && pool.min_amount_out);
+  if (body.result_code !== 0 || !hops.length) return null;
+  const last = hops[hops.length - 1];
+  return { tokenIn, hops, unwrap: tokenOut === "wrap.near" ? last.min_amount_out : undefined };
+}
+
+export function primeVaultMove(symbol: string, amount: string, direction: "in" | "out") {
+  const key = `${direction}:${symbol}:${amount}`;
+  if (vaultQuotes.has(key)) return;
+  const job =
+    direction === "in"
+      ? (() => {
+          const spec = VAULT_IN[symbol];
+          return spec ? findRef(spec.contract, "meta-pool.near", unitsOf(amount, spec.decimals)) : Promise.resolve(null);
+        })()
+      : findRef("meta-pool.near", "wrap.near", unitsOf(amount, 24));
+  vaultQuotes.set(key, job);
+  void job.finally(() => {
+    window.setTimeout(() => vaultQuotes.delete(key), 20_000);
+  });
+}
+
+async function sendRef(accountId: string, ready: RefReady) {
+  const txs: { receiverId: string; actions: Call[] }[] = [
+    {
+      receiverId: "v2.ref-finance.near",
+      actions: [call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, 10_000_000_000_000_000_000n)],
+    },
+    {
+      receiverId: ready.tokenIn,
+      actions: [
+        call(
+          "ft_transfer_call",
+          {
+            receiver_id: "v2.ref-finance.near",
+            amount: ready.hops[0]?.amount_in,
+            msg: JSON.stringify({ force: 0, actions: ready.hops }),
+          },
+          280_000_000_000_000n,
+          1n,
+        ),
+      ],
+    },
+  ];
+  if (ready.unwrap && ready.unwrap !== "0") {
+    txs.push({
+      receiverId: "wrap.near",
+      actions: [call("near_withdraw", { amount: ready.unwrap }, 30_000_000_000_000n, 1n)],
+    });
+  }
+  await sendNearTransactions(accountId, txs);
+}
+
+export async function moveVault(accountId: string, symbol: string, amount: string, direction: "in" | "out") {
+  const key = `${direction}:${symbol}:${amount}`;
+  const ready = await (vaultQuotes.get(key) ?? (direction === "in" ? findRef(VAULT_IN[symbol]?.contract ?? "", "meta-pool.near", unitsOf(amount, VAULT_IN[symbol]?.decimals ?? 0)) : findRef("meta-pool.near", "wrap.near", unitsOf(amount, 24))));
+  if (!ready) throw new Error("No stNEAR pool can take that size right now.");
+  await sendRef(accountId, ready);
+}
+
 export async function sendNearTransactions(accountId: string, transactions: { receiverId: string; actions: Call[] }[]) {
   if (localStorage.getItem(READONLY_STORE)) {
     await boot();
@@ -622,6 +723,10 @@ export function nearFunctionCall(methodName: string, args: object, gas: bigint, 
 
 export async function isRegisteredOn(contractId: string, accountId: string) {
   return isRegistered(contractId, accountId);
+}
+
+export function registrationCached(contractId: string, accountId: string) {
+  return registeredYes.has(`${contractId}:${accountId}`);
 }
 
 const registeredYes = new Set<string>();

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { fmt, qty, tokenBySymbol, usd } from "@/lib/market";
+import { parseUnits } from "@/lib/intents";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
-import { executeIntent, loadIntentAssets, parseUnits } from "@/lib/intents";
-import { armWalletPopup, cancelNearSigning, stakeNear, syncWallet } from "@/lib/near-wallet";
+import { armWalletPopup, cancelNearSigning, moveVault, primeVaultMove, stakeNear, syncWallet, warmNearSigner } from "@/lib/near-wallet";
 import { useDesk } from "@/lib/store";
 import { ConfirmGate } from "@/components/terminal/ConfirmGate";
 
@@ -33,9 +33,14 @@ export function VaultDesk() {
   const staked = chain.STNEAR ?? chain.stNEAR ?? 0;
   const value = staked * tokenBySymbol("STNEAR").price;
   useEffect(() => {
+    warmNearSigner();
     if (accountId) void syncWallet(accountId);
-    void loadIntentAssets().catch(() => undefined);
   }, [accountId]);
+  useEffect(() => {
+    const n = Number(amount) || 0;
+    if (n <= 0) return;
+    primeVaultMove(withdrawing ? "STNEAR" : symbol, amount, withdrawing ? "out" : "in");
+  }, [amount, symbol, withdrawing]);
 
   async function run(kind: "in" | "out") {
     if (!connected || !accountId) {
@@ -66,7 +71,7 @@ export function VaultDesk() {
     setBusy(true);
     const title = kind === "out" ? "Withdraw stNEAR" : symbol === "NEAR" ? "Stake NEAR" : `Deposit ${symbol}`;
     setFlight({ title, detail: `${fmt(n)} ${kind === "out" ? "stNEAR" : symbol}` });
-    setNote(kind === "in" && symbol === "NEAR" ? "Confirm the stake in your NEAR wallet. Meta Pool mints stNEAR." : kind === "in" ? "Confirm the swap into stNEAR on NEAR Intents." : "Confirm the swap out of stNEAR on NEAR Intents.");
+    setNote(kind === "in" && symbol === "NEAR" ? "Confirm the stake in your NEAR wallet. Meta Pool mints stNEAR." : kind === "in" ? "Confirm the swap into stNEAR." : "Confirm the swap out of stNEAR.");
     try {
       if (kind === "in" && symbol === "NEAR") {
         const yocto = parseUnits(String(n), 24);
@@ -77,20 +82,13 @@ export function VaultDesk() {
         setAmount("");
         setNote(`Staked ${fmt(n)} NEAR. stNEAR arrives in this wallet.`);
       } else if (kind === "in") {
-        const result = await executeIntent({ from: symbol, to: "STNEAR", amount: String(n), accountId, purpose: "Vault deposit" });
+        await moveVault(wallet, symbol, String(n), "in");
         if (flightGen.current !== generation || useDesk.getState().accountId !== wallet) return;
         await syncWallet(wallet);
         setAmount("");
-        setNote(`Deposited into stNEAR. ${result.status}.`);
+        setNote(`Deposited ${fmt(n)} ${symbol} into stNEAR.`);
       } else {
-        await executeIntent({
-          from: "STNEAR",
-          to: "NEAR",
-          amount: String(n),
-          accountId,
-          purpose: "Vault withdraw",
-          maxPay: staked,
-        });
+        await moveVault(wallet, "STNEAR", String(n), "out");
         if (flightGen.current !== generation || useDesk.getState().accountId !== wallet) return;
         await syncWallet(wallet);
         setAmount("");
