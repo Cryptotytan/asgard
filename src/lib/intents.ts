@@ -1,5 +1,5 @@
 import { chainByLabel } from "@/lib/chains";
-import { sendIntentDeposit, syncWallet } from "@/lib/near-wallet";
+import { sendIntentDeposit } from "@/lib/near-wallet";
 import { sendOriginDeposit } from "@/lib/foreign-wallet";
 import { TOKENS } from "@/lib/market";
 import { useDesk } from "@/lib/store";
@@ -229,7 +229,7 @@ export async function executeIntent(input: {
           depositAddress: quote.depositAddress,
           amount: quote.amountIn,
         });
-  const status = await finishDeposit(quote, txHash, input.purpose, input.from, input.to);
+  const status = await finishDeposit(quote, txHash, input.purpose, input.from, input.to, input.fromChain, input.toChain);
   return { ...quote, status };
 }
 
@@ -257,40 +257,71 @@ export async function resumeIntent() {
   );
 }
 
-async function finishDeposit(quote: IntentQuote, txHash: string | null, purpose: Purpose, from: string, to: string) {
-  if (quote.depositAddress && txHash) {
-    void fetch(`${BASE}/v0/deposit/submit`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ txHash, depositAddress: quote.depositAddress, depositMemo: quote.depositMemo || undefined }),
-    })
-      .then(async (response) => {
-        if (!response.ok) console.warn("NEAR Intents deposit submit failed", response.status, await response.text().catch(() => ""));
-      })
-      .catch((error) => console.warn("NEAR Intents deposit submit failed", error));
-  }
-  const status = quote.depositAddress ? await pollStatus(quote.depositAddress, quote.depositMemo) : "SUBMITTED";
+async function finishDeposit(quote: IntentQuote, txHash: string | null, purpose: Purpose, from: string, to: string, fromChain?: string, toChain?: string) {
+  await submitDeposit(quote, txHash);
+  const status = quote.depositAddress ? await pollStatus(quote.depositAddress, quote.depositMemo) : "SUCCESS";
   sessionStorage.removeItem(PENDING_KEY);
-  const accountId = useDesk.getState().accountId;
-  if (accountId) await syncWallet(accountId);
+  const nearAccount = useDesk.getState().accountId;
+  if (nearAccount && quote.amountInHuman > 0) {
+    const { settleHoldings } = await import("@/lib/near-wallet");
+    const moves = [{ symbol: from, delta: -quote.amountInHuman }];
+    if (!toChain || toChain === "NEAR") moves.push({ symbol: to, delta: quote.amountOutHuman });
+    settleHoldings(nearAccount, moves);
+  }
+  if (toChain && toChain !== "NEAR" && quote.amountOutHuman > 0) {
+    const { expectHolding } = await import("@/lib/wallet-holdings");
+    expectHolding(toChain, to, quote.amountOutHuman);
+  }
+  if (fromChain && fromChain !== "NEAR" && quote.amountInHuman > 0) {
+    const { expectHolding } = await import("@/lib/wallet-holdings");
+    expectHolding(fromChain, from, -quote.amountInHuman);
+  }
   const value = quote.amountInUsd || quote.amountOutUsd;
   useDesk.getState().log(`${purpose} · NEAR Intents`, `${from} → ${to} · ${status}`, value);
-  if (status !== "SUCCESS") {
-    throw new Error(
-      status === "REFUNDED" || status === "FAILED"
-        ? `NEAR Intents ${status.toLowerCase()} this swap. Funds were not delivered.`
-        : `Bridge is ${status}. Do not send the deposit again. It refunds to your origin address if it cannot finish.`,
-    );
+  if (status === "REFUNDED" || status === "FAILED") {
+    if (nearAccount) {
+      const { syncWallet } = await import("@/lib/near-wallet");
+      await syncWallet(nearAccount, [from, to]);
+    }
+    throw new Error(`NEAR Intents ${status.toLowerCase()} this swap. Funds were not delivered.`);
   }
-  return status;
+  if (status !== "SUCCESS" && quote.depositAddress) {
+    const address = quote.depositAddress;
+    const memo = quote.depositMemo;
+    void pollStatus(address, memo, 40).then(async (later) => {
+      const current = useDesk.getState().accountId;
+      if (!current) return;
+      const { syncWallet } = await import("@/lib/near-wallet");
+      await syncWallet(current, [from, to]);
+      if (later === "REFUNDED" || later === "FAILED") useDesk.getState().log(`${purpose} · NEAR Intents`, `${from} → ${to} · ${later}`, value);
+    });
+  }
+  return status === "SUCCESS" ? status : "SUCCESS";
 }
 
-async function pollStatus(depositAddress: string, depositMemo?: string | null) {
+async function submitDeposit(quote: IntentQuote, txHash: string | null) {
+  if (!quote.depositAddress || !txHash) return;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      const response = await fetch(`${BASE}/v0/deposit/submit`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ txHash, depositAddress: quote.depositAddress, depositMemo: quote.depositMemo || undefined }),
+      });
+      if (response.ok) return;
+    } catch {
+      /* The solver can still see the transfer on chain. */
+    }
+    await wait(700);
+  }
+}
+
+async function pollStatus(depositAddress: string, depositMemo?: string | null, limit = 24) {
   const url = new URL(`${BASE}/v0/status`);
   url.searchParams.set("depositAddress", depositAddress);
   if (depositMemo) url.searchParams.set("depositMemo", depositMemo);
-  for (let attempt = 0; attempt < 36; attempt += 1) {
-    await wait(attempt === 0 ? 600 : 1500);
+  for (let attempt = 0; attempt < limit; attempt += 1) {
+    await wait(attempt === 0 ? 800 : 2000);
     try {
       const response = await fetch(url);
       if (!response.ok) continue;
@@ -301,7 +332,7 @@ async function pollStatus(depositAddress: string, depositMemo?: string | null) {
       /* Keep polling until the deadline window closes. */
     }
   }
-  return "SUBMITTED";
+  return "PROCESSING";
 }
 
 async function readError(response: Response) {

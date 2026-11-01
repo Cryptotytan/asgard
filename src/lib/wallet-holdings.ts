@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { CHAINS_META, chainByLabel, chainRpcs } from "@/lib/chains";
 import { TOKENS, ensureToken } from "@/lib/market";
 import { useDesk } from "@/lib/store";
-import type { LinkedWallet } from "@/lib/foreign-wallet";
+import { foreignWallets, type LinkedWallet } from "@/lib/foreign-wallet";
 
 const cache = new Map<string, Record<string, number>>();
 const inflight = new Map<string, Promise<Record<string, number>>>();
@@ -10,6 +10,47 @@ const inflight = new Map<string, Promise<Record<string, number>>>();
 export function holdingOf(id: "near" | "evm" | "sol" | "btc", address: string, symbol: string) {
   if (id === "near") return useDesk.getState().chain[symbol] ?? useDesk.getState().balances[symbol] ?? 0;
   return cache.get(`${id}:${address.toLowerCase()}`)?.[symbol] ?? 0;
+}
+
+const pendingForeign = new Map<string, { target: number; dir: 1 | -1; until: number }>();
+
+function overlayForeign(key: string, book: Record<string, number>) {
+  const now = Date.now();
+  for (const [id, item] of pendingForeign) {
+    if (!id.startsWith(`${key}:`)) continue;
+    if (item.until < now) {
+      pendingForeign.delete(id);
+      continue;
+    }
+    const symbol = id.slice(key.length + 1);
+    const got = book[symbol] ?? 0;
+    const reached = item.dir > 0 ? got + 1e-8 >= item.target * 0.8 && got > 0 : got <= item.target + Math.max(1e-8, Math.abs(item.target) * 0.05);
+    if (reached) pendingForeign.delete(id);
+    else book[symbol] = Math.max(0, item.target);
+  }
+  return book;
+}
+
+export function expectHolding(chainLabel: string, symbol: string, delta: number) {
+  const chain = chainByLabel(chainLabel);
+  if (!chain || chain.kind === "near" || chain.kind === "other" || !symbol || !Number.isFinite(delta) || delta === 0) return;
+  const wallets = foreignWallets();
+  const address = chain.kind === "evm" ? wallets.evm : chain.kind === "sol" ? wallets.sol : wallets.btc;
+  if (!address) return;
+  const key = `${chain.kind}:${address.toLowerCase()}`;
+  const book = overlayForeign(key, { ...(cache.get(key) ?? {}) });
+  const target = Math.max(0, (book[symbol] ?? 0) + delta);
+  book[symbol] = target;
+  pendingForeign.set(`${key}:${symbol}`, { target, dir: delta > 0 ? 1 : -1, until: Date.now() + 180_000 });
+  cache.set(key, book);
+  useDesk.setState({ clock: useDesk.getState().clock + 1 });
+  const kind: "evm" | "sol" | "btc" = chain.kind === "sol" ? "sol" : chain.kind === "btc" ? "btc" : "evm";
+  const pull = () => {
+    cache.delete(key);
+    inflight.delete(key);
+    void loadHoldings(kind, address).then(() => useDesk.setState({ clock: useDesk.getState().clock + 1 }));
+  };
+  for (const delay of [2500, 7000, 16000, 32000]) window.setTimeout(pull, delay);
 }
 
 export function creditHolding(id: "near" | "evm" | "sol" | "btc", address: string, symbol: string, amount: number) {
@@ -93,7 +134,7 @@ async function loadHoldings(id: "evm" | "sol" | "btc", address: string) {
   if (pending) return pending;
   const job = (id === "evm" ? evmBook(address) : id === "sol" ? solBook(address) : btcBook(address))
     .then((book) => {
-      cache.set(key, book);
+      cache.set(key, overlayForeign(key, book));
       inflight.delete(key);
       return book;
     })

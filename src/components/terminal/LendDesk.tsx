@@ -5,7 +5,7 @@ import { LEND_MARKETS, px, qty, tokenBySymbol, TOKENS, usd, type LendMarket } fr
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { ConfirmGate } from "@/components/terminal/ConfirmGate";
 import { borrowFromBurrow, lendDecimals, readMarketConfigs, repayOnBurrow, supplyOnBurrow, warmBurrow, withdrawFromBurrow, type MarketConfig, type RatePoint } from "@/lib/burrow";
-import { armWalletPopup, cancelNearSigning, syncWallet, warmNearSigner } from "@/lib/near-wallet";
+import { armWalletPopup, cancelNearSigning, settleHoldings, syncWallet, warmNearSigner } from "@/lib/near-wallet";
 import { iconFor, lendIcon, loadIconBook } from "@/lib/dex";
 import { useDesk } from "@/lib/store";
 import { cn } from "@/lib/cn";
@@ -238,6 +238,8 @@ export function LendDesk() {
       else await repayOnBurrow(wallet, token, String(qtyN), decimals);
       await syncWallet(wallet);
       if (flightGen.current !== generation) return;
+      const delta = kind === "supply" || kind === "repay" ? -qtyN : qtyN;
+      settleHoldings(wallet, [{ symbol: market.symbol, delta }]);
       const verb = kind === "supply" ? "Supplied" : kind === "withdraw" ? "Withdrew" : kind === "borrow" ? "Borrowed" : "Repaid";
       setNote(`${verb} ${qty(qtyN)} ${tickerOf(market)} on Rhea.`);
       setAmount("");

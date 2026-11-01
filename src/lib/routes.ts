@@ -2,7 +2,7 @@ import { chainByLabel, validAddress } from "@/lib/chains";
 import { evmDexRoutes } from "@/lib/evm-dex";
 import { ensureEvmAllowance, sendEvmCall, sendSolanaSerialized } from "@/lib/foreign-wallet";
 import { executeIntent, parseUnits, quoteIntent } from "@/lib/intents";
-import { nearFunctionCall, sendNearTransactions } from "@/lib/near-wallet";
+import { nearFunctionCall, sendNearTransactions, settleHoldings } from "@/lib/near-wallet";
 import type { Token } from "@/lib/market";
 
 const LIFI = "https://li.quest/v1/advanced";
@@ -56,6 +56,21 @@ function timeout<T>(promise: Promise<T>, ms: number) {
 function gap(inUsd: number, outUsd: number) {
   if (!(inUsd > 0) || !(outUsd > 0)) return 0;
   return Math.max(0, (1 - outUsd / inUsd) * 100);
+}
+
+function bookTrade(from: Token, to: Token, amountIn: number, amountOut: number, accountId?: string) {
+  if (!(amountIn > 0) && !(amountOut > 0)) return;
+  if (from.chain === "NEAR" && accountId) {
+    const moves = [{ symbol: from.symbol, delta: -amountIn }];
+    if (to.chain === "NEAR") moves.push({ symbol: to.symbol, delta: amountOut });
+    settleHoldings(accountId, moves);
+  }
+  if (from.chain !== "NEAR" || to.chain !== "NEAR") {
+    void import("@/lib/wallet-holdings").then(({ expectHolding }) => {
+      if (from.chain !== "NEAR" && amountIn > 0) expectHolding(from.chain, from.symbol, -amountIn);
+      if (to.chain !== "NEAR" && amountOut > 0) expectHolding(to.chain, to.symbol, amountOut);
+    });
+  }
 }
 
 function toolName(tool: string) {
@@ -231,11 +246,13 @@ async function lifiRoutes(from: Token, to: Token, amount: string, sender: string
       execute: async () => {
         try {
           const hash = await runLifi(stepsCopy, from.chain);
+          bookTrade(from, to, Number(amount) || 0, receive, sender);
           return { status: hash, amountOutHuman: receive };
         } catch (error) {
           const again = await reloadLifiSteps(from, to, amount, sender, recipient, label, slip);
           if (!again?.length) throw error;
           const hash = await runLifi(again, from.chain);
+          bookTrade(from, to, Number(amount) || 0, receive, sender);
           return { status: hash, amountOutHuman: receive };
         }
       },
@@ -284,7 +301,9 @@ async function jupiterRoute(from: Token, to: Token, amount: string, sender: stri
       if (!body.swapTransaction) throw new Error("Jupiter did not return a transaction. Nothing was sent.");
       const hash = await sendSolanaSerialized(body.swapTransaction);
       const out = Number(freshQuote.outAmount);
-      return { status: hash, amountOutHuman: out > 0 ? out / 10 ** destination.decimals : receive };
+      const received = out > 0 ? out / 10 ** destination.decimals : receive;
+      bookTrade(from, to, Number(amount) || 0, received, sender);
+      return { status: hash, amountOutHuman: received };
     },
   };
 }
@@ -362,10 +381,12 @@ async function debridgeRoute(from: Token, to: Token, amount: string, sender: str
       if (origin.chainId === 7565164) {
         if (!body.tx?.data) throw new Error(body.errorMessage || "deBridge did not return a Solana transaction.");
         const hash = await sendSolanaSerialized(body.tx.data);
+        bookTrade(from, to, Number(amount) || 0, receive, sender);
         return { status: hash, amountOutHuman: receive };
       }
       if (!body.tx?.to || !body.tx.data) throw new Error(body.errorMessage || "deBridge did not return a transaction. Nothing was sent.");
       const hash = await sendEvmCall(from.chain, { to: body.tx.to, data: body.tx.data, value: body.tx.value });
+      bookTrade(from, to, Number(amount) || 0, receive, sender);
       return { status: hash, amountOutHuman: receive };
     },
   };
@@ -430,6 +451,7 @@ async function intearRoute(from: Token, to: Token, amount: string, accountId: st
       });
       if (!transactions.length) throw new Error("Rhea did not return a transaction. Nothing was sent.");
       const hash = await sendNearTransactions(accountId, transactions);
+      bookTrade(from, to, Number(amount) || 0, receive, accountId);
       return { status: typeof hash === "string" ? hash : "SENT", amountOutHuman: receive };
     },
   };
@@ -545,8 +567,10 @@ async function refRoute(from: Token, to: Token, amount: string, accountId: strin
           ],
         },
       ]);
-      const got = Number(next.result_data?.amount_out);
-      return { status: typeof hash === "string" ? hash : "SENT", amountOutHuman: got > 0 ? got / 10 ** outDecimals : receive };
+      const got = Number(next.result_data?.amount_out) || 0;
+      const received = got > 0 ? got / 10 ** outDecimals : receive;
+      bookTrade(from, to, Number(amount) || 0, received, accountId);
+      return { status: typeof hash === "string" ? hash : "SENT", amountOutHuman: received };
     },
   };
 }

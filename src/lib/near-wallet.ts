@@ -390,7 +390,60 @@ async function readNearBalance(accountId: string) {
   }
 }
 
-export async function syncWallet(accountId: string) {
+const pendingBalances = new Map<string, { target: number; dir: 1 | -1; until: number }>();
+
+function overlayBalances(book: Record<string, number>) {
+  const now = Date.now();
+  for (const [symbol, item] of pendingBalances) {
+    if (item.until < now) {
+      pendingBalances.delete(symbol);
+      continue;
+    }
+    const got = book[symbol] ?? 0;
+    const reached = item.dir > 0 ? got + 1e-8 >= item.target * 0.8 && got > 0 : got <= item.target + Math.max(1e-8, Math.abs(item.target) * 0.05);
+    if (reached) pendingBalances.delete(symbol);
+    else book[symbol] = Math.max(0, item.target);
+  }
+  return book;
+}
+
+export function settleHoldings(accountId: string, moves: { symbol: string; delta: number }[]) {
+  const state = useDesk.getState();
+  if (!accountId || state.accountId !== accountId.trim().toLowerCase()) return;
+  const chain = { ...state.chain };
+  const focus: string[] = [];
+  for (const move of moves) {
+    if (!move.symbol || !Number.isFinite(move.delta) || move.delta === 0) continue;
+    const target = Math.max(0, (chain[move.symbol] ?? 0) + move.delta);
+    chain[move.symbol] = target;
+    pendingBalances.set(move.symbol, { target, dir: move.delta > 0 ? 1 : -1, until: Date.now() + 180_000 });
+    focus.push(move.symbol);
+  }
+  state.applyChain(chain);
+  const pull = () => {
+    if (useDesk.getState().accountId === accountId.trim().toLowerCase()) void syncWallet(accountId, focus);
+  };
+  pull();
+  for (const delay of [2000, 5000, 12000, 25000]) window.setTimeout(pull, delay);
+}
+
+function contractFor(symbol: string) {
+  const base = symbol.split(".")[0]?.toUpperCase() ?? "";
+  const known: Record<string, string> = {
+    NEAR: "wrap.near",
+    WNEAR: "wrap.near",
+    STNEAR: "meta-pool.near",
+    USDT: "usdt.tether-token.near",
+    USDC: "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+    ETH: "eth.bridge.near",
+    WETH: "eth.bridge.near",
+    WBTC: "2260fac5e5542a773aa44fbcfedf7c193bc2c599.factory.bridge.near",
+  };
+  if (known[base]) return known[base];
+  return TOKENS.find((token) => token.chain === "NEAR" && token.symbol.toUpperCase() === symbol.toUpperCase())?.address ?? "";
+}
+
+export async function syncWallet(accountId: string, focus: string[] = []) {
   const key = accountId.trim().toLowerCase();
   if (useDesk.getState().accountId !== key) return;
   const [near, inventoryRes] = await Promise.all([
@@ -405,30 +458,35 @@ export async function syncWallet(accountId: string) {
     if (native > 0) book.NEAR = native;
     useDesk.getState().setNearYocto(near);
   }
-  const seen = new Set<string>();
-  for (const row of inventory.inventory?.fts ?? []) {
+  const rows = inventory.inventory?.fts ?? [];
+  const contracts = new Map<string, { symbol: string; decimals: number }>();
+  for (const row of rows) {
     const contract = (row.contract ?? "").toLowerCase();
     if (!contract) continue;
-    seen.add(contract);
-    const decimals = row.ft_meta?.decimals ?? decimalsOf(contract);
-    const amount = human(row.amount ?? "0", decimals);
-    if (amount <= 0) continue;
-    addBalance(book, contract, row.ft_meta?.symbol ?? "", amount);
+    contracts.set(contract, { symbol: row.ft_meta?.symbol ?? "", decimals: row.ft_meta?.decimals ?? decimalsOf(contract) });
   }
-  const extra = TOKENS.filter((token) => token.chain === "NEAR" && token.address && !seen.has(token.address.toLowerCase()));
+  for (const symbol of focus) {
+    const contract = contractFor(symbol).toLowerCase();
+    if (contract && !contracts.has(contract)) contracts.set(contract, { symbol, decimals: decimalsOf(contract) });
+  }
+  const listed = [...contracts.entries()].slice(0, 36);
+  let cursor = 0;
   await Promise.all(
-    extra.map(async (token) => {
-      const contract = token.address ?? "";
-      const raw = await ftBalance(key, contract);
-      const amount = human(raw, token.decimals ?? decimalsOf(contract));
-      if (amount <= 0) return;
-      addBalance(book, contract, token.symbol, amount);
+    Array.from({ length: Math.min(6, listed.length) }, async () => {
+      while (cursor < listed.length) {
+        const current = cursor;
+        cursor += 1;
+        const [contract, meta] = listed[current]!;
+        const raw = await ftBalance(key, contract);
+        const amount = human(raw, meta.decimals);
+        if (amount > 0) addBalance(book, contract, meta.symbol, amount);
+      }
     }),
   );
   if (useDesk.getState().accountId !== key) return;
   const meta = await metaStakeOf(key).catch(() => 0);
   if (meta > 0) book.STNEAR = (book.STNEAR ?? 0) + meta;
-  useDesk.getState().applyChain(book);
+  useDesk.getState().applyChain(overlayBalances(book));
   const { readBurrow } = await import("@/lib/burrow");
   const lending = await readBurrow(key).catch(() => null);
   if (lending && useDesk.getState().accountId === key) useDesk.getState().setLending(lending.supplied, lending.borrowed);
@@ -663,6 +721,9 @@ export function applyStake(nearSpent: number, stNearMinted: number, paid?: { sym
   chain.NEAR = Math.max(0, (chain.NEAR ?? 0) - nearSpent);
   chain.STNEAR = Math.max(0, (chain.STNEAR ?? 0) + stNearMinted);
   if (paid && paid.symbol !== "NEAR") chain[paid.symbol] = Math.max(0, (chain[paid.symbol] ?? 0) - paid.amount);
+  if (nearSpent !== 0) pendingBalances.set("NEAR", { target: chain.NEAR ?? 0, dir: nearSpent > 0 ? -1 : 1, until: Date.now() + 180_000 });
+  if (stNearMinted !== 0) pendingBalances.set("STNEAR", { target: chain.STNEAR ?? 0, dir: stNearMinted > 0 ? 1 : -1, until: Date.now() + 180_000 });
+  if (paid && paid.symbol !== "NEAR") pendingBalances.set(paid.symbol, { target: chain[paid.symbol] ?? 0, dir: -1, until: Date.now() + 180_000 });
   state.applyChain(chain);
   if (stNearMinted > 0) metaYocto += BigInt(Math.round(stNearMinted * 1e6)) * 10n ** 18n;
   if (stNearMinted < 0) metaYocto = metaYocto > BigInt(Math.round(-stNearMinted * 1e6)) * 10n ** 18n ? metaYocto - BigInt(Math.round(-stNearMinted * 1e6)) * 10n ** 18n : 0n;
@@ -771,7 +832,7 @@ async function ftBalance(accountId: string, contractId: string) {
   try {
     const result = (await rpc({
       request_type: "call_function",
-      finality: "final",
+      finality: "optimistic",
       account_id: contractId,
       method_name: "ft_balance_of",
       args_base64: btoa(JSON.stringify({ account_id: accountId })),
