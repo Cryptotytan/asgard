@@ -45,12 +45,13 @@ export function expectHolding(chainLabel: string, symbol: string, delta: number)
   book[symbol] = target;
   pendingForeign.set(`${key}:${symbol}`, { target, dir: delta > 0 ? 1 : -1, until: Date.now() + 180_000 });
   cache.set(key, book);
+  notifyHoldings(key);
   useDesk.setState({ clock: useDesk.getState().clock + 1 });
   const kind: "evm" | "sol" | "btc" = chain.kind === "sol" ? "sol" : chain.kind === "btc" ? "btc" : "evm";
   const pull = () => {
     cache.delete(key);
     inflight.delete(key);
-    void loadHoldings(kind, address).then(() => useDesk.setState({ clock: useDesk.getState().clock + 1 }));
+    void loadHoldings(kind, address, true).then(() => notifyHoldings(key));
   };
   for (const delay of [2500, 7000, 16000, 32000]) window.setTimeout(pull, delay);
 }
@@ -84,37 +85,77 @@ export async function refreshBalances(wallets: LinkedWallet[]) {
       if (wallet.id === "near") {
         const { syncWallet } = await import("@/lib/near-wallet");
         await syncWallet(wallet.address).catch(() => undefined);
+      } else {
+        await loadHoldings(wallet.id, wallet.address, true).catch(() => undefined);
+        notifyHoldings(key);
       }
     }),
   );
   useDesk.setState({ clock: useDesk.getState().clock + 1 });
 }
 
+const FOREIGN_CACHE = "asgard-foreign-v1";
+const listeners = new Set<(key: string) => void>();
+
+function notifyHoldings(key: string) {
+  for (const listener of listeners) listener(key);
+}
+
+function peekForeign(key: string) {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(`${FOREIGN_CACHE}:${key}`);
+    if (!raw) return null;
+    const book = JSON.parse(raw) as Record<string, number>;
+    return book && typeof book === "object" ? book : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeForeign(key: string, book: Record<string, number>) {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.setItem(`${FOREIGN_CACHE}:${key}`, JSON.stringify(book));
+  } catch {
+    /* private mode */
+  }
+}
+
 export function useHoldings(wallet: LinkedWallet | null) {
   const chain = useDesk((state) => state.chain);
-  const clock = useDesk((state) => state.clock);
   const [book, setBook] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!wallet) {
-      setBook({});
-      setLoading(false);
-      return;
+    if (!wallet || wallet.id !== "near") return;
+    const next: Record<string, number> = {};
+    for (const [symbol, amount] of Object.entries(chain)) {
+      if (!(amount > 0)) continue;
+      if (!TOKENS.some((token) => token.symbol === symbol)) ensureToken({ symbol, name: symbol, price: 0, chain: "NEAR" });
+      next[symbol] = amount;
     }
-    if (wallet.id === "near") {
-      const next: Record<string, number> = { ...chain };
-      for (const symbol of Object.keys(next)) {
-        if (!(next[symbol] > 0)) delete next[symbol];
-        else if (!TOKENS.some((token) => token.symbol === symbol)) ensureToken({ symbol, name: symbol, price: 0, chain: "NEAR" });
+    setBook(next);
+    setLoading(false);
+  }, [wallet?.id, wallet?.address, chain]);
+
+  useEffect(() => {
+    if (!wallet || wallet.id === "near") {
+      if (!wallet) {
+        setBook({});
+        setLoading(false);
       }
-      setBook(next);
-      setLoading(false);
       return;
     }
+    const key = `${wallet.id}:${wallet.address.toLowerCase()}`;
+    const saved = cache.get(key) ?? peekForeign(key);
+    if (saved) {
+      cache.set(key, saved);
+      setBook(saved);
+      setLoading(false);
+    } else setLoading(true);
     let cancel = false;
-    setLoading(true);
-    void loadHoldings(wallet.id, wallet.address).then((next) => {
+    void loadHoldings(wallet.id, wallet.address, true).then((next) => {
       if (cancel) return;
       setBook(next);
       setLoading(false);
@@ -122,27 +163,60 @@ export function useHoldings(wallet: LinkedWallet | null) {
     return () => {
       cancel = true;
     };
-  }, [wallet?.id, wallet?.address, clock, chain]);
+  }, [wallet?.id, wallet?.address]);
+
+  useEffect(() => {
+    if (!wallet || wallet.id === "near") return;
+    const key = `${wallet.id}:${wallet.address.toLowerCase()}`;
+    const listener = (updated: string) => {
+      if (updated !== key) return;
+      const next = cache.get(key);
+      if (next) setBook(next);
+    };
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  }, [wallet?.id, wallet?.address]);
 
   return { book, loading };
 }
 
-async function loadHoldings(id: "evm" | "sol" | "btc", address: string) {
+async function loadHoldings(id: "evm" | "sol" | "btc", address: string, fresh = false) {
   const key = `${id}:${address.toLowerCase()}`;
-  const hit = cache.get(key);
-  if (hit) return hit;
+  if (!fresh) {
+    const hit = cache.get(key);
+    if (hit) return hit;
+  }
   const pending = inflight.get(key);
   if (pending) return pending;
-  const job = (id === "evm" ? evmBook(address) : id === "sol" ? solBook(address) : btcBook(address))
-    .then((book) => {
-      cache.set(key, overlayForeign(key, book));
-      inflight.delete(key);
-      return book;
-    })
-    .catch(() => {
-      inflight.delete(key);
-      return {} as Record<string, number>;
-    });
+  const job =
+    id === "evm"
+      ? evmFast(address).then((book) => {
+          const shown = overlayForeign(key, book);
+          cache.set(key, shown);
+          storeForeign(key, shown);
+          inflight.delete(key);
+          void evmRest(address, { ...shown }).then((full) => {
+            const next = overlayForeign(key, full);
+            cache.set(key, next);
+            storeForeign(key, next);
+            notifyHoldings(key);
+          });
+          return shown;
+        })
+      : (id === "sol" ? solBook(address) : btcBook(address))
+          .then((book) => {
+            const shown = overlayForeign(key, book);
+            cache.set(key, shown);
+            storeForeign(key, shown);
+            inflight.delete(key);
+            return shown;
+          })
+          .catch(() => {
+            inflight.delete(key);
+            return cache.get(key) ?? {};
+          });
   inflight.set(key, job);
   return job;
 }
@@ -192,31 +266,28 @@ const NATIVE_SYMBOL: Record<string, string> = {
   Aurora: "ETH",
 };
 
-async function evmBook(address: string) {
+async function readEvm(address: string, chains: typeof CHAINS_META, stablesOnly: boolean) {
   const book: Record<string, number> = {};
-  const tokens = listed("evm");
+  const tokens = stablesOnly ? [] : listed("evm");
   await Promise.all(
-    CHAINS_META.filter((chain) => chain.kind === "evm" && chain.rpc).map(async (chain) => {
+    chains.map(async (chain) => {
       const mine = tokens.filter((token) => token.chain === chain.label);
       const native = mine.filter((token) => !/^0x[a-fA-F0-9]{40}$/.test(token.address ?? "")).sort((a, b) => b.price - a.price)[0];
       const forced = EVM_STABLES[chain.label] ?? [];
-      const erc20 = [
-        ...mine.filter((token) => /^0x[a-fA-F0-9]{40}$/.test(token.address ?? "") && token.decimals != null),
-        ...forced
-          .filter((token) => !mine.some((item) => item.address?.toLowerCase() === token.address.toLowerCase()))
-          .map((token) => ({ address: token.address, decimals: token.decimals, symbol: token.symbol })),
-      ];
+  const erc20: { address?: string; decimals?: number; symbol: string }[] = stablesOnly
+    ? forced
+    : mine.filter((token) => /^0x[a-fA-F0-9]{40}$/.test(token.address ?? "") && token.decimals != null && !forced.some((item) => item.address.toLowerCase() === token.address?.toLowerCase()));
       const rpcs = chainRpcs(chain);
       const [gas, balances] = await Promise.all([
-        ethBalance(rpcs, address),
-        mapPool(erc20, 6, (token) => tokenBalance(rpcs, token.address!, address)),
+        stablesOnly ? ethBalance(rpcs, address) : Promise.resolve(0n),
+        erc20.length ? mapPool(erc20, 6, (token) => tokenBalance(rpcs, token.address!, address)) : Promise.resolve([]),
       ]);
       if (gas > 0n) {
-        const symbol = native?.symbol || NATIVE_SYMBOL[chain.label] || chain.label;
-        const decimals = native?.decimals ?? 18;
-        book[symbol] = (book[symbol] ?? 0) + Number(gas) / 10 ** decimals;
-        if (native) native.listed = true;
-        else ensureToken({ symbol, name: symbol, price: 0, chain: chain.label }).listed = true;
+        const symbol = native?.symbol || NATIVE_SYMBOL[chain.label] || "";
+        if (symbol) {
+          book[symbol] = (book[symbol] ?? 0) + Number(gas) / 10 ** (native?.decimals ?? 18);
+          if (!native) ensureToken({ symbol, name: symbol, price: 0, chain: chain.label }).listed = true;
+        }
       }
       erc20.forEach((token, index) => {
         const raw = balances[index];
@@ -226,6 +297,26 @@ async function evmBook(address: string) {
       });
     }),
   );
+  return book;
+}
+
+function evmFast(address: string) {
+  return readEvm(
+    address,
+    CHAINS_META.filter((chain) => chain.kind === "evm" && chain.rpc && (EVM_STABLES[chain.label] || NATIVE_SYMBOL[chain.label])),
+    true,
+  );
+}
+
+async function evmRest(address: string, book: Record<string, number>) {
+  const extra = await readEvm(
+    address,
+    CHAINS_META.filter((chain) => chain.kind === "evm" && chain.rpc),
+    false,
+  );
+  for (const [symbol, amount] of Object.entries(extra)) {
+    if (amount > 0) book[symbol] = (book[symbol] ?? 0) + amount;
+  }
   return book;
 }
 

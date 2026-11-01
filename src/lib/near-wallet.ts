@@ -476,28 +476,50 @@ function metaFor(contract: string, meta: Map<string, { symbol: string; decimals:
   return FT_META[contract] ?? meta.get(contract) ?? null;
 }
 
-export async function syncWallet(accountId: string, _focus: string[] = []) {
-  const key = accountId.trim().toLowerCase();
-  if (useDesk.getState().accountId !== key) return;
-  const [near, fastRes, inventoryRes, meta] = await Promise.all([
-    accountAmount(key),
-    fetch(`https://api.fastnear.com/v1/account/${encodeURIComponent(key)}/full`).catch(() => null),
-    fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(key)}/inventory`).catch(() => null),
-    refMetadata(),
-  ]);
-  if (useDesk.getState().accountId !== key) return;
-  const book: Record<string, number> = {};
-  if (near) {
-    const native = Math.max(0, Number(near) / 1e24);
-    if (native > 0) book.NEAR = native;
-    useDesk.getState().setNearYocto(near);
+const HOLDING_CACHE = "asgard-holdings-v1";
+let syncFlight: Promise<void> | null = null;
+let syncFor = "";
+
+function peekHoldings(key: string) {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(`${HOLDING_CACHE}:${key}`);
+    if (!raw) return null;
+    const book = JSON.parse(raw) as Record<string, number>;
+    return book && typeof book === "object" ? book : null;
+  } catch {
+    return null;
   }
-  const fast = fastRes?.ok ? ((await fastRes.json()) as { tokens?: { contract_id?: string; balance?: string }[] }) : null;
-  const fastRows = fast?.tokens ?? [];
-  const inventory = inventoryRes?.ok ? ((await inventoryRes.json()) as { inventory?: { fts?: { contract?: string; amount?: string; ft_meta?: { symbol?: string; decimals?: number } }[] } }) : null;
+}
+
+function storeHoldings(key: string, book: Record<string, number>) {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.setItem(`${HOLDING_CACHE}:${key}`, JSON.stringify(book));
+  } catch {
+    /* private mode */
+  }
+}
+
+function publishHoldings(key: string, book: Record<string, number>) {
+  if (useDesk.getState().accountId !== key) return;
+  const next = overlayBalances(book);
+  useDesk.getState().applyChain(next);
+  storeHoldings(key, next);
+}
+
+type FastAccount = { tokens?: { contract_id?: string; balance?: string }[]; state?: { balance?: string } };
+type InventoryAccount = { inventory?: { fts?: { contract?: string; amount?: string; ft_meta?: { symbol?: string; decimals?: number } }[] } };
+
+function assembleWallet(fast: FastAccount | null, inventory: InventoryAccount | null, meta: Map<string, { symbol: string; decimals: number }>) {
+  const book: Record<string, number> = {};
+  const nearRaw = fast?.state?.balance ?? "";
+  if (/^\d+$/.test(nearRaw) && nearRaw !== "0") {
+    const native = Number(nearRaw) / 1e24;
+    if (native > 0) book.NEAR = native;
+  }
   const seen = new Set<string>();
-  let found = false;
-  for (const row of fastRows) {
+  for (const row of fast?.tokens ?? []) {
     const contract = (row.contract_id ?? "").toLowerCase();
     const raw = row.balance ?? "";
     if (!contract || contract === "wrap.near" || !/^\d+$/.test(raw)) continue;
@@ -510,29 +532,84 @@ export async function syncWallet(accountId: string, _focus: string[] = []) {
     if (decimals <= 0) continue;
     seen.add(contract);
     const amount = human(raw, decimals);
-    if (amount > 0) {
-      found = true;
-      addBalance(book, contract, known?.symbol ?? "", amount);
-    }
+    if (amount > 0) addBalance(book, contract, known?.symbol ?? "", amount);
   }
   for (const row of inventory?.inventory?.fts ?? []) {
     const contract = (row.contract ?? "").toLowerCase();
     if (!contract || contract === "wrap.near" || seen.has(contract)) continue;
     const decimals = row.ft_meta?.decimals || metaFor(contract, meta)?.decimals || 0;
     const amount = human(row.amount ?? "0", decimals);
-    if (amount > 0) {
-      found = true;
-      addBalance(book, contract, row.ft_meta?.symbol || metaFor(contract, meta)?.symbol || "", amount);
-    }
+    if (amount > 0) addBalance(book, contract, row.ft_meta?.symbol || metaFor(contract, meta)?.symbol || "", amount);
   }
-  if (!found && !book.NEAR) return;
-  const staked = await metaStakeOf(key).catch(() => 0);
-  if (staked > (book.STNEAR ?? 0)) book.STNEAR = staked;
-  useDesk.getState().applyChain(overlayBalances(book));
-  const { readBurrow } = await import("@/lib/burrow");
-  const lending = await readBurrow(key).catch(() => null);
-  if (lending && useDesk.getState().accountId === key) useDesk.getState().setLending(lending.supplied, lending.borrowed);
+  return book;
 }
+
+export async function syncWallet(accountId: string, _focus: string[] = []) {
+  const key = accountId.trim().toLowerCase();
+  if (useDesk.getState().accountId !== key) return;
+  if (!Object.keys(useDesk.getState().chain).length) {
+    const cached = peekHoldings(key);
+    if (cached) publishHoldings(key, cached);
+  }
+  if (syncFlight && syncFor === key) return syncFlight;
+  syncFor = key;
+  syncFlight = loadWallet(key).finally(() => {
+    if (syncFor === key) syncFlight = null;
+  });
+  return syncFlight;
+}
+
+async function loadWallet(key: string) {
+  const fastP = fetch(`https://api.fastnear.com/v1/account/${encodeURIComponent(key)}/full`).catch(() => null);
+  const invP = fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(key)}/inventory`).catch(() => null);
+  const meta = refMeta ?? new Map<string, { symbol: string; decimals: number }>();
+  const winner = await Promise.race([
+    fastP.then((res) => ({ which: "fast" as const, res })),
+    invP.then((res) => ({ which: "inv" as const, res })),
+  ]);
+  let fast: FastAccount | null = null;
+  let inventory: InventoryAccount | null = null;
+  if (winner.res?.ok) {
+    const body = (await winner.res.json()) as FastAccount & InventoryAccount;
+    if (winner.which === "fast") fast = body;
+    else inventory = body;
+    const early = assembleWallet(fast, inventory, meta);
+    if (early.NEAR || Object.keys(early).length) publishHoldings(key, early);
+  }
+  const [fastRes, invRes] = await Promise.all([fastP, invP]);
+  if (useDesk.getState().accountId !== key) return;
+  if (!fast && fastRes?.ok) fast = (await fastRes.json()) as FastAccount;
+  if (!inventory && invRes?.ok) inventory = (await invRes.json()) as InventoryAccount;
+  const book = assembleWallet(fast, inventory, refMeta ?? meta);
+  if (book.NEAR || Object.keys(book).length) publishHoldings(key, book);
+  void accountAmount(key).then((amount) => {
+    if (amount && useDesk.getState().accountId === key) useDesk.getState().setNearYocto(amount);
+  });
+  void metaStakeOf(key)
+    .then((staked) => {
+      if (!(staked > 0) || useDesk.getState().accountId !== key) return;
+      const current = { ...useDesk.getState().chain };
+      if (staked > (current.STNEAR ?? 0)) current.STNEAR = staked;
+      publishHoldings(key, current);
+    })
+    .catch(() => undefined);
+  void import("@/lib/burrow").then(({ readBurrow }) =>
+    readBurrow(key)
+      .then((lending) => {
+        if (lending && useDesk.getState().accountId === key) useDesk.getState().setLending(lending.supplied, lending.borrowed);
+      })
+      .catch(() => undefined),
+  );
+  if (!refMeta) {
+    void refMetadata().then((full) => {
+      if (useDesk.getState().accountId !== key) return;
+      const richer = assembleWallet(fast, inventory, full);
+      if (richer.NEAR || Object.keys(richer).length) publishHoldings(key, richer);
+    });
+  }
+}
+
+if (typeof window !== "undefined") void refMetadata();
 
 function addBalance(book: Record<string, number>, contract: string, raw: string, amount: number) {
   const symbol = terminalSymbol(contract, raw);
