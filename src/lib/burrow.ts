@@ -8,16 +8,16 @@ const MIN_STORAGE = 100_000_000_000_000_000_000_000n;
 export async function readBurrow(accountId: string) {
   const [result, extra] = await Promise.all([
     view(BURROW, "get_account", { account_id: accountId }) as Promise<{
-      supplied?: { token_id?: string; balance?: string }[];
-      collateral?: { token_id?: string; balance?: string }[];
-      borrowed?: { token_id?: string; balance?: string }[];
+      supplied?: { token_id?: string; balance?: string; shares?: string }[];
+      collateral?: { token_id?: string; balance?: string; shares?: string }[];
+      borrowed?: { token_id?: string; balance?: string; shares?: string }[];
     } | null>,
     extraDecimals(),
   ]);
   const supplied: Record<string, number> = {};
   const borrowed: Record<string, number> = {};
-  for (const row of [...(result?.supplied ?? []), ...(result?.collateral ?? [])]) add(supplied, row.token_id, row.balance, extra);
-  for (const row of result?.borrowed ?? []) add(borrowed, row.token_id, row.balance, extra);
+  for (const row of [...(result?.supplied ?? []), ...(result?.collateral ?? [])]) add(supplied, row.token_id, row.balance || row.shares, extra);
+  for (const row of result?.borrowed ?? []) add(borrowed, row.token_id, row.balance || row.shares, extra);
   return { supplied, borrowed };
 }
 
@@ -51,7 +51,7 @@ export async function borrowFromBurrow(accountId: string, token: string, amount:
   await sendNearTransactions(accountId, [
     {
       receiverId: BURROW,
-      actions: [nearCall("execute", { actions: [{ Borrow: { token_id: token, amount: inner } }] }, 150_000_000_000_000n, 1n)],
+      actions: [nearCall("execute", { actions: [{ Borrow: { token_id: token, amount: inner } }] }, 300_000_000_000_000n, 1n)],
     },
   ]);
 }
@@ -295,7 +295,18 @@ function add(book: Record<string, number>, tokenId: string | undefined, balance:
   const frac = pad.slice(-decimals).slice(0, 8).replace(/0+$/, "");
   const amount = Number(frac ? `${whole}.${frac}` : whole);
   if (!(amount > 0)) return;
-  const symbol = token?.symbol ?? (id === "wrap.near" ? "NEAR" : tokenId);
+  const symbol =
+    id === "wrap.near"
+      ? "NEAR"
+      : id === "usdt.tether-token.near"
+        ? "USDT"
+        : id === "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1"
+          ? "USDC"
+          : id === "eth.bridge.near"
+            ? "ETH"
+            : id === "meta-pool.near"
+              ? "STNEAR"
+              : token?.symbol ?? tokenId;
   book[symbol] = (book[symbol] ?? 0) + amount;
 }
 

@@ -159,11 +159,14 @@ function boot() {
   return booted;
 }
 
+let hotWallet: WalletApi | null = null;
+
 export function warmNearSigner() {
   void boot()
     .then(async () => {
       const selector = await selectorPromise;
-      if (selector) await selector.wallet().catch(() => undefined);
+      if (!selector) return;
+      hotWallet = await selector.wallet().catch(() => null);
     })
     .catch(() => undefined);
 }
@@ -194,6 +197,7 @@ export async function signOutNear() {
 
 export function restoreNearSession() {
   stashRedirectAccount();
+  warmNearSigner();
   return boot();
 }
 
@@ -422,6 +426,8 @@ export async function syncWallet(accountId: string) {
     }),
   );
   if (useDesk.getState().accountId !== key) return;
+  const meta = await metaStakeOf(key).catch(() => 0);
+  if (meta > 0) book.STNEAR = (book.STNEAR ?? 0) + meta;
   useDesk.getState().applyChain(book);
   const { readBurrow } = await import("@/lib/burrow");
   const lending = await readBurrow(key).catch(() => null);
@@ -593,10 +599,99 @@ async function sendRef(accountId: string, ready: RefReady) {
   await sendNearTransactions(accountId, txs);
 }
 
+let metaYocto = 0n;
+let metaLiquidity = 0n;
+let stNearPriceYocto = 0n;
+let metaFlight: Promise<void> | null = null;
+
+async function metaView(method: string, args: object) {
+  const result = (await rpc({
+    request_type: "call_function",
+    finality: "optimistic",
+    account_id: "meta-pool.near",
+    method_name: method,
+    args_base64: btoa(JSON.stringify(args)),
+  })) as { result?: number[] };
+  const text = new TextDecoder().decode(new Uint8Array(result.result ?? [])).trim();
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text.replace(/^"|"$/g, "");
+  }
+}
+
+export function warmMetaPool(accountId: string) {
+  if (metaFlight) return metaFlight;
+  metaFlight = (async () => {
+    const [info, price, state] = await Promise.all([
+      metaView("get_account_info", { account_id: accountId }).catch(() => null),
+      metaView("get_st_near_price", {}).catch(() => null),
+      metaView("get_contract_state", {}).catch(() => null),
+    ]);
+    const st = (info as { st_near?: string } | null)?.st_near;
+    const available = (state as { total_available?: string } | null)?.total_available;
+    if (typeof st === "string" && /^\d+$/.test(st)) metaYocto = BigInt(st);
+    if (typeof price === "string" && /^\d+$/.test(price.replace(/"/g, ""))) stNearPriceYocto = BigInt(price.replace(/"/g, ""));
+    if (typeof available === "string" && /^\d+$/.test(available)) metaLiquidity = BigInt(available);
+  })().finally(() => {
+    metaFlight = null;
+  });
+  return metaFlight;
+}
+
+export async function metaStakeOf(accountId: string) {
+  const info = (await metaView("get_account_info", { account_id: accountId }).catch(() => null)) as { st_near?: string } | null;
+  const raw = info?.st_near && /^\d+$/.test(info.st_near) ? BigInt(info.st_near) : 0n;
+  metaYocto = raw;
+  return Number(raw) / 1e24;
+}
+
+export function stakeMintEstimate(near: number) {
+  const rate = stNearPriceYocto > 0n ? Number(stNearPriceYocto) / 1e24 : 0;
+  return rate > 0 ? near / rate : near;
+}
+
+export function nearFromStnear(stnear: number) {
+  const rate = stNearPriceYocto > 0n ? Number(stNearPriceYocto) / 1e24 : 0;
+  return rate > 0 ? stnear * rate : stnear;
+}
+
+export function applyStake(nearSpent: number, stNearMinted: number, paid?: { symbol: string; amount: number }) {
+  const state = useDesk.getState();
+  const chain = { ...state.chain };
+  chain.NEAR = Math.max(0, (chain.NEAR ?? 0) - nearSpent);
+  chain.STNEAR = Math.max(0, (chain.STNEAR ?? 0) + stNearMinted);
+  if (paid && paid.symbol !== "NEAR") chain[paid.symbol] = Math.max(0, (chain[paid.symbol] ?? 0) - paid.amount);
+  state.applyChain(chain);
+  if (stNearMinted > 0) metaYocto += BigInt(Math.round(stNearMinted * 1e6)) * 10n ** 18n;
+  if (stNearMinted < 0) metaYocto = metaYocto > BigInt(Math.round(-stNearMinted * 1e6)) * 10n ** 18n ? metaYocto - BigInt(Math.round(-stNearMinted * 1e6)) * 10n ** 18n : 0n;
+}
+
 export async function moveVault(accountId: string, symbol: string, amount: string, direction: "in" | "out") {
+  if (direction === "out") {
+    const units = unitsOf(amount, 24);
+    const yocto = units && /^\d+$/.test(units) ? BigInt(units) : 0n;
+    if (metaFlight) await metaFlight;
+    const expected = stNearPriceYocto > 0n ? (yocto * stNearPriceYocto) / 10n ** 24n : 0n;
+    if (yocto > 0n && metaYocto + 1n >= yocto && expected > 0n && metaLiquidity >= expected) {
+      const min = expected > 0n ? (expected * 97n) / 100n : 1n;
+      await sendNearTransactions(accountId, [
+        {
+          receiverId: "meta-pool.near",
+          actions: [call("liquid_unstake", { st_near_to_burn: units, min_expected_near: min.toString() }, 180_000_000_000_000n, 1n)],
+        },
+      ]);
+      metaYocto -= yocto;
+      return;
+    }
+  }
   const key = `${direction}:${symbol}:${amount}`;
-  const ready = await (vaultQuotes.get(key) ?? (direction === "in" ? findRef(VAULT_IN[symbol]?.contract ?? "", "meta-pool.near", unitsOf(amount, VAULT_IN[symbol]?.decimals ?? 0)) : findRef("meta-pool.near", "wrap.near", unitsOf(amount, 24))));
-  if (!ready) throw new Error("No stNEAR pool can take that size right now.");
+  const ready = await (vaultQuotes.get(key) ??
+    (direction === "in"
+      ? findRef(VAULT_IN[symbol]?.contract ?? "", "meta-pool.near", unitsOf(amount, VAULT_IN[symbol]?.decimals ?? 0))
+      : findRef("meta-pool.near", "wrap.near", unitsOf(amount, 24))));
+  if (!ready) throw new Error(direction === "out" ? "Meta Pool has no instant NEAR for that size, and Ref has no stNEAR route." : "No stNEAR pool can take that size right now.");
   await sendRef(accountId, ready);
 }
 
@@ -606,16 +701,19 @@ export async function sendNearTransactions(accountId: string, transactions: { re
     modalShow?.();
     throw new Error("This account is view-only. Choose a wallet that can sign.");
   }
-  await boot();
-  if (abandonSign) throw new Error("Cancelled.");
-  const selector = await selectorPromise;
-  if (!selector) throw new Error("Wallet is not ready.");
-  let wallet: WalletApi;
-  try {
-    wallet = await selector.wallet();
-  } catch {
-    modalShow?.();
-    throw new Error("Choose a NEAR wallet to sign this transaction.");
+  let wallet = hotWallet;
+  if (!wallet) {
+    await boot();
+    if (abandonSign) throw new Error("Cancelled.");
+    const selector = await selectorPromise;
+    if (!selector) throw new Error("Wallet is not ready.");
+    try {
+      wallet = await selector.wallet();
+      hotWallet = wallet;
+    } catch {
+      modalShow?.();
+      throw new Error("Choose a NEAR wallet to sign this transaction.");
+    }
   }
   if (abandonSign) throw new Error("Cancelled.");
   const built = transactions.map((tx) => ({ signerId: accountId, receiverId: tx.receiverId, actions: tx.actions }));

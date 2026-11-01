@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { fmt, qty, tokenBySymbol, usd } from "@/lib/market";
 import { parseUnits } from "@/lib/intents";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
-import { armWalletPopup, cancelNearSigning, moveVault, primeVaultMove, stakeNear, syncWallet, warmNearSigner } from "@/lib/near-wallet";
+import { applyStake, armWalletPopup, cancelNearSigning, moveVault, nearFromStnear, primeVaultMove, stakeMintEstimate, stakeNear, syncWallet, warmMetaPool, warmNearSigner } from "@/lib/near-wallet";
 import { useDesk } from "@/lib/store";
 import { ConfirmGate } from "@/components/terminal/ConfirmGate";
 
@@ -34,7 +34,10 @@ export function VaultDesk() {
   const value = staked * tokenBySymbol("STNEAR").price;
   useEffect(() => {
     warmNearSigner();
-    if (accountId) void syncWallet(accountId);
+    if (accountId) {
+      void warmMetaPool(accountId);
+      void syncWallet(accountId);
+    }
   }, [accountId]);
   useEffect(() => {
     const n = Number(amount) || 0;
@@ -77,20 +80,21 @@ export function VaultDesk() {
         const yocto = parseUnits(String(n), 24);
         if (!yocto) throw new Error("Enter an amount.");
         await stakeNear(wallet, yocto);
-        await syncWallet(wallet);
+        applyStake(n, stakeMintEstimate(n));
+        void syncWallet(wallet);
         if (flightGen.current !== generation) return;
         setAmount("");
         setNote(`Staked ${fmt(n)} NEAR. stNEAR arrives in this wallet.`);
       } else if (kind === "in") {
-        await moveVault(wallet, symbol, String(n), "in");
-        if (flightGen.current !== generation || useDesk.getState().accountId !== wallet) return;
-        await syncWallet(wallet);
+        await moveVault(wallet, symbol, amount, "in");
+        applyStake(0, stakeMintEstimate(n * (tokenBySymbol(symbol).price || 1) / Math.max(tokenBySymbol("NEAR").price || 1, 1e-8)), { symbol, amount: n });
+        void syncWallet(wallet);
         setAmount("");
         setNote(`Deposited ${fmt(n)} ${symbol} into stNEAR.`);
       } else {
-        await moveVault(wallet, "STNEAR", String(n), "out");
-        if (flightGen.current !== generation || useDesk.getState().accountId !== wallet) return;
-        await syncWallet(wallet);
+        await moveVault(wallet, "STNEAR", amount, "out");
+        applyStake(-nearFromStnear(n), -n);
+        void syncWallet(wallet);
         setAmount("");
         setWithdrawing(false);
         setNote(`Withdrew ${fmt(n)} stNEAR. NEAR returns to this wallet.`);

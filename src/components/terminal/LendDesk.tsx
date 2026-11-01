@@ -216,8 +216,12 @@ export function LendDesk() {
     }
     if (kind === "borrow") {
       const cap = borrowableTokens(market);
-      if (qtyN > cap + 1e-8) {
-        setNote(cap <= 0 ? "Supply collateral before borrowing." : `You can borrow up to ${qty(cap)} ${tickerOf(market)}.`);
+      if (credit <= 0 && suppliedUsd <= 0) {
+        setNote("Supply collateral before borrowing.");
+        return;
+      }
+      if (cap > 0 && qtyN > cap * 1.02) {
+        setNote(`You can borrow up to ${qty(cap)} ${tickerOf(market)}.`);
         return;
       }
     }
@@ -550,7 +554,7 @@ function Reserve({
                 amount={`${qty(borrowQty)} ${ticker}`}
                 hint={usd(borrowQty * price)}
                 action="Borrow"
-                disabled={Boolean(busy) || borrowQty <= 0 || (config ? !config.borrowable : false)}
+                disabled={Boolean(busy) || (config ? !config.borrowable : false)}
                 busy={busy === "borrow"}
                 onMax={() => setAmount(plain(borrowQty))}
                 onClick={() => onAct("borrow")}
@@ -841,11 +845,16 @@ function SortButton({ label, active, dir, align, onClick }: { label: string; act
 }
 
 function priceOf(symbol: string) {
-  const market = LEND_MARKETS.find((item) => item.symbol === symbol || item.ticker === symbol || item.token?.toLowerCase() === symbol.toLowerCase());
+  const key = symbol.toLowerCase();
+  const market = LEND_MARKETS.find((item) => item.symbol.toLowerCase() === key || item.ticker?.toLowerCase() === key || item.token?.toLowerCase() === key);
   if (market && market.price > 0) return market.price;
   const listed = tokenBySymbol(symbol).price;
   if (listed > 0) return listed;
-  if (STABLES.has(symbol.toUpperCase())) return 1;
+  if (STABLES.has(symbol.toUpperCase()) || key === "usdt.tether-token.near" || key.startsWith("17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1")) return 1;
+  if (key === "wrap.near" || symbol.toUpperCase() === "NEAR" || symbol.toUpperCase() === "STNEAR") {
+    const near = tokenBySymbol("NEAR").price;
+    if (near > 0) return near;
+  }
   return 0;
 }
 

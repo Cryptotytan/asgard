@@ -20,7 +20,7 @@ export function PortfolioDesk() {
   const evmHold = useHoldings(wallets.find((wallet) => wallet.id === "evm") ?? null);
   const solHold = useHoldings(wallets.find((wallet) => wallet.id === "sol") ?? null);
   const btcHold = useHoldings(wallets.find((wallet) => wallet.id === "btc") ?? null);
-  const vault = useDesk((s) => s.vault);
+  const chain = useDesk((s) => s.chain);
   const supplied = useDesk((s) => s.supplied);
   const loans = useDesk((s) => s.loans);
   const positions = useDesk((s) => s.positions);
@@ -71,10 +71,12 @@ export function PortfolioDesk() {
     return rows.sort((a, b) => b.amount * (marks[b.token.symbol] ?? b.token.price) - a.amount * (marks[a.token.symbol] ?? a.token.price));
   }, [nearHold.book, evmHold.book, solHold.book, btcHold.book, marks]);
   const walletValue = holdings.reduce((sum, row) => sum + row.amount * (marks[row.token.symbol] ?? row.token.price), 0);
-  const vaultRows = useMemo(() => rowsOf(vault, marks), [vault, marks]);
+  const staked = chain.STNEAR ?? chain.stNEAR ?? 0;
+  const stPrice = marks.STNEAR || marks.NEAR || TOKENS.find((token) => token.symbol === "NEAR")?.price || 0;
+  const vaultRows = useMemo(() => (staked > 1e-8 ? [{ symbol: "STNEAR", amount: staked, usd: staked * (Number.isFinite(stPrice) ? stPrice : 0) }] : []), [staked, stPrice]);
   const lendRows = useMemo(() => rowsOf(supplied, marks), [supplied, marks]);
   const debtRows = useMemo(() => rowsOf(loans, marks), [loans, marks]);
-  const vaultValue = valueOf(vaultRows);
+  const vaultValue = vaultRows.reduce((sum, row) => sum + row.usd, 0);
   const lendValue = valueOf(lendRows);
   const debtValue = valueOf(debtRows);
   const openPnl = positions.reduce((sum, position) => {
@@ -120,8 +122,8 @@ export function PortfolioDesk() {
         <dl className="grid grid-cols-2 gap-px border-b border-line bg-line sm:grid-cols-3 lg:grid-cols-6">
           <Stat k="Total value" v={usd(total)} />
           <Stat k="Holdings" v={holdings.length ? String(holdings.length) : "—"} />
-          <Stat k="Vault" v={vaultRows.length ? usd(vaultValue) : "—"} />
-          <Stat k="Lending" v={lendRows.length ? usd(lendValue) : "—"} />
+          <Stat k="Vault" v={wallets.length ? money2(vaultValue) : "—"} />
+          <Stat k="Lending" v={lendRows.length ? money2(lendValue) : "—"} />
           <Stat k="Realized PnL" v={closes ? `${realized < 0 ? "-" : realized > 0 ? "+" : ""}$${Math.abs(realized).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"} tone={closes ? (realized >= 0 ? "up" : "down") : undefined} />
           <Stat k="Win rate" v={closes ? `${Math.round((wins / closes) * 100)}%` : "—"} />
         </dl>
@@ -331,7 +333,7 @@ function Book({
               <span className="flex-1 font-semibold">{row.symbol}</span>
               <span className={`text-right font-mono text-xs ${debt ? "text-danger" : ""}`}>
                 <span className="block">{fixed2(row.amount)}</span>
-                <span className="text-muted">{usd(row.usd)}</span>
+                <span className="text-muted">{money2(row.usd)}</span>
               </span>
             </li>
           );
@@ -361,6 +363,11 @@ function Empty({ title, body }: { title: string; body: string }) {
       <p className="mx-auto mt-1 max-w-xs text-sm text-muted">{body}</p>
     </div>
   );
+}
+
+function money2(n: number) {
+  if (!Number.isFinite(n)) return "—";
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function rowsOf(book: Record<string, number>, marks: Record<string, number>) {
