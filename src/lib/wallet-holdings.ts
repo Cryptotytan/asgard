@@ -24,9 +24,11 @@ function overlayForeign(key: string, book: Record<string, number>) {
     }
     const symbol = id.slice(key.length + 1);
     const got = book[symbol] ?? 0;
-    const reached = item.dir > 0 ? got + 1e-8 >= item.target * 0.8 && got > 0 : got <= item.target + Math.max(1e-8, Math.abs(item.target) * 0.05);
-    if (reached) pendingForeign.delete(id);
-    else book[symbol] = Math.max(0, item.target);
+    if (got > 0) {
+      pendingForeign.delete(id);
+      continue;
+    }
+    if (item.dir > 0 && item.target > 0) book[symbol] = item.target;
   }
   return book;
 }
@@ -149,29 +151,78 @@ function listed(kind: "evm" | "sol" | "btc") {
   return TOKENS.filter((token) => token.listed && chainByLabel(token.chain)?.kind === kind);
 }
 
+const EVM_STABLES: Record<string, { symbol: string; address: string; decimals: number }[]> = {
+  Ethereum: [
+    { symbol: "USDC", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
+    { symbol: "USDT", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
+  ],
+  Base: [{ symbol: "USDC", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6 }],
+  Arbitrum: [
+    { symbol: "USDC", address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", decimals: 6 },
+    { symbol: "USDT", address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", decimals: 6 },
+  ],
+  Optimism: [
+    { symbol: "USDC", address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", decimals: 6 },
+    { symbol: "USDT", address: "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58", decimals: 6 },
+  ],
+  Polygon: [
+    { symbol: "USDC", address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", decimals: 6 },
+    { symbol: "USDT", address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", decimals: 6 },
+  ],
+  BNB: [
+    { symbol: "USDT", address: "0x55d398326f99059fF775485246999027B3197955", decimals: 18 },
+    { symbol: "USDC", address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", decimals: 18 },
+  ],
+  Avalanche: [
+    { symbol: "USDC", address: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E", decimals: 6 },
+    { symbol: "USDT", address: "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7", decimals: 6 },
+  ],
+};
+
+const NATIVE_SYMBOL: Record<string, string> = {
+  Ethereum: "ETH",
+  Base: "ETH",
+  Arbitrum: "ETH",
+  Optimism: "ETH",
+  BNB: "BNB",
+  Polygon: "POL",
+  Avalanche: "AVAX",
+  Gnosis: "XDAI",
+  Scroll: "ETH",
+  Aurora: "ETH",
+};
+
 async function evmBook(address: string) {
   const book: Record<string, number> = {};
   const tokens = listed("evm");
   await Promise.all(
     CHAINS_META.filter((chain) => chain.kind === "evm" && chain.rpc).map(async (chain) => {
       const mine = tokens.filter((token) => token.chain === chain.label);
-      if (!mine.length) return;
       const native = mine.filter((token) => !/^0x[a-fA-F0-9]{40}$/.test(token.address ?? "")).sort((a, b) => b.price - a.price)[0];
-      const erc20 = mine.filter((token) => /^0x[a-fA-F0-9]{40}$/.test(token.address ?? "") && token.decimals != null);
+      const forced = EVM_STABLES[chain.label] ?? [];
+      const erc20 = [
+        ...mine.filter((token) => /^0x[a-fA-F0-9]{40}$/.test(token.address ?? "") && token.decimals != null),
+        ...forced
+          .filter((token) => !mine.some((item) => item.address?.toLowerCase() === token.address.toLowerCase()))
+          .map((token) => ({ address: token.address, decimals: token.decimals, symbol: token.symbol })),
+      ];
       const rpcs = chainRpcs(chain);
       const [gas, balances] = await Promise.all([
-        native ? ethBalance(rpcs, address) : Promise.resolve(0n),
+        ethBalance(rpcs, address),
         mapPool(erc20, 6, (token) => tokenBalance(rpcs, token.address!, address)),
       ]);
-      if (native && gas > 0n) {
-        const amount = Number(gas) / 10 ** (native.decimals ?? 18);
-        if (amount > 0) book[native.symbol] = (book[native.symbol] ?? 0) + amount;
+      if (gas > 0n) {
+        const symbol = native?.symbol || NATIVE_SYMBOL[chain.label] || chain.label;
+        const decimals = native?.decimals ?? 18;
+        book[symbol] = (book[symbol] ?? 0) + Number(gas) / 10 ** decimals;
+        if (native) native.listed = true;
+        else ensureToken({ symbol, name: symbol, price: 0, chain: chain.label }).listed = true;
       }
       erc20.forEach((token, index) => {
         const raw = balances[index];
         if (!raw || raw <= 0n || token.decimals == null) return;
         const amount = Number(raw) / 10 ** token.decimals;
-        if (amount > 0) book[token.symbol] = amount;
+        if (amount > 0) book[token.symbol] = (book[token.symbol] ?? 0) + amount;
       });
     }),
   );
@@ -212,6 +263,8 @@ async function solBook(address: string) {
   }
   const programs = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"];
   const byMint = new Map(tokens.filter((token) => token.address && token.address.length >= 32).map((token) => [token.address!, token.symbol]));
+  byMint.set("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "USDC");
+  byMint.set("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", "USDT");
   const unknown = new Map<string, number>();
   for (const program of programs) {
     const parsed = await body("getTokenAccountsByOwner", [address, { programId: program }, { encoding: "jsonParsed" }]);

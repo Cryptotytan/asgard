@@ -55,23 +55,24 @@ export function PortfolioDesk() {
   }, [walletKey]);
 
   const holdings = useMemo(() => {
-    const rows: { token: Token; amount: number; wallet: string }[] = [];
+    const rows: { token: Token; amount: number; wallet: string; price: number }[] = [];
     const take = (book: Record<string, number>, label: string) => {
       for (const [symbol, amount] of Object.entries(book)) {
         if (amount <= 1e-8) continue;
         const token = TOKENS.find((item) => item.symbol === symbol) ?? ensureToken({ symbol, name: symbol, price: marks[symbol] || 0, chain: label === "NEAR" ? "NEAR" : label });
-        rows.push({ token, amount, wallet: label });
+        const price = holdingPrice(symbol, token, marks);
+        rows.push({ token, amount, wallet: label, price });
       }
     };
     take(nearHold.book, "NEAR");
     take(evmHold.book, "EVM");
     take(solHold.book, "Solana");
     take(btcHold.book, "Bitcoin");
-    return rows.sort((a, b) => b.amount * (marks[b.token.symbol] ?? b.token.price) - a.amount * (marks[a.token.symbol] ?? a.token.price));
+    return rows.sort((a, b) => b.amount * b.price - a.amount * a.price);
   }, [nearHold.book, evmHold.book, solHold.book, btcHold.book, marks]);
-  const walletValue = holdings.reduce((sum, row) => sum + row.amount * (marks[row.token.symbol] ?? row.token.price), 0);
+  const walletValue = holdings.reduce((sum, row) => sum + row.amount * row.price, 0);
   const staked = chain.STNEAR ?? chain.stNEAR ?? 0;
-  const stPrice = marks.STNEAR || marks.NEAR || TOKENS.find((token) => token.symbol === "NEAR")?.price || 0;
+  const stPrice = holdingPrice("STNEAR", TOKENS.find((token) => token.symbol === "STNEAR") ?? TOKENS.find((token) => token.symbol === "NEAR")!, marks) || marks.NEAR || TOKENS.find((token) => token.symbol === "NEAR")?.price || 0;
   const vaultRows = useMemo(() => (staked > 1e-8 ? [{ symbol: "STNEAR", amount: staked, usd: staked * (Number.isFinite(stPrice) ? stPrice : 0) }] : []), [staked, stPrice]);
   const lendRows = useMemo(() => rowsOf(supplied, marks), [supplied, marks]);
   const debtRows = useMemo(() => rowsOf(loans, marks), [loans, marks]);
@@ -364,6 +365,14 @@ function Empty({ title, body }: { title: string; body: string }) {
   );
 }
 
+function holdingPrice(symbol: string, token: Token, marks: Record<string, number>) {
+  const base = symbol.split(".")[0]?.toUpperCase() ?? "";
+  if (["USDT", "USDC", "DAI", "FRAX", "USN"].includes(base)) return 1;
+  const mark = marks[symbol] ?? marks[base];
+  if (mark > 0) return mark;
+  return token.price > 0 ? token.price : 0;
+}
+
 function money2(n: number) {
   if (!Number.isFinite(n)) return "—";
   return n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -374,7 +383,9 @@ function rowsOf(book: Record<string, number>, marks: Record<string, number>) {
     .filter(([, amount]) => amount > 1e-8)
     .map(([symbol, amount]) => {
       const price = marks[symbol] ?? TOKENS.find((token) => token.symbol === symbol)?.price ?? 0;
-      return { symbol, amount, usd: amount * price };
+      const base = symbol.split(".")[0]?.toUpperCase() ?? "";
+      const stable = ["USDT", "USDC", "DAI", "FRAX", "USN"].includes(base) ? 1 : price > 0 ? price : 0;
+      return { symbol, amount, usd: amount * stable };
     });
 }
 

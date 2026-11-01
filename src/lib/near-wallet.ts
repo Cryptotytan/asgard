@@ -429,61 +429,105 @@ export function settleHoldings(accountId: string, moves: { symbol: string; delta
   for (const delay of [2000, 5000, 12000, 25000]) window.setTimeout(pull, delay);
 }
 
-function contractFor(symbol: string) {
-  const base = symbol.split(".")[0]?.toUpperCase() ?? "";
-  const known: Record<string, string> = {
-    NEAR: "wrap.near",
-    WNEAR: "wrap.near",
-    STNEAR: "meta-pool.near",
-    USDT: "usdt.tether-token.near",
-    USDC: "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
-    ETH: "eth.bridge.near",
-    WETH: "eth.bridge.near",
-    WBTC: "2260fac5e5542a773aa44fbcfedf7c193bc2c599.factory.bridge.near",
-  };
-  if (known[base]) return known[base];
-  return TOKENS.find((token) => token.chain === "NEAR" && token.symbol.toUpperCase() === symbol.toUpperCase())?.address ?? "";
+const FT_META: Record<string, { symbol: string; decimals: number }> = {
+  "wrap.near": { symbol: "NEAR", decimals: 24 },
+  "meta-pool.near": { symbol: "STNEAR", decimals: 24 },
+  "usdt.tether-token.near": { symbol: "USDT", decimals: 6 },
+  "dac17f958d2ee523a2206206994597c13d831ec7.factory.bridge.near": { symbol: "USDT", decimals: 6 },
+  "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": { symbol: "USDC", decimals: 6 },
+  "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.factory.bridge.near": { symbol: "USDC", decimals: 6 },
+  "eth.bridge.near": { symbol: "ETH", decimals: 18 },
+  "2260fac5e5542a773aa44fbcfedf7c193bc2c599.factory.bridge.near": { symbol: "wBTC", decimals: 8 },
+  "aaaaaa20d9e0e2461697782ef11675f668207961.factory.bridge.near": { symbol: "AURORA", decimals: 18 },
+  "token.sweat": { symbol: "SWEAT", decimals: 18 },
+  "token.rhealab.near": { symbol: "RHEA", decimals: 18 },
+};
+
+let refMeta: Map<string, { symbol: string; decimals: number }> | null = null;
+let refMetaFlight: Promise<Map<string, { symbol: string; decimals: number }>> | null = null;
+
+function refMetadata() {
+  if (refMeta) return Promise.resolve(refMeta);
+  if (refMetaFlight) return refMetaFlight;
+  refMetaFlight = fetch("https://indexer.ref.finance/list-token")
+    .then(async (response) => {
+      const map = new Map<string, { symbol: string; decimals: number }>();
+      if (response.ok) {
+        const data = (await response.json()) as Record<string, { symbol?: string; decimals?: number }>;
+        for (const [id, row] of Object.entries(data)) {
+          if (!row?.symbol || !(Number(row.decimals) > 0)) continue;
+          map.set(id.toLowerCase(), { symbol: row.symbol.replace(/\s/g, ""), decimals: Number(row.decimals) });
+        }
+      }
+      refMeta = map;
+      return map;
+    })
+    .catch(() => {
+      refMeta = new Map();
+      return refMeta;
+    })
+    .finally(() => {
+      refMetaFlight = null;
+    });
+  return refMetaFlight;
 }
 
-export async function syncWallet(accountId: string, focus: string[] = []) {
+function metaFor(contract: string, meta: Map<string, { symbol: string; decimals: number }>) {
+  return FT_META[contract] ?? meta.get(contract) ?? null;
+}
+
+export async function syncWallet(accountId: string, _focus: string[] = []) {
   const key = accountId.trim().toLowerCase();
   if (useDesk.getState().accountId !== key) return;
-  const [near, inventoryRes] = await Promise.all([
+  const [near, fastRes, inventoryRes, meta] = await Promise.all([
     accountAmount(key),
+    fetch(`https://api.fastnear.com/v1/account/${encodeURIComponent(key)}/full`).catch(() => null),
     fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(key)}/inventory`).catch(() => null),
+    refMetadata(),
   ]);
   if (useDesk.getState().accountId !== key) return;
-  const inventory = inventoryRes && inventoryRes.ok ? ((await inventoryRes.json()) as { inventory?: { fts?: { contract?: string; amount?: string; ft_meta?: { symbol?: string; decimals?: number } }[] } }) : {};
   const book: Record<string, number> = {};
   if (near) {
     const native = Math.max(0, Number(near) / 1e24);
     if (native > 0) book.NEAR = native;
     useDesk.getState().setNearYocto(near);
   }
-  const rows = inventory.inventory?.fts ?? [];
-  for (const row of rows) {
-    const contract = (row.contract ?? "").toLowerCase();
-    if (!contract || contract === "wrap.near") continue;
-    const decimals = row.ft_meta?.decimals ?? decimalsOf(contract);
-    const amount = human(row.amount ?? "0", decimals);
-    if (amount > 0) addBalance(book, contract, row.ft_meta?.symbol ?? "", amount);
+  const fast = fastRes?.ok ? ((await fastRes.json()) as { tokens?: { contract_id?: string; balance?: string }[] }) : null;
+  const fastRows = fast?.tokens ?? [];
+  const inventory = inventoryRes?.ok ? ((await inventoryRes.json()) as { inventory?: { fts?: { contract?: string; amount?: string; ft_meta?: { symbol?: string; decimals?: number } }[] } }) : null;
+  const seen = new Set<string>();
+  let found = false;
+  for (const row of fastRows) {
+    const contract = (row.contract_id ?? "").toLowerCase();
+    const raw = row.balance ?? "";
+    if (!contract || contract === "wrap.near" || !/^\d+$/.test(raw)) continue;
+    if (raw === "0") {
+      seen.add(contract);
+      continue;
+    }
+    const known = metaFor(contract, meta);
+    const decimals = known?.decimals ?? 0;
+    if (decimals <= 0) continue;
+    seen.add(contract);
+    const amount = human(raw, decimals);
+    if (amount > 0) {
+      found = true;
+      addBalance(book, contract, known?.symbol ?? "", amount);
+    }
   }
-  await Promise.all(
-    focus.map(async (symbol) => {
-      const contract = contractFor(symbol).toLowerCase();
-      if (!contract || contract === "wrap.near") return;
-      const raw = await ftBalance(key, contract);
-      if (raw == null) return;
-      const amount = human(raw, decimalsOf(contract));
-      const name = terminalSymbol(contract, symbol);
-      if (!name) return;
-      if (amount > 0) book[name] = amount;
-      else delete book[name];
-    }),
-  );
-  if (useDesk.getState().accountId !== key) return;
-  const meta = await metaStakeOf(key).catch(() => 0);
-  if (meta > (book.STNEAR ?? 0)) book.STNEAR = meta;
+  for (const row of inventory?.inventory?.fts ?? []) {
+    const contract = (row.contract ?? "").toLowerCase();
+    if (!contract || contract === "wrap.near" || seen.has(contract)) continue;
+    const decimals = row.ft_meta?.decimals || metaFor(contract, meta)?.decimals || 0;
+    const amount = human(row.amount ?? "0", decimals);
+    if (amount > 0) {
+      found = true;
+      addBalance(book, contract, row.ft_meta?.symbol || metaFor(contract, meta)?.symbol || "", amount);
+    }
+  }
+  if (!found && !book.NEAR) return;
+  const staked = await metaStakeOf(key).catch(() => 0);
+  if (staked > (book.STNEAR ?? 0)) book.STNEAR = staked;
   useDesk.getState().applyChain(overlayBalances(book));
   const { readBurrow } = await import("@/lib/burrow");
   const lending = await readBurrow(key).catch(() => null);
@@ -518,7 +562,7 @@ function decimalsOf(contract: string) {
 }
 
 function human(raw: string, decimals: number) {
-  if (!/^\d+$/.test(raw) || raw === "0") return 0;
+  if (!/^\d+$/.test(raw) || raw === "0" || decimals <= 0) return 0;
   const pad = raw.padStart(decimals + 1, "0");
   const whole = pad.slice(0, -decimals) || "0";
   const frac = pad.slice(-decimals).slice(0, 8).replace(/0+$/, "");
@@ -527,6 +571,7 @@ function human(raw: string, decimals: number) {
 }
 
 function terminalSymbol(contract: string, raw: string) {
+  if (FT_META[contract]) return FT_META[contract].symbol;
   const known: Record<string, string> = {
     "wrap.near": "NEAR",
     "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": "USDC",
