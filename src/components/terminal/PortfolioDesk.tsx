@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { TokenIcon, ChainBadge } from "@/components/terminal/TokenIcon";
 import { PnlCard } from "@/components/terminal/PnlCard";
 import { linkedWallets, useForeign, WALLET_MARK, type LinkedWallet } from "@/lib/foreign-wallet";
-import { money, qty, TOKENS, usd, type Token } from "@/lib/market";
+import { ensureToken, money, qty, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 import { useHoldings } from "@/lib/wallet-holdings";
 import { loadChainHistory, useWalletHistory, type WalletTx } from "@/lib/wallet-history";
@@ -59,8 +59,7 @@ export function PortfolioDesk() {
     const take = (book: Record<string, number>, label: string) => {
       for (const [symbol, amount] of Object.entries(book)) {
         if (amount <= 1e-8) continue;
-        const token = TOKENS.find((item) => item.symbol === symbol);
-        if (!token) continue;
+        const token = TOKENS.find((item) => item.symbol === symbol) ?? ensureToken({ symbol, name: symbol, price: marks[symbol] || 0, chain: label === "NEAR" ? "NEAR" : label });
         rows.push({ token, amount, wallet: label });
       }
     };
@@ -84,7 +83,7 @@ export function PortfolioDesk() {
     const pnl = position.side === "long" ? (mark - position.entry) * position.size : (position.entry - mark) * position.size;
     return sum + pnl;
   }, 0);
-  const total = walletValue + vaultValue + lendValue - debtValue + openPnl;
+  const total = walletValue + (holdings.some((row) => row.token.symbol === "STNEAR") ? 0 : vaultValue) + lendValue - debtValue + openPnl;
 
   return (
     <div className="px-2 py-3 sm:px-4 sm:py-5">

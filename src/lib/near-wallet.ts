@@ -1,6 +1,6 @@
 import { actionCreators } from "@near-js/transactions";
 import { installBrowserGlobals } from "@/lib/node-globals";
-import { TOKENS } from "@/lib/market";
+import { ensureToken, TOKENS } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 
 const CONTRACT_ID = "social.near";
@@ -400,9 +400,11 @@ function overlayBalances(book: Record<string, number>) {
       continue;
     }
     const got = book[symbol] ?? 0;
-    const reached = item.dir > 0 ? got + 1e-8 >= item.target * 0.8 && got > 0 : got <= item.target + Math.max(1e-8, Math.abs(item.target) * 0.05);
-    if (reached) pendingBalances.delete(symbol);
-    else book[symbol] = Math.max(0, item.target);
+    if (got > 0) {
+      pendingBalances.delete(symbol);
+      continue;
+    }
+    if (item.dir > 0 && item.target > 0) book[symbol] = item.target;
   }
   return book;
 }
@@ -459,33 +461,29 @@ export async function syncWallet(accountId: string, focus: string[] = []) {
     useDesk.getState().setNearYocto(near);
   }
   const rows = inventory.inventory?.fts ?? [];
-  const contracts = new Map<string, { symbol: string; decimals: number }>();
   for (const row of rows) {
     const contract = (row.contract ?? "").toLowerCase();
-    if (!contract) continue;
-    contracts.set(contract, { symbol: row.ft_meta?.symbol ?? "", decimals: row.ft_meta?.decimals ?? decimalsOf(contract) });
+    if (!contract || contract === "wrap.near") continue;
+    const decimals = row.ft_meta?.decimals ?? decimalsOf(contract);
+    const amount = human(row.amount ?? "0", decimals);
+    if (amount > 0) addBalance(book, contract, row.ft_meta?.symbol ?? "", amount);
   }
-  for (const symbol of focus) {
-    const contract = contractFor(symbol).toLowerCase();
-    if (contract && !contracts.has(contract)) contracts.set(contract, { symbol, decimals: decimalsOf(contract) });
-  }
-  const listed = [...contracts.entries()].slice(0, 36);
-  let cursor = 0;
   await Promise.all(
-    Array.from({ length: Math.min(6, listed.length) }, async () => {
-      while (cursor < listed.length) {
-        const current = cursor;
-        cursor += 1;
-        const [contract, meta] = listed[current]!;
-        const raw = await ftBalance(key, contract);
-        const amount = human(raw, meta.decimals);
-        if (amount > 0) addBalance(book, contract, meta.symbol, amount);
-      }
+    focus.map(async (symbol) => {
+      const contract = contractFor(symbol).toLowerCase();
+      if (!contract || contract === "wrap.near") return;
+      const raw = await ftBalance(key, contract);
+      if (raw == null) return;
+      const amount = human(raw, decimalsOf(contract));
+      const name = terminalSymbol(contract, symbol);
+      if (!name) return;
+      if (amount > 0) book[name] = amount;
+      else delete book[name];
     }),
   );
   if (useDesk.getState().accountId !== key) return;
   const meta = await metaStakeOf(key).catch(() => 0);
-  if (meta > 0) book.STNEAR = (book.STNEAR ?? 0) + meta;
+  if (meta > (book.STNEAR ?? 0)) book.STNEAR = meta;
   useDesk.getState().applyChain(overlayBalances(book));
   const { readBurrow } = await import("@/lib/burrow");
   const lending = await readBurrow(key).catch(() => null);
@@ -496,8 +494,12 @@ function addBalance(book: Record<string, number>, contract: string, raw: string,
   const symbol = terminalSymbol(contract, raw);
   if (!symbol) return;
   book[symbol] = (book[symbol] ?? 0) + amount;
-  const token = TOKENS.find((item) => item.symbol === symbol);
-  if (token && amount > 0) token.listed = true;
+  const known = TOKENS.find((item) => item.symbol === symbol || item.address?.toLowerCase() === contract);
+  if (known) {
+    if (amount > 0) known.listed = true;
+    return;
+  }
+  if (amount > 0 && symbol) ensureToken({ symbol, name: raw || symbol, price: 0, chain: "NEAR", address: contract }).listed = true;
 }
 
 function decimalsOf(contract: string) {
@@ -839,9 +841,9 @@ async function ftBalance(accountId: string, contractId: string) {
     })) as { result?: number[] };
     const text = new TextDecoder().decode(new Uint8Array(result.result ?? []));
     const parsed = JSON.parse(text) as string;
-    return parsed || "0";
+    return typeof parsed === "string" ? parsed || "0" : String(parsed ?? "0");
   } catch {
-    return "0";
+    return null;
   }
 }
 
@@ -928,7 +930,7 @@ function transferActions(depositAddress: string, amount: string, registerRecipie
 }
 
 async function wrapActions(accountId: string, depositAddress: string, amount: string, registerRecipient: boolean): Promise<Call[]> {
-  const wrapped = BigInt(await ftBalance(accountId, "wrap.near"));
+  const wrapped = BigInt((await ftBalance(accountId, "wrap.near")) || "0");
   const need = BigInt(amount);
   const actions: Call[] = [];
   if (!(await isRegistered("wrap.near", accountId))) actions.push(register(accountId));

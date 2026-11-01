@@ -101,11 +101,10 @@ export function useHoldings(wallet: LinkedWallet | null) {
       return;
     }
     if (wallet.id === "near") {
-      const next: Record<string, number> = {};
-      for (const token of TOKENS) {
-        if (token.chain !== "NEAR") continue;
-        const amount = chain[token.symbol] ?? 0;
-        if (amount > 0) next[token.symbol] = amount;
+      const next: Record<string, number> = { ...chain };
+      for (const symbol of Object.keys(next)) {
+        if (!(next[symbol] > 0)) delete next[symbol];
+        else if (!TOKENS.some((token) => token.symbol === symbol)) ensureToken({ symbol, name: symbol, price: 0, chain: "NEAR" });
       }
       setBook(next);
       setLoading(false);
@@ -147,7 +146,7 @@ async function loadHoldings(id: "evm" | "sol" | "btc", address: string) {
 }
 
 function listed(kind: "evm" | "sol" | "btc") {
-  return TOKENS.filter((token) => token.listed && token.price > 0 && chainByLabel(token.chain)?.kind === kind);
+  return TOKENS.filter((token) => token.listed && chainByLabel(token.chain)?.kind === kind);
 }
 
 async function evmBook(address: string) {
