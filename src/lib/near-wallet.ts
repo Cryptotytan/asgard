@@ -1008,6 +1008,41 @@ export function nearFunctionCall(methodName: string, args: object, gas: bigint, 
   return call(methodName, args, gas, deposit);
 }
 
+export async function intearSetup(accountId: string, assetIds: string[]) {
+  const ids = [...new Set(assetIds.filter(Boolean))];
+  const contract = "dex.intear.near";
+  const [storage, registered] = await Promise.all([
+    viewJson(contract, "storage_balance_of", { account_id: accountId }),
+    ids.length ? viewJson(contract, "are_assets_registered", { asset_ids: ids, for: { Account: accountId } }) : Promise.resolve(true),
+  ]);
+  const available = BigInt((storage as { available?: string } | null)?.available ?? "0");
+  const actions: Call[] = [];
+  if (!storage || available < 10_000_000_000_000_000_000_000n) {
+    actions.push(call("storage_deposit", { account_id: accountId, registration_only: false }, 30_000_000_000_000n, 20_000_000_000_000_000_000_000n));
+  }
+  if (ids.length && registered !== true) {
+    actions.push(call("register_assets", { asset_ids: ids, for: null }, 50_000_000_000_000n, 1n));
+  }
+  return actions;
+}
+
+async function viewJson(contractId: string, method: string, args: object) {
+  try {
+    const result = (await rpc({
+      request_type: "call_function",
+      finality: "optimistic",
+      account_id: contractId,
+      method_name: method,
+      args_base64: btoa(JSON.stringify(args)),
+    })) as { result?: number[] };
+    const text = new TextDecoder().decode(new Uint8Array(result.result ?? [])).trim();
+    if (!text || text === "null") return null;
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 export async function isRegisteredOn(contractId: string, accountId: string) {
   return isRegistered(contractId, accountId);
 }

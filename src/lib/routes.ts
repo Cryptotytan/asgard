@@ -2,7 +2,7 @@ import { chainByLabel, validAddress } from "@/lib/chains";
 import { evmDexRoutes } from "@/lib/evm-dex";
 import { ensureEvmAllowance, sendEvmCall, sendSolanaSerialized } from "@/lib/foreign-wallet";
 import { executeIntent, parseUnits, quoteIntent } from "@/lib/intents";
-import { nearFunctionCall, sendNearTransactions, settleHoldings } from "@/lib/near-wallet";
+import { intearSetup, nearFunctionCall, sendNearTransactions, settleHoldings } from "@/lib/near-wallet";
 import type { Token } from "@/lib/market";
 
 const LIFI = "https://li.quest/v1/advanced";
@@ -450,6 +450,14 @@ async function intearRoute(from: Token, to: Token, amount: string, accountId: st
         return actions.length ? [{ receiverId: tx.receiver_id, actions }] : [];
       });
       if (!transactions.length) throw new Error("Rhea did not return a transaction. Nothing was sent.");
+      if (transactions.some((tx) => tx.receiverId === "dex.intear.near")) {
+        const setup = await intearSetup(accountId, [tokenIn, tokenOut]);
+        if (setup.length) {
+          const home = transactions.find((tx) => tx.receiverId === "dex.intear.near");
+          if (home) home.actions.unshift(...setup);
+          else transactions.unshift({ receiverId: "dex.intear.near", actions: setup });
+        }
+      }
       const hash = await sendNearTransactions(accountId, transactions);
       bookTrade(from, to, Number(amount) || 0, receive, accountId);
       return { status: typeof hash === "string" ? hash : "SENT", amountOutHuman: receive };
