@@ -682,8 +682,14 @@ export async function syncWallet(accountId: string, _focus: string[] = [], fresh
 
 async function loadWallet(key: string) {
   const stakeP = readStNearAmount(key);
-  const fastP = fetch(`https://api.fastnear.com/v1/account/${encodeURIComponent(key)}/full`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
-  const invP = fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(key)}/inventory`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+  void accountAmount(key).then((amount) => {
+    if (!amount || useDesk.getState().accountId !== key) return;
+    useDesk.getState().setNearYocto(amount);
+    const near = Number(amount) / 1e24;
+    if (near > 0) publishHoldings(key, { NEAR: near }, "merge");
+  });
+  const fastP = fetch(`https://api.fastnear.com/v1/account/${encodeURIComponent(key)}/full`, { signal: AbortSignal.timeout(4000) }).catch(() => null);
+  const invP = fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(key)}/inventory`, { signal: AbortSignal.timeout(4000) }).catch(() => null);
   const meta = new Map<string, { symbol: string; decimals: number }>(refMeta ?? []);
   for (const [id, row] of localMeta) meta.set(id, row);
   const winner = await Promise.race([
@@ -705,27 +711,27 @@ async function loadWallet(key: string) {
   if (!inventory && invRes?.ok) inventory = (await invRes.json()) as InventoryAccount;
   const missing = missingContracts(fast, inventory, meta);
   let book = assembleWallet(fast, inventory, meta);
-  if (book.NEAR || Object.keys(book).length) publishHoldings(key, book, "merge");
-  if (missing.length) {
-    await readAllMeta(missing);
-    for (const [id, row] of localMeta) meta.set(id, row);
-    book = assembleWallet(fast, inventory, meta);
-  }
-  const unresolved = missingContracts(fast, inventory, meta);
-  const staked = await stakeP;
-  if (staked == null) {
-    const kept = useDesk.getState().chain.STNEAR ?? 0;
-    if (kept > 0) book.STNEAR = Math.max(book.STNEAR ?? 0, kept);
-  } else if (staked > 0) {
-    book.STNEAR = staked;
-  }
-  publishStNearMark();
-  await applyWalletPrices(book);
-  const complete = unresolved.length === 0 && Boolean(fast || inventory);
-  if (book.NEAR || Object.keys(book).length) publishHoldings(key, book, complete ? "replace" : "merge");
-  void accountAmount(key).then((amount) => {
-    if (amount && useDesk.getState().accountId === key) useDesk.getState().setNearYocto(amount);
+  const keptStake = useDesk.getState().chain.STNEAR ?? 0;
+  if (keptStake > (book.STNEAR ?? 0)) book.STNEAR = keptStake;
+  if (book.NEAR || Object.keys(book).length) publishHoldings(key, book, missing.length || !(fast || inventory) ? "merge" : "replace");
+  void applyWalletPrices(book);
+  void stakeP.then((staked) => {
+    if (useDesk.getState().accountId !== key) return;
+    if (!(staked != null && staked > 0)) return;
+    publishHoldings(key, { STNEAR: staked }, "merge");
+    publishStNearMark();
   });
+  if (missing.length) {
+    void readAllMeta(missing).then(() => {
+      if (useDesk.getState().accountId !== key) return;
+      for (const [id, row] of localMeta) meta.set(id, row);
+      const richer = assembleWallet(fast, inventory, meta);
+      const kept = useDesk.getState().chain.STNEAR ?? 0;
+      if (kept > (richer.STNEAR ?? 0)) richer.STNEAR = kept;
+      if (Object.keys(richer).length) publishHoldings(key, richer, "merge");
+      void applyWalletPrices(richer);
+    });
+  }
   void metaStakeOf(key)
     .then((staked) => {
       if (!(staked > 0) || useDesk.getState().accountId !== key) return;

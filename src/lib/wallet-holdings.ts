@@ -174,7 +174,9 @@ export function useHoldings(wallet: LinkedWallet | null) {
     const listener = (updated: string) => {
       if (updated !== key) return;
       const next = cache.get(key);
-      if (next) setBook(next);
+      if (!next) return;
+      setBook(next);
+      setLoading(false);
     };
     listeners.add(listener);
     return () => {
@@ -195,17 +197,17 @@ async function loadHoldings(id: "evm" | "sol" | "btc", address: string, fresh = 
   if (pending) return pending;
   const job =
     id === "evm"
-      ? evmFast(address).then((book) => {
-          const shown = overlayForeign(key, book);
+      ? evmFast(address, (book) => {
+          const shown = overlayForeign(key, { ...(cache.get(key) ?? {}), ...book });
+          cache.set(key, shown);
+          storeForeign(key, shown);
+          notifyHoldings(key);
+        }).then((book) => {
+          const shown = overlayForeign(key, { ...(cache.get(key) ?? {}), ...book });
           cache.set(key, shown);
           storeForeign(key, shown);
           inflight.delete(key);
-          void evmRest(address, { ...shown }).then((full) => {
-            const next = overlayForeign(key, full);
-            cache.set(key, next);
-            storeForeign(key, next);
-            notifyHoldings(key);
-          });
+          notifyHoldings(key);
           return shown;
         })
       : (id === "sol" ? solBook(address) : btcBook(address))
@@ -221,6 +223,18 @@ async function loadHoldings(id: "evm" | "sol" | "btc", address: string, fresh = 
             return cache.get(key) ?? {};
           });
   inflight.set(key, job);
+  if (id === "evm") {
+    void evmRest(address, { ...(cache.get(key) ?? {}) }).then((full) => {
+      const current = { ...(cache.get(key) ?? {}) };
+      for (const [symbol, amount] of Object.entries(full)) {
+        if (amount > 0) current[symbol] = Math.max(current[symbol] ?? 0, amount);
+      }
+      const next = overlayForeign(key, current);
+      cache.set(key, next);
+      storeForeign(key, next);
+      notifyHoldings(key);
+    });
+  }
   return job;
 }
 
@@ -303,12 +317,83 @@ async function readEvm(address: string, chains: typeof CHAINS_META, stablesOnly:
   return book;
 }
 
-function evmFast(address: string) {
-  return readEvm(
-    address,
-    CHAINS_META.filter((chain) => chain.kind === "evm" && chain.rpc && (EVM_STABLES[chain.label] || NATIVE_SYMBOL[chain.label])),
-    true,
-  );
+function evmFast(address: string, onPart?: (book: Record<string, number>) => void) {
+  const chains = CHAINS_META.filter((chain) => chain.kind === "evm" && chain.rpc && (EVM_STABLES[chain.label] || NATIVE_SYMBOL[chain.label]));
+  const parts = new Map<string, Record<string, number>>();
+  const publish = () => {
+    const book: Record<string, number> = {};
+    for (const part of parts.values()) {
+      for (const [symbol, amount] of Object.entries(part)) {
+        if (amount > 0) book[symbol] = (book[symbol] ?? 0) + amount;
+      }
+    }
+    if (Object.keys(book).length) onPart?.(book);
+    return book;
+  };
+  return Promise.all(
+    chains.map(async (chain) => {
+      const part = await readChainFast(chain, address);
+      parts.set(chain.label, part);
+      publish();
+    }),
+  ).then(() => {
+    const book: Record<string, number> = {};
+    for (const part of parts.values()) {
+      for (const [symbol, amount] of Object.entries(part)) {
+        if (amount > 0) book[symbol] = (book[symbol] ?? 0) + amount;
+      }
+    }
+    return overlayForeign(`evm:${address.toLowerCase()}`, book);
+  });
+}
+
+async function readChainFast(chain: (typeof CHAINS_META)[number], address: string) {
+  const book: Record<string, number> = {};
+  const forced = EVM_STABLES[chain.label] ?? [];
+  const data = `0x70a08231${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
+  const calls = [
+    { method: "eth_getBalance", params: [address, "latest"] },
+    ...forced.map((token) => ({ method: "eth_call", params: [{ to: token.address, data }, "latest"] })),
+  ];
+  const results = await rpcRace(chainRpcs(chain), calls);
+  const gas = hex(results[0] ?? "0x0");
+  if (gas > 0n) {
+    const symbol = NATIVE_SYMBOL[chain.label] || "";
+    if (symbol) {
+      book[symbol] = Number(gas) / 1e18;
+      ensureToken({ symbol, name: symbol, price: 0, chain: chain.label }).listed = true;
+    }
+  }
+  forced.forEach((token, index) => {
+    const raw = hex(results[index + 1] ?? "0x0");
+    if (raw <= 0n) return;
+    const amount = Number(raw) / 10 ** token.decimals;
+    if (amount > 0) book[token.symbol] = (book[token.symbol] ?? 0) + amount;
+  });
+  return book;
+}
+
+async function rpcRace(rpcs: string[], calls: { method: string; params: unknown[] }[]) {
+  const body = JSON.stringify(calls.map((call, id) => ({ jsonrpc: "2.0", id, method: call.method, params: call.params })));
+  const jobs = rpcs.filter(Boolean).map(async (rpc) => {
+    const response = await fetch(rpc, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      signal: AbortSignal.timeout(2200),
+    });
+    if (!response.ok) throw new Error("rpc");
+    const parsed = (await response.json()) as { id?: number; result?: string } | { id?: number; result?: string }[];
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    if (!rows.some((row) => typeof row.result === "string")) throw new Error("empty");
+    return calls.map((_, index) => rows.find((row) => row.id === index)?.result ?? rows[index]?.result ?? "0x0");
+  });
+  if (!jobs.length) return calls.map(() => "0x0");
+  try {
+    return await Promise.any(jobs);
+  } catch {
+    return calls.map(() => "0x0");
+  }
 }
 
 async function evmRest(address: string, book: Record<string, number>) {
@@ -356,7 +441,7 @@ const KNOWN_STABLE = new Set(
 async function readExplorers(address: string): Promise<{ symbol: string; amount: number; price: number; chain: string; address: string; name: string; decimals: number; icon: string }[]> {
   const rows = await Promise.all(
     Object.entries(EXPLORERS).map(async ([chain, host]) => {
-      const response = await fetch(`${host}/api/v2/addresses/${address}/token-balances`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+      const response = await fetch(`${host}/api/v2/addresses/${address}/token-balances`, { signal: AbortSignal.timeout(3500) }).catch(() => null);
       if (!response?.ok) return [];
       const body = (await response.json().catch(() => null)) as ExplorerRow[] | null;
       if (!Array.isArray(body)) return [];
@@ -398,6 +483,7 @@ async function solBook(address: string) {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(2500),
       }).catch(() => null);
       if (!response?.ok) continue;
       const parsed = (await response.json()) as { result?: { value?: unknown }; error?: unknown };
@@ -458,7 +544,7 @@ async function solBook(address: string) {
 
 async function btcBook(address: string) {
   const book: Record<string, number> = {};
-  const response = await fetch(`https://blockstream.info/api/address/${encodeURIComponent(address)}`);
+  const response = await fetch(`https://blockstream.info/api/address/${encodeURIComponent(address)}`, { signal: AbortSignal.timeout(3000) });
   if (!response.ok) return book;
   const body = (await response.json()) as { chain_stats?: { funded_txo_sum?: number; spent_txo_sum?: number } };
   const sats = (body.chain_stats?.funded_txo_sum ?? 0) - (body.chain_stats?.spent_txo_sum ?? 0);
@@ -475,34 +561,14 @@ async function btcBook(address: string) {
 }
 
 async function ethBalance(rpcs: string[], address: string) {
-  for (const rpc of rpcs) {
-    const value = await rpcCall(rpc, "eth_getBalance", [address, "latest"]);
-    const amount = hex(value);
-    if (amount > 0n) return amount;
-  }
-  return 0n;
+  const [value] = await rpcRace(rpcs, [{ method: "eth_getBalance", params: [address, "latest"] }]);
+  return hex(value ?? "0x0");
 }
 
 async function tokenBalance(rpcs: string[], contract: string, address: string) {
   const data = `0x70a08231${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
-  for (const rpc of rpcs) {
-    const value = await rpcCall(rpc, "eth_call", [{ to: contract, data }, "latest"]);
-    const amount = hex(value);
-    if (amount > 0n) return amount;
-  }
-  return 0n;
-}
-
-async function rpcCall(rpc: string, method: string, params: unknown[]) {
-  const response = await fetch(rpc, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    signal: AbortSignal.timeout(6000),
-  }).catch(() => null);
-  if (!response?.ok) return "0x0";
-  const body = (await response.json()) as { result?: string };
-  return body.result ?? "0x0";
+  const [value] = await rpcRace(rpcs, [{ method: "eth_call", params: [{ to: contract, data }, "latest"] }]);
+  return hex(value ?? "0x0");
 }
 
 function hex(value: string) {
