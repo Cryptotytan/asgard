@@ -1,6 +1,6 @@
 import { parseUnits } from "@/lib/intents";
 import { TOKENS } from "@/lib/market";
-import { isRegisteredOn, nearFunctionCall, sendNearTransactions, storageDepositAmount, type NearCall } from "@/lib/near-wallet";
+import { isRegisteredOn, nearFunctionCall, registrationCached, sendNearTransactions, storageDepositAmount, type NearCall } from "@/lib/near-wallet";
 
 const BURROW = "contract.main.burrow.near";
 const MIN_STORAGE = 110_000_000_000_000_000_000_000n;
@@ -71,27 +71,27 @@ export async function supplyOnBurrow(accountId: string, token: string, amount: s
 export async function withdrawFromBurrow(accountId: string, token: string, amount: string, decimals: number) {
   const units = parseUnits(amount, decimals);
   if (!units) throw new Error("Enter an amount.");
-  const inner = await innerAmount(token, units);
+  const inner = innerAmountNow(token, units);
   await sendPriced(accountId, token, [
     nearCall("simple_withdraw", {
       token_id: token,
       amount_with_inner_decimal: inner,
       recipient_id: accountId,
-    }, 300_000_000_000_000n, 1n),
+    }, 250_000_000_000_000n, 1n),
   ]);
 }
 
 export async function borrowFromBurrow(accountId: string, token: string, amount: string, decimals: number) {
   const units = parseUnits(amount, decimals);
   if (!units) throw new Error("Enter an amount.");
-  const inner = await innerAmount(token, units);
+  const inner = innerAmountNow(token, units);
   await sendPriced(accountId, token, [
     nearCall("execute_with_pyth", {
       actions: [
         { Borrow: { token_id: token, amount: inner } },
         { Withdraw: { token_id: token, max_amount: inner } },
       ],
-    }, 280_000_000_000_000n, 1n),
+    }, 250_000_000_000_000n, 1n),
   ]);
 }
 
@@ -112,22 +112,22 @@ function extraOf(token: string) {
   return KNOWN_EXTRA[id] ?? 0;
 }
 
-async function innerAmount(token: string, units: string) {
+function innerAmountNow(token: string, units: string) {
   if (!/^\d+$/.test(units)) throw new Error("Enter an amount.");
-  try {
-    await extraDecimals();
-  } catch {
-    /* Known extras still apply when the asset list is down. */
-  }
   const extra = extraOf(token);
   if (extra <= 0) return units;
   return (BigInt(units) * 10n ** BigInt(extra)).toString();
 }
 
+async function within<T>(job: Promise<T>, fallback: T, ms = 350) {
+  return Promise.race([job, new Promise<T>((resolve) => window.setTimeout(() => resolve(fallback), ms))]);
+}
+
 async function sendPriced(accountId: string, token: string, actions: NearCall[]) {
   const txs: { receiverId: string; actions: NearCall[] }[] = [];
-  if (!(await isRegisteredOn(token, accountId))) {
-    const tokenStorage = await storageDepositAmount(token, TOKEN_STORAGE);
+  const registered = registrationCached(token, accountId) || (await within(isRegisteredOn(token, accountId), true));
+  if (!registered) {
+    const tokenStorage = await within(storageDepositAmount(token, TOKEN_STORAGE), TOKEN_STORAGE);
     txs.push({
       receiverId: token,
       actions: [nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, tokenStorage)],

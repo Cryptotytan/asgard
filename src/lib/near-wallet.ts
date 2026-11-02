@@ -273,6 +273,13 @@ export function cancelNearSigning() {
   disarmWalletPopup();
 }
 
+let ignoreWalletHideUntil = 0;
+
+function revealWallet() {
+  ignoreWalletHideUntil = Date.now() + 2000;
+  showWalletFrames();
+}
+
 function walletSurfaceOpen() {
   if (visibleWalletFrame()) return true;
   if (document.querySelector("#near-wallet-selector-modal .nws-modal-wrapper.open")) return true;
@@ -306,13 +313,18 @@ function hideWalletFrame() {
   cancelPending?.();
 }
 
-function releaseHeldFrames() {
-  document.querySelectorAll("iframe[data-asgard-hold='1']").forEach((frame) => {
+function showWalletFrames() {
+  document.querySelectorAll('iframe[src*="herewallet.app"], iframe[src*="intear.tech"], iframe[src*="intear"]').forEach((frame) => {
     if (!(frame instanceof HTMLIFrameElement)) return;
     frame.style.display = "block";
+    frame.style.visibility = "visible";
     frame.style.zIndex = "200001";
     delete frame.dataset.asgardHold;
   });
+}
+
+function releaseHeldFrames() {
+  showWalletFrames();
 }
 
 function placeWalletClose() {
@@ -382,6 +394,7 @@ function hideWalletOnCancel() {
     } catch {
       return;
     }
+    if (Date.now() < ignoreWalletHideUntil) return;
     if (type === "reject" || type === "close") {
       document.querySelectorAll('iframe[src*="herewallet.app"]').forEach((frame) => {
         if (frame instanceof HTMLIFrameElement) frame.style.display = "none";
@@ -1052,11 +1065,12 @@ export async function sendNearTransactions(accountId: string, transactions: { re
     }
   }
   if (abandonSign) throw new Error("Cancelled.");
-  releaseHeldFrames();
+  revealWallet();
   const built = transactions.map((tx) => ({ signerId: accountId, receiverId: tx.receiverId, actions: tx.actions }));
   const before = new URL(window.location.href).searchParams.get("transactionHashes");
   const batch = built.length > 1 && typeof wallet.signAndSendTransactions === "function";
   const sent = batch ? wallet.signAndSendTransactions!({ transactions: built }) : sendOneByOne(wallet, built);
+  const reveal = window.setInterval(revealWallet, 200);
   const cancelled = new Promise<never>((_, reject) => {
     signAbort = () => reject(new Error("Cancelled."));
   });
@@ -1068,6 +1082,7 @@ export async function sendNearTransactions(accountId: string, transactions: { re
     if (hash && hash !== before) return hash.split(",")[0] ?? hash;
     throw error instanceof Error ? error : new Error("The NEAR wallet rejected the transaction.");
   } finally {
+    window.clearInterval(reveal);
     signAbort = null;
     if (redirectTimer) window.clearInterval(redirectTimer);
     redirectTimer = 0;
