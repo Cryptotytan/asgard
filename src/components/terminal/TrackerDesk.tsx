@@ -495,7 +495,7 @@ function WalletDetail({
       {pane === "activity" && (
         <div className="overflow-hidden rounded-2xl border border-line bg-surface px-2">
         <ActivityTable
-          rows={(live?.fills ?? []).filter((fill) => spam || !/spam|airdrop|scam/i.test(`${fill.kind} ${fill.detail} ${fill.symbol}`))}
+          rows={(live?.fills ?? []).filter((fill) => fill.ok !== false && (spam || !/spam|airdrop|scam/i.test(`${fill.kind} ${fill.detail} ${fill.symbol}`)))}
           empty={live ? (live.ago === "…" ? "Reading transfers…" : "No recent account activity.") : "Reading transfers…"}
         />
         </div>

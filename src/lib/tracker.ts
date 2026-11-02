@@ -159,6 +159,7 @@ export type ChainFill = {
   value?: number;
   extra?: number;
   legs?: ChainLeg[];
+  ok?: boolean;
 };
 export type ChainWallet = { value: number; usdt: number; holdings: ChainHolding[]; trades: number; txCount: number; ago: string; fills: ChainFill[] };
 
@@ -345,11 +346,12 @@ async function fetchChain(account: string): Promise<ChainWallet> {
     const fts = ftBody.txns ?? [];
     const prices = ftPriceBook ?? new Map<string, number>();
     const freshFills = txRes?.ok || ftRes?.ok ? mergeActivity(txns, fts, [], prices) : [];
-    if (chainGen.get(account) === gen && freshFills.length) {
+    const fetched = Boolean(txRes?.ok || ftRes?.ok);
+    if (chainGen.get(account) === gen && fetched) {
       const current = chainCache.get(account) ?? blank;
       remember(account, { ...current, ago: freshFills[0]?.ago ?? current.ago, fills: freshFills });
     }
-    return { txns, fts, freshFills };
+    return { txns, fts, freshFills, fetched };
   });
 
   const [acted, fastRes, counted] = await Promise.all([activity, fastJob, countJob]);
@@ -370,7 +372,7 @@ async function fetchChain(account: string): Promise<ChainWallet> {
   const countBody = counted?.ok ? ((await counted.json()) as { txns?: { count?: string }[] }) : {};
   const txCount = Number(countBody.txns?.[0]?.count ?? 0) || previous?.txCount || 0;
   const quick = holdingsFrom(tokenRows, Number.isFinite(near) ? near : 0, metaBook ?? seedMeta());
-  const fills = acted.freshFills.length ? acted.freshFills : previous?.fills ?? [];
+  const fills = acted.fetched ? acted.freshFills : previous?.fills ?? [];
   const next: ChainWallet = {
     value: quick.holdings.length ? quick.value : previous?.value ?? quick.value,
     usdt: quick.holdings.length ? quick.usdt : previous?.usdt ?? quick.usdt,
@@ -405,12 +407,15 @@ type ReceiptTxn = {
   receiver_account_id?: string;
   predecessor_account_id?: string;
   actions?: { action?: string; method?: string; deposit?: string | number; args?: string | null }[];
+  outcomes?: { status?: boolean };
+  receipt_outcome?: { status?: boolean };
 };
 type FtTxn = {
   transaction_hash?: string;
   delta_amount?: string;
   block_timestamp?: string;
   cause?: string;
+  outcomes?: { status?: boolean };
   ft?: { contract?: string; symbol?: string; decimals?: number };
 };
 type NftTxn = { transaction_hash?: string; block_timestamp?: string; nft?: { contract?: string; token_id?: string }; token_id?: string; delta_amount?: string };
@@ -558,6 +563,10 @@ function stamp(ns?: string) {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+function landed(status?: boolean) {
+  return status !== false;
+}
+
 function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[], prices = new Map<string, number>()): ChainFill[] {
   const rows = new Map<string, ChainFill>();
   const touch = (hash: string, time: number, ago: string) => {
@@ -580,6 +589,7 @@ function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[], prices 
         value: 0,
         extra: 0,
         legs: [],
+        ok: true,
       };
       rows.set(id, row);
     }
@@ -596,6 +606,7 @@ function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[], prices 
     return next;
   };
   for (const tx of txns) {
+    if (!landed(tx.outcomes?.status) || !landed(tx.receipt_outcome?.status)) continue;
     const action = tx.actions?.[0];
     const time = stamp(tx.block_timestamp);
     const ago = time ? agoFrom(tx.block_timestamp || "0") : "—";
@@ -612,6 +623,7 @@ function mergeActivity(txns: ReceiptTxn[], fts: FtTxn[], nfts: NftTxn[], prices 
     row.extra = Math.max(row.extra ?? 0, Math.max(0, (tx.actions?.length ?? 1) - 1));
   }
   for (const tx of fts) {
+    if (!landed(tx.outcomes?.status)) continue;
     const decimals = tx.ft?.decimals ?? 0;
     const raw = tx.delta_amount ?? "0";
     const amount = Number(raw.replace("-", "")) / 10 ** Math.max(decimals, 0);
