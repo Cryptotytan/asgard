@@ -851,35 +851,68 @@ export function primeVaultMove(symbol: string, amount: string, direction: "in" |
 }
 
 async function sendRef(accountId: string, ready: RefReady) {
-  const storage = await storageDepositAmount("v2.ref-finance.near", REF_STORAGE);
-  const txs: { receiverId: string; actions: Call[] }[] = [
-    {
-      receiverId: "v2.ref-finance.near",
-      actions: [call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, storage)],
-    },
-    {
-      receiverId: ready.tokenIn,
-      actions: [
-        call(
-          "ft_transfer_call",
-          {
-            receiver_id: "v2.ref-finance.near",
-            amount: ready.hops[0]?.amount_in,
-            msg: JSON.stringify({ force: 0, actions: ready.hops }),
-          },
-          280_000_000_000_000n,
-          1n,
-        ),
-      ],
-    },
-  ];
+  return sendNearTransactions(accountId, await refTransactions(accountId, ready));
+}
+
+const FT_STORAGE = 1_250_000_000_000_000_000_000n;
+
+async function refTransactions(accountId: string, ready: RefReady) {
+  const tokenOut = ready.hops[ready.hops.length - 1]?.token_out || "";
+  const spend = BigInt(ready.hops[0]?.amount_in || "0");
+  const [onRef, onIn, onOut, refStorage, inStorage, outStorage, wrappedRaw] = await Promise.all([
+    isRegistered("v2.ref-finance.near", accountId),
+    isRegistered(ready.tokenIn, accountId),
+    tokenOut && tokenOut !== ready.tokenIn ? isRegistered(tokenOut, accountId) : Promise.resolve(true),
+    storageDepositAmount("v2.ref-finance.near", REF_STORAGE),
+    storageDepositAmount(ready.tokenIn, FT_STORAGE),
+    tokenOut ? storageDepositAmount(tokenOut, FT_STORAGE) : Promise.resolve(FT_STORAGE),
+    ready.tokenIn === "wrap.near" ? wrappedBalance(accountId) : Promise.resolve("0"),
+  ]);
+  const txs: { receiverId: string; actions: Call[] }[] = [];
+  const deposit = (receiverId: string, amount: bigint) => {
+    txs.push({
+      receiverId,
+      actions: [call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, amount)],
+    });
+  };
+  if (!onRef) deposit("v2.ref-finance.near", refStorage);
+  if (tokenOut && tokenOut !== ready.tokenIn && !onOut) deposit(tokenOut, outStorage);
+  if (ready.tokenIn === "wrap.near") {
+    const wrapCalls: Call[] = [];
+    if (!onIn) wrapCalls.push(call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, inStorage));
+    const wrapped = BigInt(wrappedRaw || "0");
+    if (wrapped < spend) wrapCalls.push(call("near_deposit", {}, 20_000_000_000_000n, spend - wrapped));
+    if (wrapCalls.length) txs.push({ receiverId: "wrap.near", actions: wrapCalls });
+  } else if (!onIn) {
+    deposit(ready.tokenIn, inStorage);
+  }
+  txs.push({
+    receiverId: ready.tokenIn,
+    actions: [
+      call(
+        "ft_transfer_call",
+        {
+          receiver_id: "v2.ref-finance.near",
+          amount: ready.hops[0]?.amount_in,
+          msg: JSON.stringify({ force: 0, actions: ready.hops }),
+        },
+        280_000_000_000_000n,
+        1n,
+      ),
+    ],
+  });
   if (ready.unwrap && ready.unwrap !== "0") {
     txs.push({
       receiverId: "wrap.near",
       actions: [call("near_withdraw", { amount: ready.unwrap }, 30_000_000_000_000n, 1n)],
     });
   }
-  await sendNearTransactions(accountId, txs);
+  return txs;
+}
+
+export async function sendRefSwap(accountId: string, ready: RefReady) {
+  const outcome = await sendRef(accountId, ready);
+  return typeof outcome === "string" ? outcome : "SENT";
 }
 
 let metaYocto = 0n;

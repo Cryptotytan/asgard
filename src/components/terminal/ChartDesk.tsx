@@ -5,8 +5,8 @@ import { TokenIcon, TokenPicker } from "@/components/terminal/TokenIcon";
 import { fmt, qty, scoreLabel, tokenBySymbol, usd, type Print } from "@/lib/market";
 import { useDesk, type Side } from "@/lib/store";
 import { candleMeta, liveCandles, livePrints, loadOlderCandles, loadPrints, watchCandles } from "@/lib/live";
-import { executeIntent } from "@/lib/intents";
 import { armWalletPopup } from "@/lib/near-wallet";
+import { quoteRoutes } from "@/lib/routes";
 
 const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"];
 
@@ -153,6 +153,17 @@ function Positions({ mode, symbol, mark }: { mode: "spot" | "perp"; symbol: stri
   const balances = useDesk((s) => s.balances);
   const positions = useDesk((s) => s.positions);
   const closePerp = useDesk((s) => s.closePerp);
+  async function closePosition(position: (typeof positions)[number]) {
+    try {
+      if (position.external) {
+        const { closeHyperliquid } = await import("@/lib/hyperliquid");
+        await closeHyperliquid({ symbol: position.base, side: position.side, size: position.size });
+      }
+      closePerp(position.id);
+    } catch (error) {
+      useDesk.getState().log("Close failed", error instanceof Error ? error.message : "The close was rejected.", 0);
+    }
+  }
   const marks = useDesk((s) => s.marks);
   if (mode === "spot") {
     const held = balances[symbol] ?? 0;
@@ -176,7 +187,7 @@ function Positions({ mode, symbol, mark }: { mode: "spot" | "perp"; symbol: stri
             </span>
             <span className="flex items-center gap-3">
               <span className={`font-mono text-sm ${pnl >= 0 ? "text-primary" : "text-danger"}`}>{usd(pnl)}</span>
-              <button type="button" onClick={() => closePerp(position.id)} className="h-10 rounded-full border border-line px-3 text-sm">
+              <button type="button" onClick={() => void closePosition(position)} className="h-10 rounded-full border border-line px-3 text-sm">
                 Close
               </button>
             </span>
@@ -217,12 +228,30 @@ function SpotTicket({ token }: { token: ReturnType<typeof tokenBySymbol> }) {
       return;
     }
     armWalletPopup();
-    setNote("Confirm the NEAR Intents deposit in your wallet.");
+    setNote("Finding a pool that can fill this.");
     try {
-      const result = await executeIntent({ from: pay, to: receive, amount: String(qty), accountId, purpose: "Spot" });
-      setNote(`${side === "buy" ? "Bought" : "Sold"} ${fmt(result.amountOutHuman)} ${receive}`);
+      const from = tokenBySymbol(pay);
+      const to = tokenBySymbol(receive);
+      const routes = await quoteRoutes({
+        from,
+        to,
+        amount: String(qty),
+        accountId,
+        refundTo: accountId,
+        recipient: accountId,
+        slippageBps: 150,
+        purpose: "Spot",
+      });
+      const best = routes[0];
+      if (!best) {
+        setNote("No pool can fill this size. Nothing was sent.");
+        return;
+      }
+      setNote(`Confirm in your wallet. ${best.name} has the route.`);
+      const result = await best.execute();
+      setNote(`${side === "buy" ? "Bought" : "Sold"} ${fmt(result.amountOutHuman)} ${receive} via ${best.name}`);
     } catch (error) {
-      setNote(error instanceof Error ? error.message : "NEAR Intents rejected the trade.");
+      setNote(error instanceof Error ? error.message : "The route rejected the trade. Nothing was sent.");
     }
   }
 
@@ -244,7 +273,7 @@ function SpotTicket({ token }: { token: ReturnType<typeof tokenBySymbol> }) {
       footer={
         <>
           <button type="button" onClick={() => void trade()} className="mt-3 h-12 w-full rounded-xl bg-primary font-semibold text-primary-fg">
-            {connected ? (side === "buy" ? "Buy via Intents" : "Sell via Intents") : "Connect to trade"}
+            {connected ? (side === "buy" ? "Buy" : "Sell") : "Connect to trade"}
           </button>
           <dl className="mt-3 grid grid-cols-2 gap-2 font-mono text-xs">
             <Stat k="Bought" v={usd(side === "buy" && note.startsWith("Bought") ? qty : 0)} />
@@ -271,22 +300,43 @@ function PerpTicket({ token, mark }: { token: ReturnType<typeof tokenBySymbol>; 
   const notion = Number(amount) || 0;
   const margin = notion / leverage;
 
-  function trade() {
+  async function trade() {
     if (!connected) {
       connect();
-      setNote("Connect a NEAR wallet to trade.");
+      setNote("Connect a wallet. Perps settle on Hyperliquid.");
       return;
     }
     if (notion <= 0) {
       setNote("Enter a size.");
       return;
     }
-    if (token.symbol !== "NEAR" && token.symbol !== "ETH") {
-      setNote("Perps are listed on NEAR and ETH.");
-      return;
+    setNote("Confirm the order in your EVM wallet. It settles on Hyperliquid.");
+    try {
+      const { placeHyperliquid } = await import("@/lib/hyperliquid");
+      const filled = await placeHyperliquid({ symbol: token.symbol, side, notional: notion, mark, leverage, reduceOnly: false });
+      if (filled.resting) {
+        useDesk.getState().placeOrder({
+          symbol: token.symbol,
+          kind: "perp",
+          side,
+          amount: notion,
+          limit: filled.price,
+          pay: "USDT",
+          receive: token.symbol,
+          base: token.symbol,
+          leverage,
+          external: true,
+          hlOid: filled.oid,
+          hlAsset: filled.asset,
+        });
+        setNote("Limit is resting on Hyperliquid.");
+        return;
+      }
+      const opened = openPerp(`${token.symbol}-PERP`, token.symbol, side, notion, leverage, { external: true, entry: filled.price, size: filled.size });
+      setNote(opened ? `${side} filled on Hyperliquid` : "Hyperliquid filled, but the position could not be tracked.");
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : "Hyperliquid rejected the order. Nothing was opened.");
     }
-    const ok = openPerp(`${token.symbol}-PERP`, token.symbol, side, notion, leverage);
-    setNote(ok ? `${side} opened` : "Not enough USDC margin");
   }
 
   return (

@@ -2,7 +2,7 @@ import { chainByLabel, validAddress } from "@/lib/chains";
 import { evmDexRoutes } from "@/lib/evm-dex";
 import { ensureEvmAllowance, sendEvmCall, sendSolanaSerialized } from "@/lib/foreign-wallet";
 import { executeIntent, parseUnits, quoteIntent } from "@/lib/intents";
-import { intearSetup, nearFunctionCall, sendNearTransactions, settleHoldings, storageDepositAmount } from "@/lib/near-wallet";
+import { intearSetup, isRegisteredOn, nearFunctionCall, sendNearTransactions, sendRefSwap, settleHoldings, storageDepositAmount } from "@/lib/near-wallet";
 import type { Token } from "@/lib/market";
 
 const LIFI = "https://li.quest/v1/advanced";
@@ -450,6 +450,14 @@ async function intearRoute(from: Token, to: Token, amount: string, accountId: st
         return actions.length ? [{ receiverId: tx.receiver_id, actions }] : [];
       });
       if (!transactions.length) throw new Error("Rhea did not return a transaction. Nothing was sent.");
+      const outContract = tokenOut.startsWith("nep141:") ? tokenOut.slice("nep141:".length) : "";
+      if (outContract && !(await isRegisteredOn(outContract, accountId))) {
+        const pay = await storageDepositAmount(outContract, 1_250_000_000_000_000_000_000n);
+        transactions.unshift({
+          receiverId: outContract,
+          actions: [nearFunctionCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, pay)],
+        });
+      }
       if (transactions.some((tx) => tx.receiverId === "dex.intear.near")) {
         const setup = await intearSetup(accountId, [tokenIn, tokenOut]);
         if (setup.length) {
@@ -545,37 +553,19 @@ async function refRoute(from: Token, to: Token, amount: string, accountId: strin
       if (!fresh.ok) throw new Error("Ref Finance did not return a route. Nothing was sent.");
       const next = (await fresh.json()) as typeof body;
       const nextPools = next.result_data?.routes?.[0]?.pools?.filter((pool) => pool.pool_id && pool.amount_in && pool.min_amount_out) ?? pools;
-      const storage = await storageDepositAmount("v2.ref-finance.near", 10_000_000_000_000_000_000_000n);
-      const hash = await sendNearTransactions(accountId, [
-        {
-          receiverId: "v2.ref-finance.near",
-          actions: [nearFunctionCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, storage)],
-        },
-        {
-          receiverId: tokenIn,
-          actions: [
-            nearFunctionCall(
-              "ft_transfer_call",
-              {
-                receiver_id: "v2.ref-finance.near",
-                amount: units,
-                msg: JSON.stringify({
-                  force: 0,
-                  actions: nextPools.map((pool) => ({
-                    pool_id: Number(pool.pool_id),
-                    token_in: pool.token_in,
-                    token_out: pool.token_out,
-                    amount_in: pool.amount_in,
-                    min_amount_out: pool.min_amount_out,
-                  })),
-                }),
-              },
-              280_000_000_000_000n,
-              1n,
-            ),
-          ],
-        },
-      ]);
+      const hops = nextPools.map((pool) => ({
+        pool_id: Number(pool.pool_id),
+        token_in: pool.token_in || tokenIn,
+        token_out: pool.token_out || tokenOut,
+        amount_in: pool.amount_in || units,
+        min_amount_out: pool.min_amount_out || "1",
+      }));
+      const last = hops[hops.length - 1];
+      const hash = await sendRefSwap(accountId, {
+        tokenIn,
+        hops,
+        unwrap: tokenOut === "wrap.near" ? last?.min_amount_out : undefined,
+      });
       const got = Number(next.result_data?.amount_out) || 0;
       const received = got > 0 ? got / 10 ** outDecimals : receive;
       bookTrade(from, to, Number(amount) || 0, received, accountId);
