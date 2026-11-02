@@ -481,12 +481,12 @@ export function CandleChart({
         {crossY !== null && <line x1={pad.l} x2={plotRight} y1={crossY} y2={crossY} stroke="rgba(255,255,255,0.35)" strokeDasharray="2 3" />}
       </svg>
       {ticks.map((tick) => (
-        <span key={tick} className="pointer-events-none absolute right-1.5 -translate-y-1/2 font-mono text-[10px] text-[#8b8b8b]" style={{ top: `${(y(tick) / height) * 100}%` }}>
+        <span key={tick} className="pointer-events-none absolute right-1.5 -translate-y-1/2 font-mono text-[10px] text-white" style={{ top: `${(y(tick) / height) * 100}%` }}>
           {label(tick)}
         </span>
       ))}
       <span
-        className="pointer-events-none absolute right-1 z-[1] -translate-y-1/2 rounded-[3px] px-1.5 py-0.5 font-mono text-[10px] text-black"
+        className="pointer-events-none absolute right-1 z-[1] -translate-y-1/2 rounded-[3px] px-1.5 py-0.5 font-mono text-[10px] text-white"
         style={{ top: `${(y(quote) / height) * 100}%`, background: lastUp ? UP : DOWN }}
       >
         {label(quote)}

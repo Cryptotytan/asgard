@@ -26,7 +26,7 @@ export function GeckoChart({ token, frame }: { token: Token; frame: string }) {
   const resolution = RESOLUTION[frame] ?? "15m";
   const src =
     network && address
-      ? `https://www.geckoterminal.com/${network}/tokens/${encodeURIComponent(address)}?embed=1&info=0&swaps=0&light_chart=0&chart_type=price&resolution=${resolution}&bg_color=000000`
+      ? `https://www.geckoterminal.com/${network}/tokens/${encodeURIComponent(address)}?embed=1&info=0&swaps=0&light_chart=0&chart_type=price&resolution=${resolution}`
       : "";
   const series = liveCandles(token.symbol, frame);
   const history = candleMeta(token.symbol, frame);
