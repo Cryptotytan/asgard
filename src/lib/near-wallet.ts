@@ -225,25 +225,27 @@ export function armWalletPopup() {
   if (hasInjectedSigner()) return;
   disarmWalletPopup();
   primedUsed = false;
-  primed = window.open("about:blank", "asgard-wallet", "popup=1,width=440,height=760");
+  const native = (nativeOpen ?? window.open).bind(window);
+  nativeOpen = native;
+  const name = `asgard-${Date.now()}`;
+  primed = native("about:blank", name, "popup=1,width=440,height=760");
   if (!primed) return;
-  nativeOpen = window.open.bind(window);
-  const native = nativeOpen;
   window.open = ((url?: string | URL, target?: string, features?: string) => {
     const href = url == null ? "" : String(url);
-    if (!primedUsed && primed && !primed.closed && href && !href.startsWith("about:")) {
-      primedUsed = true;
+    const reserved = primed;
+    if (!primedUsed && reserved && !reserved.closed && href && !href.startsWith("about:") && !href.startsWith("blob:")) {
       try {
-        primed.location.href = href;
+        reserved.location.replace(href);
+        primedUsed = true;
+        window.open = native;
+        return reserved;
       } catch {
-        /* A cross-origin wallet navigates the popup itself. */
+        /* The reserved window is no longer ours. Open a real one. */
       }
-      window.open = native;
-      return primed;
     }
     return native(url as string, target, features);
   }) as typeof window.open;
-  restoreTimer = window.setTimeout(() => disarmWalletPopup(), 20000);
+  restoreTimer = window.setTimeout(() => disarmWalletPopup(), 45000);
 }
 
 export function disarmWalletPopup() {
@@ -295,12 +297,22 @@ function visibleWalletFrame() {
 }
 
 function hideWalletFrame() {
-  document.querySelectorAll('iframe[src*="herewallet.app"], iframe[src*="intear.tech"]').forEach((frame) => {
-    if (frame instanceof HTMLIFrameElement) frame.style.display = "none";
+  document.querySelectorAll('iframe[src*="herewallet.app"], iframe[src*="intear.tech"], iframe[src*="intear"]').forEach((frame) => {
+    if (!(frame instanceof HTMLIFrameElement)) return;
+    frame.dataset.asgardHold = "1";
+    frame.style.display = "none";
   });
-  window.postMessage({ type: "close", message: "Wallet closed." }, window.location.origin);
   document.getElementById("asgard-here-close")?.remove();
   cancelPending?.();
+}
+
+function releaseHeldFrames() {
+  document.querySelectorAll("iframe[data-asgard-hold='1']").forEach((frame) => {
+    if (!(frame instanceof HTMLIFrameElement)) return;
+    frame.style.display = "block";
+    frame.style.zIndex = "200001";
+    delete frame.dataset.asgardHold;
+  });
 }
 
 function placeWalletClose() {
@@ -982,6 +994,7 @@ export async function sendNearTransactions(accountId: string, transactions: { re
     }
   }
   if (abandonSign) throw new Error("Cancelled.");
+  releaseHeldFrames();
   const built = transactions.map((tx) => ({ signerId: accountId, receiverId: tx.receiverId, actions: tx.actions }));
   const before = new URL(window.location.href).searchParams.get("transactionHashes");
   const sent = built.length > 1 && wallet.signAndSendTransactions ? wallet.signAndSendTransactions({ transactions: built }) : sendOneByOne(wallet, built);

@@ -6,6 +6,7 @@ import { fmt, qty, scoreLabel, tokenBySymbol, usd, type Print } from "@/lib/mark
 import { useDesk, type Side } from "@/lib/store";
 import { candleMeta, liveCandles, livePrints, loadOlderCandles, loadPrints, watchCandles } from "@/lib/live";
 import { executeIntent } from "@/lib/intents";
+import { armWalletPopup } from "@/lib/near-wallet";
 
 const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"];
 
@@ -215,6 +216,7 @@ function SpotTicket({ token }: { token: ReturnType<typeof tokenBySymbol> }) {
       setNote("Enter an amount.");
       return;
     }
+    armWalletPopup();
     setNote("Confirm the NEAR Intents deposit in your wallet.");
     try {
       const result = await executeIntent({ from: pay, to: receive, amount: String(qty), accountId, purpose: "Spot" });

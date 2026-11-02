@@ -8,6 +8,7 @@ import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 import { useDesk } from "@/lib/store";
 import { refreshBalances, useHoldings } from "@/lib/wallet-holdings";
 import { rememberTx } from "@/lib/wallet-history";
+import { armWalletPopup } from "@/lib/near-wallet";
 
 export function SwapDesk({ focus }: { focus?: string }) {
   const connected = useDesk((s) => s.connected);
@@ -191,6 +192,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
       if (!best && amountN > 0) setNote(quoteError || "No route inside 1% slippage.");
       return;
     }
+    armWalletPopup();
     setSettling(true);
     setFlight({
       amount,
