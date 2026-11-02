@@ -3,12 +3,24 @@ import { ArrowDownUp, ChevronDown, LoaderCircle, ShieldAlert } from "lucide-reac
 import { TokenIcon, TokenPicker, VerifiedMark, ChainBadge } from "@/components/terminal/TokenIcon";
 import { linkedWallets, useForeign, WALLET_MARK, type LinkedWallet } from "@/lib/foreign-wallet";
 import { canSign, chainByLabel, validAddress } from "@/lib/chains";
-import { fmt, qty, scoreLabel, tokenBySymbol, tokenLabel, usd } from "@/lib/market";
+import { fmt, qty, scoreLabel, tokenBySymbol, tokenLabel, TOKENS, usd } from "@/lib/market";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 import { useDesk } from "@/lib/store";
 import { refreshBalances, useHoldings } from "@/lib/wallet-holdings";
 import { rememberTx } from "@/lib/wallet-history";
 import { armWalletPopup } from "@/lib/near-wallet";
+
+function tokenForWallet(symbol: string, chain: string | null, walletId: LinkedWallet["id"] | null) {
+  if (chain) {
+    const exact = TOKENS.find((token) => token.symbol === symbol && token.chain === chain);
+    if (exact && (!walletId || chainByLabel(exact.chain)?.kind === walletId)) return exact;
+  }
+  if (walletId) {
+    const match = TOKENS.find((token) => token.symbol === symbol && chainByLabel(token.chain)?.kind === walletId);
+    if (match) return match;
+  }
+  return tokenBySymbol(symbol);
+}
 
 export function SwapDesk({ focus }: { focus?: string }) {
   const connected = useDesk((s) => s.connected);
@@ -22,6 +34,8 @@ export function SwapDesk({ focus }: { focus?: string }) {
   const positions = useDesk((s) => s.positions);
   const [sellS, setSellS] = useState(focus && focus !== "USDT" ? "USDT" : "NEAR");
   const [buyS, setBuyS] = useState(focus || "USDT");
+  const [sellChain, setSellChain] = useState<string | null>(null);
+  const [buyChain, setBuyChain] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
   const [picking, setPicking] = useState<"sell" | "buy" | null>(null);
   const [acked, setAcked] = useState(false);
@@ -48,6 +62,8 @@ export function SwapDesk({ focus }: { focus?: string }) {
     if (turnLock.current) return;
     const nextSell = buyS;
     const nextBuy = sellS;
+    const nextSellChain = buyChain;
+    const nextBuyChain = sellChain;
     const nextSellWallet = buyWalletId;
     const nextBuyWallet = sellWalletId;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -59,6 +75,8 @@ export function SwapDesk({ focus }: { focus?: string }) {
     if (reduce) {
       setSellS(nextSell);
       setBuyS(nextBuy);
+      setSellChain(nextSellChain);
+      setBuyChain(nextBuyChain);
       return;
     }
     turnLock.current = true;
@@ -66,6 +84,8 @@ export function SwapDesk({ focus }: { focus?: string }) {
     window.setTimeout(() => {
       setSellS(nextSell);
       setBuyS(nextBuy);
+      setSellChain(nextSellChain);
+      setBuyChain(nextBuyChain);
     }, 250);
     window.setTimeout(() => {
       turnLock.current = false;
@@ -75,11 +95,13 @@ export function SwapDesk({ focus }: { focus?: string }) {
   useEffect(() => {
     if (!focus) return;
     setBuyS(focus);
+    setBuyChain(null);
     setSellS((current) => (current === focus ? (focus === "USDT" ? "NEAR" : "USDT") : current));
+    setSellChain(null);
   }, [focus]);
 
-  const sell = tokenBySymbol(sellS);
-  const buy = tokenBySymbol(buyS);
+  const sell = tokenForWallet(sellS, sellChain, sellWalletId);
+  const buy = tokenForWallet(buyS, buyChain, buyWalletId);
   const amountN = Number(amount) || 0;
   const slipPct = 5;
   const wallets = linkedWallets(accountId, foreign);
@@ -111,18 +133,30 @@ export function SwapDesk({ focus }: { focus?: string }) {
 
   useEffect(() => {
     if (!sellWalletId) return;
-    const wallet = wallets.find((item) => item.id === sellWalletId);
-    if (!wallet || chainByLabel(tokenBySymbol(sellS).chain)?.kind === wallet.id) return;
-    const top = Object.entries(sellHold.book).sort((a, b) => b[1] * (tokenBySymbol(b[0]).price || 0) - a[1] * (tokenBySymbol(a[0]).price || 0))[0];
-    if (top) setSellS(top[0]);
-  }, [sellWalletId]);
+    const current = tokenForWallet(sellS, sellChain, sellWalletId);
+    if (chainByLabel(current.chain)?.kind === sellWalletId) return;
+    const top = Object.entries(sellHold.book)
+      .filter(([, amount]) => amount > 0)
+      .sort((a, b) => b[1] * (tokenForWallet(b[0], null, sellWalletId).price || 0) - a[1] * (tokenForWallet(a[0], null, sellWalletId).price || 0))[0];
+    if (!top) return;
+    const next = tokenForWallet(top[0], null, sellWalletId);
+    if (chainByLabel(next.chain)?.kind !== sellWalletId) return;
+    setSellS(next.symbol);
+    setSellChain(next.chain);
+  }, [sellWalletId, sellHold.book, sellS, sellChain]);
   useEffect(() => {
     if (!buyWalletId) return;
-    const wallet = wallets.find((item) => item.id === buyWalletId);
-    if (!wallet || chainByLabel(tokenBySymbol(buyS).chain)?.kind === wallet.id) return;
-    const top = Object.entries(buyHold.book).sort((a, b) => b[1] * (tokenBySymbol(b[0]).price || 0) - a[1] * (tokenBySymbol(a[0]).price || 0))[0];
-    if (top) setBuyS(top[0]);
-  }, [buyWalletId]);
+    const current = tokenForWallet(buyS, buyChain, buyWalletId);
+    if (chainByLabel(current.chain)?.kind === buyWalletId) return;
+    const top = Object.entries(buyHold.book)
+      .filter(([, amount]) => amount > 0)
+      .sort((a, b) => b[1] * (tokenForWallet(b[0], null, buyWalletId).price || 0) - a[1] * (tokenForWallet(a[0], null, buyWalletId).price || 0))[0];
+    if (!top) return;
+    const next = tokenForWallet(top[0], null, buyWalletId);
+    if (chainByLabel(next.chain)?.kind !== buyWalletId) return;
+    setBuyS(next.symbol);
+    setBuyChain(next.chain);
+  }, [buyWalletId, buyHold.book, buyS, buyChain]);
 
   useEffect(() => {
     setAcked(false);
@@ -420,18 +454,21 @@ export function SwapDesk({ focus }: { focus?: string }) {
         heldOnly={picking === "sell"}
         loadingBalances={picking === "buy" ? buyHold.loading : sellHold.loading}
         onClose={() => setPicking(null)}
-        onPick={(symbol) => {
-          const next = tokenBySymbol(symbol);
-          const kind = chainByLabel(next.chain)?.kind;
-          const match = wallets.find((wallet) => wallet.id === kind);
+        onPick={(token) => {
           if (picking === "sell") {
-            if (symbol === buyS) setBuyS(sellS);
-            setSellS(symbol);
-            if (match) setSellWalletId(match.id);
+            if (token.symbol === buy.symbol && token.chain === buy.chain) {
+              setBuyS(sell.symbol);
+              setBuyChain(sell.chain);
+            }
+            setSellS(token.symbol);
+            setSellChain(token.chain);
           } else {
-            if (symbol === sellS) setSellS(buyS);
-            setBuyS(symbol);
-            if (match) setBuyWalletId(match.id);
+            if (token.symbol === sell.symbol && token.chain === sell.chain) {
+              setSellS(buy.symbol);
+              setSellChain(buy.chain);
+            }
+            setBuyS(token.symbol);
+            setBuyChain(token.chain);
           }
         }}
       />

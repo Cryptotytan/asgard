@@ -4,7 +4,7 @@ import { Check, Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { knownLogo, coinIcon, logoFallback, lookupNearToken, searchTokens } from "@/lib/dex";
 import { logoOf } from "@/lib/logo-book";
-import { chainIcon } from "@/lib/chains";
+import { chainByLabel, chainIcon } from "@/lib/chains";
 import { CHAIN_ICON, CHAINS, displayName, fmt, glyph, px, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 
@@ -97,6 +97,8 @@ export function TokenPicker({
   open,
   balances,
   loadingBalances,
+  walletKind,
+  walletName,
   heldOnly = false,
   onClose,
   onPick,
@@ -108,7 +110,7 @@ export function TokenPicker({
   heldOnly?: boolean;
   loadingBalances?: boolean;
   onClose: () => void;
-  onPick: (symbol: string) => void;
+  onPick: (token: Token) => void;
 }) {
   const [query, setQuery] = useState("");
   const [chain, setChain] = useState("All");
@@ -119,12 +121,15 @@ export function TokenPicker({
     const present = new Set(TOKENS.filter((token) => token.listed && token.price > 0).map((token) => token.chain));
     const ordered = CHAINS.filter((id) => present.has(id));
     const extra = [...present].filter((id) => !(CHAINS as readonly string[]).includes(id)).sort();
-    return [{ id: "All", label: "All chains", icon: "" }, ...[...ordered, ...extra].map((id) => ({ id, label: id, icon: CHAIN_ICON[id] || chainIcon(id) }))];
-  }, [clock]);
+    const rows = [{ id: "All", label: "All chains", icon: "" }, ...[...ordered, ...extra].map((id) => ({ id, label: id, icon: CHAIN_ICON[id] || chainIcon(id) }))];
+    if (!walletKind) return rows;
+    return rows.filter((item) => item.id === "All" || chainByLabel(item.id)?.kind === walletKind);
+  }, [clock, walletKind]);
   const list = useMemo(
     () =>
       TOKENS.filter((token) => {
         if (heldOnly && (balances?.[token.symbol] ?? 0) <= 0) return false;
+        if (walletKind && chainByLabel(token.chain)?.kind !== walletKind) return false;
         if (!heldOnly && (!token.listed || !Number.isFinite(token.price) || token.price <= 0)) return false;
         if (chain !== "All" && token.chain !== chain) return false;
         if (!needle) return true;
@@ -135,7 +140,7 @@ export function TokenPicker({
         if (byHold !== 0) return byHold;
         return b.volN - a.volN || b.liqN - a.liqN;
       }),
-    [balances, chain, clock, heldOnly, needle],
+    [balances, chain, clock, heldOnly, needle, walletKind],
   );
   useEffect(() => {
     if (!open) {
@@ -143,6 +148,10 @@ export function TokenPicker({
       setLooking(false);
       return;
     }
+    setChain("All");
+  }, [open, walletKind]);
+  useEffect(() => {
+    if (!open) return;
     const raw = query.trim();
     if (raw.length < 2) {
       setLooking(false);
@@ -182,7 +191,7 @@ export function TokenPicker({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between gap-3 px-4 pt-4 pb-2">
-          <h2 id="choose-token-title" className="text-lg font-semibold">Choose token</h2>
+          <h2 id="choose-token-title" className="text-lg font-semibold">{walletName ? `Tokens in ${walletName}` : "Choose token"}</h2>
           <button type="button" aria-label="Close" onClick={onClose} className="grid size-11 shrink-0 place-items-center rounded-full bg-surface-2">
             <X className="size-4" />
           </button>
@@ -213,11 +222,11 @@ export function TokenPicker({
             </label>
             <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               {list.map((token) => (
-                <li key={`${token.symbol}-${token.address ?? ""}`}>
+                <li key={`${token.chain}-${token.symbol}-${token.address ?? ""}`}>
                   <button
                     type="button"
                     onClick={() => {
-                      onPick(token.symbol);
+                      onPick(token);
                       onClose();
                     }}
                     className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left hover:bg-surface-2"

@@ -103,7 +103,7 @@ export function ChartDesk({ mode, symbol, onSymbol }: { mode: "spot" | "perp"; s
         {book === "Orders" && <p className="px-1 py-6 text-sm text-muted">No open orders. Market tickets settle on NEAR Intents.</p>}
       </section>
       {mode === "spot" ? <SpotTicket token={token} /> : <PerpTicket token={token} mark={mark} />}
-      <TokenPicker open={picker} onClose={() => setPicker(false)} onPick={onSymbol} />
+      <TokenPicker open={picker} onClose={() => setPicker(false)} onPick={(token) => onSymbol(token.symbol)} />
     </div>
   );
 }
