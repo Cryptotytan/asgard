@@ -3,7 +3,8 @@ import { TOKENS } from "@/lib/market";
 import { isRegisteredOn, nearFunctionCall, registrationCached, sendNearTransactions, type NearCall } from "@/lib/near-wallet";
 
 const BURROW = "contract.main.burrow.near";
-const MIN_STORAGE = 100_000_000_000_000_000_000_000n;
+const MIN_STORAGE = 110_000_000_000_000_000_000_000n;
+const TOKEN_STORAGE = 1_250_000_000_000_000_000_000n;
 
 export async function readBurrow(accountId: string) {
   const [result, extra] = await Promise.all([
@@ -92,11 +93,11 @@ async function sendToken(accountId: string, token: string, units: string, msg: s
     const wrapped = BigInt(raw || "0");
     const need = BigInt(units);
     const prep: NearCall[] = [];
-    if (!registrationCached(token, accountId)) prep.push(nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, MIN_STORAGE));
+    if (!registrationCached(token, accountId)) prep.push(nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, TOKEN_STORAGE));
     if (wrapped < need) prep.push(nearCall("near_deposit", {}, 30_000_000_000_000n, need - wrapped));
     if (prep.length) txs.push({ receiverId: token, actions: prep });
   } else if (!registrationCached(token, accountId)) {
-    txs.push({ receiverId: token, actions: [nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, MIN_STORAGE)] });
+    txs.push({ receiverId: token, actions: [nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, TOKEN_STORAGE)] });
   }
   txs.push({
     receiverId: token,

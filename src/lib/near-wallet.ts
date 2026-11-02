@@ -716,6 +716,7 @@ export async function stakeNear(accountId: string, yocto: string) {
   return hashOf(outcome);
 }
 
+const REF_STORAGE = 10_000_000_000_000_000_000_000n;
 const wrappedCache = new Map<string, Promise<string>>();
 
 function wrappedBalance(accountId: string) {
@@ -750,7 +751,7 @@ async function stakeOnMarket(accountId: string, yocto: string) {
   if (!onRef) {
     txs.push({
       receiverId: "v2.ref-finance.near",
-      actions: [call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, 10_000_000_000_000_000_000n)],
+      actions: [call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, REF_STORAGE)],
     });
   }
   if (!onSt) txs.push({ receiverId: "meta-pool.near", actions: [register(accountId)] });
@@ -847,7 +848,7 @@ async function sendRef(accountId: string, ready: RefReady) {
   const txs: { receiverId: string; actions: Call[] }[] = [
     {
       receiverId: "v2.ref-finance.near",
-      actions: [call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, 10_000_000_000_000_000_000n)],
+      actions: [call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, REF_STORAGE)],
     },
     {
       receiverId: ready.tokenIn,

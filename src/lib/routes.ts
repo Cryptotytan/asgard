@@ -548,7 +548,7 @@ async function refRoute(from: Token, to: Token, amount: string, accountId: strin
       const hash = await sendNearTransactions(accountId, [
         {
           receiverId: "v2.ref-finance.near",
-          actions: [nearFunctionCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, 10_000_000_000_000_000_000n)],
+          actions: [nearFunctionCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, 10_000_000_000_000_000_000_000n)],
         },
         {
           receiverId: tokenIn,
