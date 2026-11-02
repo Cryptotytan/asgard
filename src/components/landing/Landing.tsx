@@ -3,10 +3,11 @@ import { Link } from "@tanstack/react-router";
 import { TOKENS, tokenBySymbol, usd } from "@/lib/market";
 
 const FAQ = [
-  ["What sits on this desk?", "Markets, spot, NEAR and ETH perps, swap, a vault, lending, and a wallet tracker. One terminal."],
-  ["Which wallets can sign in?", "Meteor, HOT, HERE, Nightly, Sender, and Intear on NEAR mainnet. HOT opens its browser extension."],
-  ["Do trades leave my wallet?", "Swap, spot, vault, and lend do. You confirm each one in the wallet you connected. Perp margin stays in the wallet."],
-  ["How does a route get picked?", "Swap and spot ask NEAR Intents for a live quote. The vault stakes NEAR into stNEAR on Meta Pool, and lending settles on Rhea."],
+  ["What sits on this desk?", "Markets, spot, perps, swap, a Meta Pool vault, Rhea lending, portfolio, and a wallet tracker. One NEAR terminal."],
+  ["Which wallets can sign in?", "Intear, HERE, Meteor, HOT, Nightly, and Sender on NEAR mainnet. HOT, Meteor, Nightly, and Sender open their browser extension."],
+  ["Where does a swap settle?", "Swap and spot ask NEAR Intents for a live quote, then Ref Finance when that pool is the route. You confirm the deposit in the wallet you connected."],
+  ["What do the vault and lend do?", "The vault stakes NEAR into stNEAR on Meta Pool and unstakes back to the same account. Supply, borrow, and withdraw settle on Rhea."],
+  ["What does tracker activity show?", "Only transfers that succeeded. A call that panicked, or never moved tokens, stays off the activity list."],
 ];
 
 export function Landing() {
@@ -104,14 +105,14 @@ export function Landing() {
 
       <main id="top">
         <section className="landing-hero">
-          <p className="landing-pill">NEAR Intents · 1-Click</p>
+          <p className="landing-pill">NEAR mainnet</p>
           <h1>
             THE NEAR BOOK
             <br />
             <span>OPENS HERE</span>
           </h1>
           <p className="landing-lead">
-            Scan a market, take a live Intents quote, and settle swap, spot, the vault, and lending from the NEAR wallet you already use.
+            Markets, swap, a Meta Pool vault, and Rhea lending. You sign with the NEAR wallet you already use. Tracker activity keeps only the transfers that succeeded.
           </p>
           <div className="landing-cta">
             <Link to="/app" className="landing-enter landing-enter-lg">
@@ -133,8 +134,8 @@ export function Landing() {
 
         <section className="landing-stats">
           <Stat k="Tokens on the desk" v={String(TOKENS.length)} />
-          <Stat k="NEAR wallets" v="7" />
-          <Stat k="Settlement" v="1-Click" />
+          <Stat k="NEAR wallets" v="6" />
+          <Stat k="Vault" v="stNEAR" />
         </section>
 
         <section id="routes" className="landing-block">
@@ -144,38 +145,38 @@ export function Landing() {
             <article>
               <RouteFace />
               <span>01</span>
-              <h3>A live Intents quote</h3>
-              <p>Swap and spot ask NEAR Intents 1-Click for the price. Your wallet sends the deposit. The other venues stay on the book as estimates.</p>
+              <h3>A live route</h3>
+              <p>Swap and spot ask NEAR Intents first. Ref Finance fills the pool route. deBridge covers a cross-chain hop. You confirm the deposit in your wallet.</p>
             </article>
             <article>
               <ScanFace />
               <span>02</span>
               <h3>Scan before size</h3>
-              <p>Verified marks, holder notes, and a honeypot gate sit on the ticket. A bad sell does not get a quiet fill.</p>
-            </article>
-            <article>
-              <PerpFace />
-              <span>03</span>
-              <h3>Perps that are listed</h3>
-              <p>NEAR and ETH only. Take profit, stop, and liquidation are on the position. Everything else stays spot.</p>
+              <p>Verified marks stay on real assets. A memecoin opens its own GeckoTerminal chart. Listed spot and perp markets stay on TradingView.</p>
             </article>
             <article>
               <VaultFace />
+              <span>03</span>
+              <h3>Vault on Meta Pool</h3>
+              <p>A deposit stakes into stNEAR. A withdraw unstakes on the contract and returns NEAR to the same account. The portfolio value follows that balance.</p>
+            </article>
+            <article>
+              <LendFace />
               <span>04</span>
-              <h3>Vault and lending</h3>
-              <p>A deposit stakes NEAR into stNEAR on Meta Pool. A withdraw sends it back to the same wallet. Borrowing stays inside the collateral line and does not mint tokens.</p>
+              <h3>Lending on Rhea</h3>
+              <p>Supply, borrow, and withdraw use the Rhea market. Collateral stays inside the line you actually supplied. LiNEAR, stNEAR, and the rest use their own logos.</p>
+            </article>
+            <article>
+              <TrackerFace />
+              <span>05</span>
+              <h3>Activity that landed</h3>
+              <p>Follow a NEAR account and read its balances. The activity list shows transfers that succeeded. A failed call does not appear there.</p>
             </article>
             <article>
               <WalletFace />
-              <span>05</span>
-              <h3>A wallet you already have</h3>
-              <p>Meteor, HOT, HERE, Nightly, Sender, and Intear. HOT uses the browser extension. The header shows the account and its on-chain NEAR.</p>
-            </article>
-            <article>
-              <PhoneFace />
               <span>06</span>
-              <h3>The same desk on a phone</h3>
-              <p>Markets, swap, vault, and lend fit the screen. The chart and the order ticket stay in one scroll on trade.</p>
+              <h3>A wallet you already have</h3>
+              <p>Intear, HERE, Meteor, HOT, Nightly, and Sender. HOT uses the browser extension. The header shows the account and its on-chain NEAR.</p>
             </article>
           </div>
         </section>
@@ -200,7 +201,7 @@ export function Landing() {
               <RouteFace />
               <span>03</span>
               <h3>Sign the quote</h3>
-              <p>NEAR Intents 1-Click prices the fill. Confirm the deposit in your wallet and the tokens come back to the same account.</p>
+              <p>Confirm the deposit in your NEAR wallet. Swap, vault, and lend wait on that signature, then the balance updates on the account you signed with.</p>
             </li>
           </ol>
         </section>
@@ -209,7 +210,7 @@ export function Landing() {
           <div className="faq-intro">
             <p className="landing-kicker">FAQ</p>
             <h2>Before you open it</h2>
-            <p>Sign-in is a real NEAR wallet. Swap and spot settle through NEAR Intents. The vault uses Meta Pool, and lending uses Rhea.</p>
+            <p>Sign-in is a real NEAR wallet. Swap and spot settle through NEAR Intents and Ref. The vault is Meta Pool stNEAR. Lending is Rhea. Tracker activity is successful transfers only.</p>
           </div>
           <div className="faq-list">
             {FAQ.map(([question, answer], index) => (
@@ -228,7 +229,7 @@ export function Landing() {
         <div>
           <span className="mark" aria-hidden />
           <strong>Asgard</strong>
-          <p>NEAR Intents terminal.</p>
+          <p>NEAR terminal. Mainnet settlement.</p>
         </div>
         <Link to="/app" className="landing-enter">
           Enter the terminal
@@ -275,10 +276,10 @@ function Mock() {
         <div className="mock-go">Enter terminal</div>
       </div>
       <aside>
-        <p className="mock-k">Best route</p>
-        <p>NEAR Intents</p>
-        <p>1-Click · live quote</p>
-        <p>Deposit from this wallet.</p>
+        <p className="mock-k">Activity</p>
+        <p>Swap · succeeded</p>
+        <p>stNEAR unstake · succeeded</p>
+        <p>Failed calls stay off this list.</p>
       </aside>
     </div>
   );
@@ -297,16 +298,11 @@ function Stat({ k, v }: { k: string; v: string }) {
   );
 }
 
-function FaceToken({ symbol }: { symbol: string }) {
-  const token = tokenBySymbol(symbol);
-  return <img src={token.icon} alt="" />;
-}
-
 function RouteFace() {
   const rows = [
     ["NEAR Intents", "1-Click", true],
-    ["Rhea", "Estimate", false],
-    ["HEX", "Estimate", false],
+    ["Ref Finance", "Pool", false],
+    ["deBridge", "Bridge", false],
   ] as const;
   return (
     <div className="viz">
@@ -335,35 +331,54 @@ function ScanFace() {
   );
 }
 
-function PerpFace() {
-  return (
-    <div className="viz viz-perp">
-      <p>
-        <FaceToken symbol="NEAR" />
-        <b>NEAR-PERP</b>
-        <em>+4.8%</em>
-      </p>
-      <div>
-        <span>TP 5.40</span>
-        <span>SL 4.80</span>
-        <span>Liq 3.10</span>
-      </div>
-    </div>
-  );
-}
-
 function VaultFace() {
   return (
     <div className="viz viz-vault">
       <p>
-        <span>Vault</span>
-        <b>8.4%</b>
-        <i style={{ width: "68%" }} />
+        <span>stNEAR</span>
+        <b>Meta Pool</b>
+        <i style={{ width: "72%" }} />
       </p>
       <p>
+        <span>Unstake</span>
+        <b>Same wallet</b>
+        <i style={{ width: "48%" }} />
+      </p>
+    </div>
+  );
+}
+
+function LendFace() {
+  return (
+    <div className="viz viz-vault">
+      <p>
         <span>Supply</span>
-        <b>12%</b>
-        <i style={{ width: "82%" }} />
+        <b>Rhea</b>
+        <i style={{ width: "80%" }} />
+      </p>
+      <p>
+        <span>Borrow room</span>
+        <b>Collateral</b>
+        <i style={{ width: "46%" }} />
+      </p>
+    </div>
+  );
+}
+
+function TrackerFace() {
+  return (
+    <div className="viz">
+      <p className="is-best">
+        <b>Swap</b>
+        <span>Succeeded</span>
+      </p>
+      <p className="is-best">
+        <b>Unstake</b>
+        <span>Succeeded</span>
+      </p>
+      <p>
+        <b>Failed call</b>
+        <span>Hidden</span>
       </p>
     </div>
   );
@@ -372,29 +387,12 @@ function VaultFace() {
 function WalletFace() {
   return (
     <div className="viz viz-wallets">
-      {["Meteor", "HOT", "HERE", "Nightly"].map((name, index) => (
+      {["Intear", "HERE", "HOT", "Meteor"].map((name, index) => (
         <p key={name} className={index === 0 ? "is-best" : ""}>
           <b>{name}</b>
-          <span>{index === 0 ? "Connected" : "NEAR"}</span>
+          <span>{index === 2 ? "Extension" : index === 0 ? "Connected" : "NEAR"}</span>
         </p>
       ))}
-    </div>
-  );
-}
-
-function PhoneFace() {
-  return (
-    <div className="viz viz-phone">
-      {["NEAR", "ETH", "AURORA"].map((symbol) => {
-        const token = tokenBySymbol(symbol);
-        return (
-          <p key={symbol}>
-            <img src={token.icon} alt="" />
-            <b>{symbol}</b>
-            <span>{shown(token.price, "—")}</span>
-          </p>
-        );
-      })}
     </div>
   );
 }
