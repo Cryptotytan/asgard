@@ -1,6 +1,6 @@
 import { parseUnits } from "@/lib/intents";
 import { TOKENS } from "@/lib/market";
-import { isRegisteredOn, nearFunctionCall, registrationCached, sendNearTransactions, type NearCall } from "@/lib/near-wallet";
+import { isRegisteredOn, nearFunctionCall, registrationCached, sendNearTransactions, storageDepositAmount, type NearCall } from "@/lib/near-wallet";
 
 const BURROW = "contract.main.burrow.near";
 const MIN_STORAGE = 110_000_000_000_000_000_000_000n;
@@ -35,12 +35,12 @@ export async function withdrawFromBurrow(accountId: string, token: string, amoun
   if (!units) throw new Error("Enter an amount.");
   const inner = await innerAmount(token, units);
   const actions = [
-    nearCall("execute", {
+    nearCall("execute_with_pyth", {
       actions: [
         { DecreaseCollateral: { token_id: token, amount: inner } },
         { Withdraw: { token_id: token, max_amount: inner } },
       ],
-    }, 220_000_000_000_000n, 1n),
+    }, 280_000_000_000_000n, 1n),
   ];
   await sendNearTransactions(accountId, [{ receiverId: BURROW, actions }]);
 }
@@ -52,7 +52,12 @@ export async function borrowFromBurrow(accountId: string, token: string, amount:
   await sendNearTransactions(accountId, [
     {
       receiverId: BURROW,
-      actions: [nearCall("execute", { actions: [{ Borrow: { token_id: token, amount: inner } }] }, 300_000_000_000_000n, 1n)],
+      actions: [nearCall("execute_with_pyth", {
+        actions: [
+          { Borrow: { token_id: token, amount: inner } },
+          { Withdraw: { token_id: token, max_amount: inner } },
+        ],
+      }, 280_000_000_000_000n, 1n)],
     },
   ]);
 }
@@ -84,8 +89,12 @@ function innerAmount(token: string, units: string) {
 
 async function sendToken(accountId: string, token: string, units: string, msg: string) {
   const txs: { receiverId: string; actions: NearCall[] }[] = [];
+  const [burrowStorage, tokenStorage] = await Promise.all([
+    storageDepositAmount(BURROW, MIN_STORAGE),
+    storageDepositAmount(token, TOKEN_STORAGE),
+  ]);
   if (!registrationCached(BURROW, accountId)) {
-    txs.push({ receiverId: BURROW, actions: [nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, MIN_STORAGE)] });
+    txs.push({ receiverId: BURROW, actions: [nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, burrowStorage)] });
   }
   if (token === "wrap.near") {
     const cached = wrappedCache.get(accountId);
@@ -93,11 +102,11 @@ async function sendToken(accountId: string, token: string, units: string, msg: s
     const wrapped = BigInt(raw || "0");
     const need = BigInt(units);
     const prep: NearCall[] = [];
-    if (!registrationCached(token, accountId)) prep.push(nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, TOKEN_STORAGE));
+    if (!registrationCached(token, accountId)) prep.push(nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, tokenStorage));
     if (wrapped < need) prep.push(nearCall("near_deposit", {}, 30_000_000_000_000n, need - wrapped));
     if (prep.length) txs.push({ receiverId: token, actions: prep });
   } else if (!registrationCached(token, accountId)) {
-    txs.push({ receiverId: token, actions: [nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, TOKEN_STORAGE)] });
+    txs.push({ receiverId: token, actions: [nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, tokenStorage)] });
   }
   txs.push({
     receiverId: token,
@@ -262,7 +271,10 @@ const wrappedCache = new Map<string, { at: number; raw: string }>();
 export function warmBurrow(accountId: string, tokens: string[]) {
   void extraDecimals().catch(() => undefined);
   const ids = new Set([BURROW, "wrap.near", ...tokens.filter(Boolean)]);
-  for (const id of ids) void isRegisteredOn(id, accountId).catch(() => undefined);
+  for (const id of ids) {
+    void isRegisteredOn(id, accountId).catch(() => undefined);
+    void storageDepositAmount(id, id === BURROW ? MIN_STORAGE : TOKEN_STORAGE);
+  }
   void ftRaw(accountId, "wrap.near")
     .then((raw) => wrappedCache.set(accountId, { at: Date.now(), raw }))
     .catch(() => undefined);

@@ -2,7 +2,7 @@ import { chainByLabel, validAddress } from "@/lib/chains";
 import { evmDexRoutes } from "@/lib/evm-dex";
 import { ensureEvmAllowance, sendEvmCall, sendSolanaSerialized } from "@/lib/foreign-wallet";
 import { executeIntent, parseUnits, quoteIntent } from "@/lib/intents";
-import { intearSetup, nearFunctionCall, sendNearTransactions, settleHoldings } from "@/lib/near-wallet";
+import { intearSetup, nearFunctionCall, sendNearTransactions, settleHoldings, storageDepositAmount } from "@/lib/near-wallet";
 import type { Token } from "@/lib/market";
 
 const LIFI = "https://li.quest/v1/advanced";
@@ -545,10 +545,11 @@ async function refRoute(from: Token, to: Token, amount: string, accountId: strin
       if (!fresh.ok) throw new Error("Ref Finance did not return a route. Nothing was sent.");
       const next = (await fresh.json()) as typeof body;
       const nextPools = next.result_data?.routes?.[0]?.pools?.filter((pool) => pool.pool_id && pool.amount_in && pool.min_amount_out) ?? pools;
+      const storage = await storageDepositAmount("v2.ref-finance.near", 10_000_000_000_000_000_000_000n);
       const hash = await sendNearTransactions(accountId, [
         {
           receiverId: "v2.ref-finance.near",
-          actions: [nearFunctionCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, 10_000_000_000_000_000_000_000n)],
+          actions: [nearFunctionCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, storage)],
         },
         {
           receiverId: tokenIn,

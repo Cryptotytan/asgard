@@ -735,28 +735,34 @@ export function warmSmallStake(accountId: string) {
   void isRegistered("v2.ref-finance.near", accountId);
   void isRegistered("meta-pool.near", accountId);
   void wrappedBalance(accountId);
+  void storageDepositAmount("v2.ref-finance.near", REF_STORAGE);
+  void storageDepositAmount("meta-pool.near", 1_250_000_000_000_000_000_000n);
+  void storageDepositAmount("wrap.near", 1_250_000_000_000_000_000_000n);
 }
 
 async function stakeOnMarket(accountId: string, yocto: string) {
   const ready = await (vaultQuotes.get(`market:${yocto}`) ?? findRef("wrap.near", "meta-pool.near", yocto));
   if (!ready) throw new Error("No stNEAR market can take that size right now.");
   const spend = BigInt(ready.hops[0]?.amount_in || yocto);
-  const [onWrap, onRef, onSt, wrappedRaw] = await Promise.all([
+  const [onWrap, onRef, onSt, wrappedRaw, refStorage, stStorage, wrapStorage] = await Promise.all([
     isRegistered("wrap.near", accountId),
     isRegistered("v2.ref-finance.near", accountId),
     isRegistered("meta-pool.near", accountId),
     wrappedBalance(accountId),
+    storageDepositAmount("v2.ref-finance.near", REF_STORAGE),
+    storageDepositAmount("meta-pool.near", 1_250_000_000_000_000_000_000n),
+    storageDepositAmount("wrap.near", 1_250_000_000_000_000_000_000n),
   ]);
   const txs: { receiverId: string; actions: Call[] }[] = [];
   if (!onRef) {
     txs.push({
       receiverId: "v2.ref-finance.near",
-      actions: [call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, REF_STORAGE)],
+      actions: [call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, refStorage)],
     });
   }
-  if (!onSt) txs.push({ receiverId: "meta-pool.near", actions: [register(accountId)] });
+  if (!onSt) txs.push({ receiverId: "meta-pool.near", actions: [call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, stStorage)] });
   const wrapCalls: Call[] = [];
-  if (!onWrap) wrapCalls.push(register(accountId));
+  if (!onWrap) wrapCalls.push(call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, wrapStorage));
   const wrapped = BigInt(wrappedRaw || "0");
   if (wrapped < spend) wrapCalls.push(call("near_deposit", {}, 20_000_000_000_000n, spend - wrapped));
   if (wrapCalls.length) txs.push({ receiverId: "wrap.near", actions: wrapCalls });
@@ -845,10 +851,11 @@ export function primeVaultMove(symbol: string, amount: string, direction: "in" |
 }
 
 async function sendRef(accountId: string, ready: RefReady) {
+  const storage = await storageDepositAmount("v2.ref-finance.near", REF_STORAGE);
   const txs: { receiverId: string; actions: Call[] }[] = [
     {
       receiverId: "v2.ref-finance.near",
-      actions: [call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, REF_STORAGE)],
+      actions: [call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, storage)],
     },
     {
       receiverId: ready.tokenIn,
@@ -1102,19 +1109,45 @@ export function nearFunctionCall(methodName: string, args: object, gas: bigint, 
 export async function intearSetup(accountId: string, assetIds: string[]) {
   const ids = [...new Set(assetIds.filter(Boolean))];
   const contract = "dex.intear.near";
-  const [storage, registered] = await Promise.all([
+  const [storage, registered, storagePay] = await Promise.all([
     viewJson(contract, "storage_balance_of", { account_id: accountId }),
     ids.length ? viewJson(contract, "are_assets_registered", { asset_ids: ids, for: { Account: accountId } }) : Promise.resolve(true),
+    storageDepositAmount(contract, 20_000_000_000_000_000_000_000n),
   ]);
   const available = BigInt((storage as { available?: string } | null)?.available ?? "0");
+  const deposit = storagePay > 20_000_000_000_000_000_000_000n ? storagePay : 20_000_000_000_000_000_000_000n;
   const actions: Call[] = [];
-  if (!storage || available < 10_000_000_000_000_000_000_000n) {
-    actions.push(call("storage_deposit", { account_id: accountId, registration_only: false }, 30_000_000_000_000n, 20_000_000_000_000_000_000_000n));
+  if (!storage || available < deposit) {
+    actions.push(call("storage_deposit", { account_id: accountId, registration_only: false }, 30_000_000_000_000n, deposit));
   }
   if (ids.length && registered !== true) {
     actions.push(call("register_assets", { asset_ids: ids, for: null }, 50_000_000_000_000n, 1n));
   }
   return actions;
+}
+
+const storageBounds = new Map<string, Promise<{ min: bigint; max: bigint | null }>>();
+
+function coveredStorage(min: bigint, max: bigint | null, fallback: bigint) {
+  const base = min > 0n ? min : fallback;
+  let amount = max == null ? base + 1_000_000_000_000_000_000_000n : base;
+  if (max != null && amount > max) amount = max;
+  if (amount < base) amount = base;
+  return amount;
+}
+
+export function storageDepositAmount(contractId: string, fallback: bigint) {
+  const cached = storageBounds.get(contractId);
+  const job = cached ?? viewJson(contractId, "storage_balance_bounds", {}).then((row) => {
+    const minRaw = (row as { min?: string } | null)?.min;
+    const maxRaw = (row as { max?: string | null } | null)?.max;
+    return {
+      min: minRaw && /^\d+$/.test(minRaw) ? BigInt(minRaw) : 0n,
+      max: maxRaw && /^\d+$/.test(maxRaw) ? BigInt(maxRaw) : null,
+    };
+  }).catch(() => ({ min: 0n, max: null as bigint | null }));
+  if (!cached) storageBounds.set(contractId, job);
+  return job.then((bounds) => coveredStorage(bounds.min, bounds.max, fallback));
 }
 
 async function viewJson(contractId: string, method: string, args: object) {
