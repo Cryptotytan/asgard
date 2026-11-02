@@ -17,9 +17,47 @@ export async function readBurrow(accountId: string) {
   ]);
   const supplied: Record<string, number> = {};
   const borrowed: Record<string, number> = {};
-  for (const row of [...(result?.supplied ?? []), ...(result?.collateral ?? [])]) add(supplied, row.token_id, row.balance || row.shares, extra);
-  for (const row of result?.borrowed ?? []) add(borrowed, row.token_id, row.balance || row.shares, extra);
-  return { supplied, borrowed };
+  for (const row of [...(result?.supplied ?? []), ...(result?.collateral ?? [])]) add(supplied, row.token_id, unitsOf(row.balance) || unitsOf(row.shares), extra);
+  for (const row of result?.borrowed ?? []) add(borrowed, row.token_id, unitsOf(row.balance) || unitsOf(row.shares), extra);
+  return blendLending(accountId, { supplied, borrowed });
+}
+
+const pendingLend = new Map<string, { supplied: Record<string, number>; borrowed: Record<string, number>; until: number }>();
+
+export function expectLending(accountId: string, supplied: Record<string, number>, borrowed: Record<string, number>) {
+  pendingLend.set(accountId.trim().toLowerCase(), {
+    supplied: { ...supplied },
+    borrowed: { ...borrowed },
+    until: Date.now() + 180_000,
+  });
+}
+
+function blendLending(accountId: string, fresh: { supplied: Record<string, number>; borrowed: Record<string, number> }) {
+  const key = accountId.trim().toLowerCase();
+  const pending = pendingLend.get(key);
+  if (!pending || pending.until < Date.now()) {
+    pendingLend.delete(key);
+    return fresh;
+  }
+  const supplied = blendBook(fresh.supplied, pending.supplied);
+  const borrowed = blendBook(fresh.borrowed, pending.borrowed);
+  if (supplied.caught && borrowed.caught) pendingLend.delete(key);
+  return { supplied: supplied.book, borrowed: borrowed.book };
+}
+
+function blendBook(chain: Record<string, number>, target: Record<string, number>) {
+  const book = { ...chain };
+  let caught = true;
+  for (const symbol of new Set([...Object.keys(chain), ...Object.keys(target)])) {
+    const got = chain[symbol] ?? 0;
+    const want = target[symbol] ?? 0;
+    const tol = Math.max(1e-6, Math.max(got, want) * 0.02);
+    if (Math.abs(got - want) > tol) {
+      book[symbol] = want;
+      caught = false;
+    }
+  }
+  return { book, caught };
 }
 
 export async function supplyOnBurrow(accountId: string, token: string, amount: string, decimals: number) {
@@ -35,12 +73,11 @@ export async function withdrawFromBurrow(accountId: string, token: string, amoun
   if (!units) throw new Error("Enter an amount.");
   const inner = await innerAmount(token, units);
   await sendPriced(accountId, token, [
-    nearCall("execute_with_pyth", {
-      actions: [
-        { DecreaseCollateral: { token_id: token, max_amount: inner } },
-        { Withdraw: { token_id: token, max_amount: inner } },
-      ],
-    }, 280_000_000_000_000n, 1n),
+    nearCall("simple_withdraw", {
+      token_id: token,
+      amount_with_inner_decimal: inner,
+      recipient_id: accountId,
+    }, 300_000_000_000_000n, 1n),
   ]);
 }
 
@@ -310,6 +347,12 @@ async function extraDecimals() {
   }
   extraCache = book;
   return book;
+}
+
+function unitsOf(value: unknown) {
+  if (typeof value === "string" && /^\d+$/.test(value)) return value;
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return String(Math.trunc(value));
+  return "";
 }
 
 function add(book: Record<string, number>, tokenId: string | undefined, balance: string | undefined, extra: Record<string, number>) {

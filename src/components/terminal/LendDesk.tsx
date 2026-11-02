@@ -4,7 +4,7 @@ import { ArrowLeft, Search, TriangleAlert } from "lucide-react";
 import { LEND_MARKETS, px, qty, tokenBySymbol, TOKENS, usd, type LendMarket } from "@/lib/market";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 import { ConfirmGate } from "@/components/terminal/ConfirmGate";
-import { borrowFromBurrow, lendDecimals, readMarketConfigs, repayOnBurrow, supplyOnBurrow, warmBurrow, withdrawFromBurrow, type MarketConfig, type RatePoint } from "@/lib/burrow";
+import { borrowFromBurrow, expectLending, lendDecimals, readMarketConfigs, repayOnBurrow, supplyOnBurrow, warmBurrow, withdrawFromBurrow, type MarketConfig, type RatePoint } from "@/lib/burrow";
 import { armWalletPopup, cancelNearSigning, settleHoldings, syncWallet, warmNearSigner } from "@/lib/near-wallet";
 import { iconFor, lendIcon, loadIconBook } from "@/lib/dex";
 import { useDesk } from "@/lib/store";
@@ -236,10 +236,20 @@ export function LendDesk() {
       else if (kind === "withdraw") await withdrawFromBurrow(wallet, token, String(qtyN), decimals);
       else if (kind === "borrow") await borrowFromBurrow(wallet, token, String(qtyN), decimals);
       else await repayOnBurrow(wallet, token, String(qtyN), decimals);
-      await syncWallet(wallet);
       if (flightGen.current !== generation) return;
+      const desk = useDesk.getState();
+      const suppliedBook = { ...desk.supplied };
+      const loanBook = { ...desk.loans };
+      const symbol = market.symbol;
+      if (kind === "supply") suppliedBook[symbol] = (suppliedBook[symbol] ?? 0) + qtyN;
+      else if (kind === "withdraw") suppliedBook[symbol] = Math.max(0, (suppliedBook[symbol] ?? 0) - qtyN);
+      else if (kind === "borrow") loanBook[symbol] = (loanBook[symbol] ?? 0) + qtyN;
+      else loanBook[symbol] = Math.max(0, (loanBook[symbol] ?? 0) - qtyN);
+      expectLending(wallet, suppliedBook, loanBook);
+      desk.setLending(suppliedBook, loanBook);
       const delta = kind === "supply" || kind === "repay" ? -qtyN : qtyN;
-      settleHoldings(wallet, [{ symbol: market.symbol, delta }]);
+      settleHoldings(wallet, [{ symbol, delta }]);
+      void syncWallet(wallet, [symbol], true);
       const verb = kind === "supply" ? "Supplied" : kind === "withdraw" ? "Withdrew" : kind === "borrow" ? "Borrowed" : "Repaid";
       setNote(`${verb} ${qty(qtyN)} ${tickerOf(market)} on Rhea.`);
       setAmount("");
@@ -950,6 +960,7 @@ function healthText(health: number) {
 
 function plain(n: number) {
   if (!(n > 0) || !Number.isFinite(n)) return "";
-  const text = n >= 1 ? n.toFixed(6) : n.toPrecision(8);
-  return text.replace(/\.?0+$/, "");
+  const places = n >= 1 ? 6 : 8;
+  const floored = Math.floor(n * 10 ** places) / 10 ** places;
+  return floored.toFixed(places).replace(/\.?0+$/, "");
 }
