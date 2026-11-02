@@ -695,7 +695,7 @@ export async function sendIntentDeposit(input: {
   const registerRecipient = !(await isRegistered(input.contractId, input.depositAddress));
   const actions = input.wrap
     ? await wrapActions(input.accountId, input.depositAddress, input.amount, registerRecipient)
-    : transferActions(input.depositAddress, input.amount, registerRecipient);
+    : await transferActions(input.contractId, input.depositAddress, input.amount, registerRecipient);
   const outcome = await sendNearTransactions(input.accountId, [{ receiverId: input.contractId, actions }]);
   return hashOf(outcome);
 }
@@ -816,8 +816,8 @@ async function findRef(tokenIn: string, tokenOut: string, units: string): Promis
       amount_in: pool.amount_in || "",
       min_amount_out: pool.min_amount_out || "",
     }))
-    .filter((pool) => pool.pool_id > 0 && pool.token_in && pool.token_out && pool.amount_in && pool.min_amount_out);
-  if (body.result_code !== 0 || !hops.length) return null;
+    .filter((pool) => pool.pool_id > 0 && pool.token_in && pool.token_out && pool.min_amount_out);
+  if (body.result_code !== 0 || !hops.length || !hops[0]?.amount_in || hops[0].amount_in === "0") return null;
   const last = hops[hops.length - 1];
   return { tokenIn, hops, unwrap: tokenOut === "wrap.near" ? last.min_amount_out : undefined };
 }
@@ -894,20 +894,31 @@ async function refTransactions(accountId: string, ready: RefReady) {
         {
           receiver_id: "v2.ref-finance.near",
           amount: ready.hops[0]?.amount_in,
-          msg: JSON.stringify({ force: 0, actions: ready.hops }),
+          msg: refMessage(ready.hops, tokenOut === "wrap.near"),
         },
         280_000_000_000_000n,
         1n,
       ),
     ],
   });
-  if (ready.unwrap && ready.unwrap !== "0") {
-    txs.push({
-      receiverId: "wrap.near",
-      actions: [call("near_withdraw", { amount: ready.unwrap }, 30_000_000_000_000n, 1n)],
-    });
-  }
   return txs;
+}
+
+function refMessage(hops: RefReady["hops"], unwrapNear: boolean) {
+  return JSON.stringify({
+    force: 0,
+    actions: hops.map((hop, index) => {
+      const action: Record<string, string | number> = {
+        pool_id: hop.pool_id,
+        token_in: hop.token_in,
+        token_out: hop.token_out,
+        min_amount_out: hop.min_amount_out,
+      };
+      if (index === 0 || (hop.amount_in && hop.amount_in !== "0")) action.amount_in = hop.amount_in;
+      return action;
+    }),
+    ...(unwrapNear ? { skip_unwrap_near: false } : {}),
+  });
 }
 
 export async function sendRefSwap(accountId: string, ready: RefReady) {
@@ -916,6 +927,7 @@ export async function sendRefSwap(accountId: string, ready: RefReady) {
 }
 
 let metaYocto = 0n;
+let metaDiscountBps = 500n;
 let metaLiquidity = 0n;
 let stNearPriceYocto = 0n;
 let metaFlight: Promise<void> | null = null;
@@ -946,10 +958,12 @@ export function warmMetaPool(accountId: string) {
       metaView("get_contract_state", {}).catch(() => null),
     ]);
     const st = (info as { st_near?: string } | null)?.st_near;
-    const available = (state as { total_available?: string } | null)?.total_available;
+    const available = (state as { total_available?: string; nslp_current_discount_basis_points?: number } | null)?.total_available;
+    const discount = (state as { nslp_current_discount_basis_points?: number } | null)?.nslp_current_discount_basis_points;
     if (typeof st === "string" && /^\d+$/.test(st)) metaYocto = BigInt(st);
     if (typeof price === "string" && /^\d+$/.test(price.replace(/"/g, ""))) stNearPriceYocto = BigInt(price.replace(/"/g, ""));
     if (typeof available === "string" && /^\d+$/.test(available)) metaLiquidity = BigInt(available);
+    if (typeof discount === "number" && Number.isFinite(discount) && discount >= 0) metaDiscountBps = BigInt(Math.floor(discount));
   })().finally(() => {
     metaFlight = null;
   });
@@ -994,11 +1008,14 @@ export async function moveVault(accountId: string, symbol: string, amount: strin
     if (metaFlight) await metaFlight;
     const expected = stNearPriceYocto > 0n ? (yocto * stNearPriceYocto) / 10n ** 24n : 0n;
     if (yocto > 0n && metaYocto + 1n >= yocto && expected > 0n && metaLiquidity >= expected) {
-      const min = expected > 0n ? (expected * 97n) / 100n : 1n;
+      const haircut = metaDiscountBps + 50n;
+      const keep = haircut >= 9_500n ? 500n : 10_000n - haircut;
+      const min = (expected * keep) / 10_000n;
+      const floor = min > 0n ? min : 1n;
       await sendNearTransactions(accountId, [
         {
           receiverId: "meta-pool.near",
-          actions: [call("liquid_unstake", { st_near_to_burn: units, min_expected_near: min.toString() }, 180_000_000_000_000n, 1n)],
+          actions: [call("liquid_unstake", { st_near_to_burn: units, min_expected_near: floor.toString() }, 180_000_000_000_000n, 1n)],
         },
       ]);
       metaYocto -= yocto;
@@ -1038,11 +1055,13 @@ export async function sendNearTransactions(accountId: string, transactions: { re
   releaseHeldFrames();
   const built = transactions.map((tx) => ({ signerId: accountId, receiverId: tx.receiverId, actions: tx.actions }));
   const before = new URL(window.location.href).searchParams.get("transactionHashes");
-  const sent = built.length > 1 && wallet.signAndSendTransactions ? wallet.signAndSendTransactions({ transactions: built }) : sendOneByOne(wallet, built);
+  const batch = built.length > 1 && typeof wallet.signAndSendTransactions === "function";
+  const sent = batch ? wallet.signAndSendTransactions!({ transactions: built }) : sendOneByOne(wallet, built);
   const cancelled = new Promise<never>((_, reject) => {
     signAbort = () => reject(new Error("Cancelled."));
   });
   try {
+    if (built.length > 1 && !batch) return await Promise.race([sent, cancelled]);
     return await Promise.race([sent, redirectHash(before), cancelled]);
   } catch (error) {
     const hash = new URL(window.location.href).searchParams.get("transactionHashes");
@@ -1072,7 +1091,8 @@ function redirectHash(before: string | null) {
       if (hash && hash !== before) {
         window.clearInterval(redirectTimer);
         redirectTimer = 0;
-        resolve(hash.split(",")[0] ?? hash);
+        const parts = hash.split(",").filter(Boolean);
+        resolve(parts[parts.length - 1] ?? hash);
       }
     }, 400);
   });
@@ -1162,11 +1182,10 @@ export async function intearSetup(accountId: string, assetIds: string[]) {
 const storageBounds = new Map<string, Promise<{ min: bigint; max: bigint | null }>>();
 
 function coveredStorage(min: bigint, max: bigint | null, fallback: bigint) {
+  if (max === 0n) return 0n;
   const base = min > 0n ? min : fallback;
-  let amount = max == null ? base + 1_000_000_000_000_000_000_000n : base;
-  if (max != null && amount > max) amount = max;
-  if (amount < base) amount = base;
-  return amount;
+  if (max != null) return base > max ? max : base;
+  return base + 1_000_000_000_000_000_000_000n;
 }
 
 export function storageDepositAmount(contractId: string, fallback: bigint) {
@@ -1241,8 +1260,9 @@ async function isRegistered(contractId: string, accountId: string) {
   }
 }
 
-function transferActions(depositAddress: string, amount: string, registerRecipient: boolean): Call[] {
-  const actions = registerRecipient ? [register(depositAddress)] : [];
+async function transferActions(contractId: string, depositAddress: string, amount: string, registerRecipient: boolean): Promise<Call[]> {
+  const actions: Call[] = [];
+  if (registerRecipient) actions.push(await storageRegister(contractId, depositAddress));
   actions.push(transfer(depositAddress, amount));
   return actions;
 }
@@ -1251,8 +1271,8 @@ async function wrapActions(accountId: string, depositAddress: string, amount: st
   const wrapped = BigInt((await ftBalance(accountId, "wrap.near")) || "0");
   const need = BigInt(amount);
   const actions: Call[] = [];
-  if (!(await isRegistered("wrap.near", accountId))) actions.push(register(accountId));
-  if (registerRecipient && depositAddress !== accountId) actions.push(register(depositAddress));
+  if (!(await isRegistered("wrap.near", accountId))) actions.push(await storageRegister("wrap.near", accountId));
+  if (registerRecipient && depositAddress !== accountId) actions.push(await storageRegister("wrap.near", depositAddress));
   if (wrapped < need) {
     actions.push(call("near_deposit", {}, 30_000_000_000_000n, need - wrapped));
   }
@@ -1260,8 +1280,9 @@ async function wrapActions(accountId: string, depositAddress: string, amount: st
   return actions;
 }
 
-function register(accountId: string): Call {
-  return call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, 1_250_000_000_000_000_000_000n);
+async function storageRegister(contractId: string, accountId: string) {
+  const amount = await storageDepositAmount(contractId, FT_STORAGE);
+  return call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, amount);
 }
 
 function transfer(receiverId: string, amount: string): Call {
@@ -1273,7 +1294,10 @@ function hashOf(outcome: unknown): string | null {
   if (Array.isArray(outcome)) return hashOf(outcome[0]);
   if (!outcome || typeof outcome !== "object") return null;
   const row = outcome as { transaction?: { hash?: string }; transaction_outcome?: { id?: string }; txHash?: string; transactionHashes?: string[] | string };
-  if (Array.isArray(row.transactionHashes)) return row.transactionHashes[0] ?? null;
-  if (typeof row.transactionHashes === "string") return row.transactionHashes.split(",")[0] || null;
+  if (Array.isArray(row.transactionHashes)) return row.transactionHashes[row.transactionHashes.length - 1] ?? null;
+  if (typeof row.transactionHashes === "string") {
+    const parts = row.transactionHashes.split(",").filter(Boolean);
+    return parts[parts.length - 1] ?? null;
+  }
   return row.transaction?.hash ?? row.transaction_outcome?.id ?? row.txHash ?? null;
 }

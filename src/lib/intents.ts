@@ -307,7 +307,7 @@ function applyIntentHoldings(quote: IntentQuote, from: string, to: string, fromC
 
 async function submitDeposit(quote: IntentQuote, txHash: string | null) {
   if (!quote.depositAddress || !txHash) return;
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
     try {
       const response = await fetch(`${BASE}/v0/deposit/submit`, {
         method: "POST",
@@ -318,7 +318,7 @@ async function submitDeposit(quote: IntentQuote, txHash: string | null) {
     } catch {
       /* The solver can still see the transfer on chain. */
     }
-    await wait(700);
+    await wait(1000);
   }
 }
 

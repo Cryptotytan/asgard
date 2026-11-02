@@ -2,7 +2,7 @@ import { chainByLabel, validAddress } from "@/lib/chains";
 import { evmDexRoutes } from "@/lib/evm-dex";
 import { ensureEvmAllowance, sendEvmCall, sendSolanaSerialized } from "@/lib/foreign-wallet";
 import { executeIntent, parseUnits, quoteIntent } from "@/lib/intents";
-import { intearSetup, isRegisteredOn, nearFunctionCall, sendNearTransactions, sendRefSwap, settleHoldings, storageDepositAmount } from "@/lib/near-wallet";
+import { nearFunctionCall, sendNearTransactions, sendRefSwap, settleHoldings } from "@/lib/near-wallet";
 import type { Token } from "@/lib/market";
 
 const LIFI = "https://li.quest/v1/advanced";
@@ -414,7 +414,8 @@ async function intearRoute(from: Token, to: Token, amount: string, accountId: st
   const units = parseUnits(amount, decimals);
   if (!units) return null;
   const slip = Math.min(0.5, Math.max(0.005, slippageBps / 10_000));
-  const url = `https://router.intear.tech/route?token_in=${encodeURIComponent(tokenIn)}&token_out=${encodeURIComponent(tokenOut)}&amount_in=${units}&max_wait_ms=4000&slippage_type=Fixed&slippage=${slip}`;
+  const trader = accountId ? `&trader_account_id=${encodeURIComponent(accountId)}` : "";
+  const url = `https://router.intear.tech/route?token_in=${encodeURIComponent(tokenIn)}&token_out=${encodeURIComponent(tokenOut)}&amount_in=${units}&max_wait_ms=4000&slippage_type=Fixed&slippage=${slip}${trader}`;
   const response = await fetch(url);
   if (!response.ok) return null;
   const routes = (await response.json()) as {
@@ -450,22 +451,6 @@ async function intearRoute(from: Token, to: Token, amount: string, accountId: st
         return actions.length ? [{ receiverId: tx.receiver_id, actions }] : [];
       });
       if (!transactions.length) throw new Error("Rhea did not return a transaction. Nothing was sent.");
-      const outContract = tokenOut.startsWith("nep141:") ? tokenOut.slice("nep141:".length) : "";
-      if (outContract && !(await isRegisteredOn(outContract, accountId))) {
-        const pay = await storageDepositAmount(outContract, 1_250_000_000_000_000_000_000n);
-        transactions.unshift({
-          receiverId: outContract,
-          actions: [nearFunctionCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, pay)],
-        });
-      }
-      if (transactions.some((tx) => tx.receiverId === "dex.intear.near")) {
-        const setup = await intearSetup(accountId, [tokenIn, tokenOut]);
-        if (setup.length) {
-          const home = transactions.find((tx) => tx.receiverId === "dex.intear.near");
-          if (home) home.actions.unshift(...setup);
-          else transactions.unshift({ receiverId: "dex.intear.near", actions: setup });
-        }
-      }
       const hash = await sendNearTransactions(accountId, transactions);
       bookTrade(from, to, Number(amount) || 0, receive, accountId);
       return { status: typeof hash === "string" ? hash : "SENT", amountOutHuman: receive };
@@ -536,7 +521,7 @@ async function refRoute(from: Token, to: Token, amount: string, accountId: strin
     result_code?: number;
     result_data?: { amount_out?: string; routes?: { pools?: { pool_id?: string; token_in?: string; token_out?: string; amount_in?: string; min_amount_out?: string }[] }[] };
   };
-  const pools = body.result_data?.routes?.[0]?.pools?.filter((pool) => pool.pool_id && pool.token_in && pool.token_out && pool.amount_in && pool.min_amount_out) ?? [];
+  const pools = body.result_data?.routes?.[0]?.pools?.filter((pool) => pool.pool_id && pool.token_in && pool.token_out && pool.min_amount_out) ?? [];
   const out = Number(body.result_data?.amount_out);
   if (body.result_code !== 0 || !pools.length || !(out > 0)) return null;
   const receive = out / 10 ** outDecimals;
@@ -552,12 +537,12 @@ async function refRoute(from: Token, to: Token, amount: string, accountId: strin
       const fresh = await fetch(quoted);
       if (!fresh.ok) throw new Error("Ref Finance did not return a route. Nothing was sent.");
       const next = (await fresh.json()) as typeof body;
-      const nextPools = next.result_data?.routes?.[0]?.pools?.filter((pool) => pool.pool_id && pool.amount_in && pool.min_amount_out) ?? pools;
-      const hops = nextPools.map((pool) => ({
+      const nextPools = next.result_data?.routes?.[0]?.pools?.filter((pool) => pool.pool_id && pool.min_amount_out) ?? pools;
+      const hops = nextPools.map((pool, index) => ({
         pool_id: Number(pool.pool_id),
         token_in: pool.token_in || tokenIn,
         token_out: pool.token_out || tokenOut,
-        amount_in: pool.amount_in || units,
+        amount_in: index === 0 ? pool.amount_in || units : pool.amount_in && pool.amount_in !== "0" ? pool.amount_in : "",
         min_amount_out: pool.min_amount_out || "1",
       }));
       const last = hops[hops.length - 1];
