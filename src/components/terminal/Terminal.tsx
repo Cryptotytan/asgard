@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronDown, Search, Unplug, Wallet } from "lucide-react";
 import { ChainBadge, TokenIcon } from "@/components/terminal/TokenIcon";
@@ -46,6 +46,21 @@ export function Terminal() {
   const balances = useDesk((s) => s.balances);
   const positions = useDesk((s) => s.positions);
   const tick = useDesk((s) => s.tick);
+
+  useLayoutEffect(() => {
+    try {
+      const id = localStorage.getItem("signedAccountId")?.trim().toLowerCase();
+      if (!id) return;
+      if (useDesk.getState().accountId !== id) useDesk.getState().setAccount(id);
+      if (Object.keys(useDesk.getState().chain).length) return;
+      const raw = localStorage.getItem(`asgard-holdings-v1:${id}`) ?? sessionStorage.getItem(`asgard-holdings-v1:${id}`);
+      if (!raw) return;
+      const book = JSON.parse(raw) as Record<string, number>;
+      if (book && typeof book === "object") useDesk.getState().applyChain(book);
+    } catch {
+      /* ignore a bad cache */
+    }
+  }, []);
 
   useEffect(() => {
     setWalletOpener(() => {
@@ -272,6 +287,7 @@ export function Terminal() {
               visitToken(next);
             }}
             onFlash={setFlash}
+            onSwap={openSwap}
           />
         )}
         {view === "swap" && (

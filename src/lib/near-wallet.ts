@@ -197,6 +197,9 @@ export async function signOutNear() {
 
 export function restoreNearSession() {
   stashRedirectAccount();
+  primeAccount();
+  const id = useDesk.getState().accountId;
+  if (id) void syncWallet(id);
   warmNearSigner();
   return boot();
 }
@@ -501,17 +504,23 @@ function refMetadata() {
 }
 
 function metaFor(contract: string, meta: Map<string, { symbol: string; decimals: number }>) {
-  return FT_META[contract] ?? meta.get(contract) ?? null;
+  const known = FT_META[contract] ?? meta.get(contract) ?? localMeta.get(contract);
+  if (known) return known;
+  const token = TOKENS.find((item) => item.address?.toLowerCase() === contract && (item.decimals ?? 0) > 0);
+  if (!token?.decimals) return null;
+  return { symbol: token.symbol, decimals: token.decimals };
 }
+
+const localMeta = new Map<string, { symbol: string; decimals: number }>();
 
 const HOLDING_CACHE = "asgard-holdings-v1";
 let syncFlight: Promise<void> | null = null;
 let syncFor = "";
 
 function peekHoldings(key: string) {
-  if (typeof sessionStorage === "undefined") return null;
+  if (typeof localStorage === "undefined") return null;
   try {
-    const raw = sessionStorage.getItem(`${HOLDING_CACHE}:${key}`);
+    const raw = localStorage.getItem(`${HOLDING_CACHE}:${key}`) ?? sessionStorage.getItem(`${HOLDING_CACHE}:${key}`);
     if (!raw) return null;
     const book = JSON.parse(raw) as Record<string, number>;
     return book && typeof book === "object" ? book : null;
@@ -521,19 +530,32 @@ function peekHoldings(key: string) {
 }
 
 function storeHoldings(key: string, book: Record<string, number>) {
-  if (typeof sessionStorage === "undefined") return;
+  if (typeof localStorage === "undefined") return;
   try {
-    sessionStorage.setItem(`${HOLDING_CACHE}:${key}`, JSON.stringify(book));
+    const raw = JSON.stringify(book);
+    localStorage.setItem(`${HOLDING_CACHE}:${key}`, raw);
+    sessionStorage.setItem(`${HOLDING_CACHE}:${key}`, raw);
   } catch {
     /* private mode */
   }
 }
 
-function publishHoldings(key: string, book: Record<string, number>) {
+function publishHoldings(key: string, book: Record<string, number>, mode: "merge" | "replace" = "replace") {
   if (useDesk.getState().accountId !== key) return;
-  const next = overlayBalances(book);
+  const base = mode === "merge" ? { ...useDesk.getState().chain, ...book } : book;
+  const next = overlayBalances(base);
   useDesk.getState().applyChain(next);
   storeHoldings(key, next);
+}
+
+function primeAccount() {
+  if (typeof localStorage === "undefined") return;
+  const id = (localStorage.getItem(ACCOUNT_STORE) || "").trim().toLowerCase();
+  if (!id) return;
+  if (useDesk.getState().accountId !== id) useDesk.getState().setAccount(id);
+  if (Object.keys(useDesk.getState().chain).length) return;
+  const cached = peekHoldings(id);
+  if (cached) publishHoldings(id, cached, "replace");
 }
 
 type FastAccount = { tokens?: { contract_id?: string; balance?: string }[]; state?: { balance?: string } };
@@ -591,7 +613,8 @@ export async function syncWallet(accountId: string, _focus: string[] = [], fresh
 async function loadWallet(key: string) {
   const fastP = fetch(`https://api.fastnear.com/v1/account/${encodeURIComponent(key)}/full`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
   const invP = fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(key)}/inventory`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
-  const meta = refMeta ?? new Map<string, { symbol: string; decimals: number }>();
+  const meta = new Map<string, { symbol: string; decimals: number }>(refMeta ?? []);
+  for (const [id, row] of localMeta) meta.set(id, row);
   const winner = await Promise.race([
     fastP.then((res) => ({ which: "fast" as const, res })),
     invP.then((res) => ({ which: "inv" as const, res })),
@@ -603,14 +626,22 @@ async function loadWallet(key: string) {
     if (winner.which === "fast") fast = body;
     else inventory = body;
     const early = assembleWallet(fast, inventory, meta);
-    if (early.NEAR || Object.keys(early).length) publishHoldings(key, early);
+    if (early.NEAR || Object.keys(early).length) publishHoldings(key, early, "merge");
   }
   const [fastRes, invRes] = await Promise.all([fastP, invP]);
   if (useDesk.getState().accountId !== key) return;
   if (!fast && fastRes?.ok) fast = (await fastRes.json()) as FastAccount;
   if (!inventory && invRes?.ok) inventory = (await invRes.json()) as InventoryAccount;
-  const book = assembleWallet(fast, inventory, refMeta ?? meta);
-  if (book.NEAR || Object.keys(book).length) publishHoldings(key, book);
+  const missing = missingContracts(fast, inventory, meta);
+  let book = assembleWallet(fast, inventory, meta);
+  if (book.NEAR || Object.keys(book).length) publishHoldings(key, book, missing.length ? "merge" : "replace");
+  if (missing.length) {
+    await Promise.all(missing.slice(0, 16).map((contract) => readFtMeta(contract)));
+    for (const [id, row] of localMeta) meta.set(id, row);
+    book = assembleWallet(fast, inventory, meta);
+  }
+  const unresolved = missingContracts(fast, inventory, meta);
+  if (book.NEAR || Object.keys(book).length) publishHoldings(key, book, unresolved.length ? "merge" : "replace");
   void accountAmount(key).then((amount) => {
     if (amount && useDesk.getState().accountId === key) useDesk.getState().setNearYocto(amount);
   });
@@ -633,12 +664,69 @@ async function loadWallet(key: string) {
     void refMetadata().then((full) => {
       if (useDesk.getState().accountId !== key) return;
       const richer = assembleWallet(fast, inventory, full);
-      if (richer.NEAR || Object.keys(richer).length) publishHoldings(key, richer);
+      const left = missingContracts(fast, inventory, full);
+      if (richer.NEAR || Object.keys(richer).length) publishHoldings(key, richer, left.length ? "merge" : "replace");
     });
   }
 }
 
-if (typeof window !== "undefined") void refMetadata();
+if (typeof window !== "undefined") {
+  const kick = () => void refMetadata();
+  const idle = window.requestIdleCallback;
+  if (typeof idle === "function") idle(kick, { timeout: 2500 });
+  else window.setTimeout(kick, 1200);
+}
+
+function missingContracts(fast: FastAccount | null, inventory: InventoryAccount | null, meta: Map<string, { symbol: string; decimals: number }>) {
+  const missing: string[] = [];
+  const seen = new Set<string>();
+  for (const row of fast?.tokens ?? []) {
+    const contract = (row.contract_id ?? "").toLowerCase();
+    const raw = row.balance ?? "";
+    if (!contract || contract === "wrap.near" || !/^\d+$/.test(raw) || raw === "0") continue;
+    if (metaFor(contract, meta)) continue;
+    const inv = inventory?.inventory?.fts?.find((item) => (item.contract ?? "").toLowerCase() === contract);
+    if ((inv?.ft_meta?.decimals ?? 0) > 0) continue;
+    if (seen.has(contract)) continue;
+    seen.add(contract);
+    missing.push(contract);
+  }
+  return missing;
+}
+
+async function readFtMeta(contract: string) {
+  try {
+    const response = await fetch("https://free.rpc.fastnear.com", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal: AbortSignal.timeout(2500),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "ft",
+        method: "query",
+        params: {
+          request_type: "call_function",
+          finality: "optimistic",
+          account_id: contract,
+          method_name: "ft_metadata",
+          args_base64: "e30=",
+        },
+      }),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { result?: { result?: number[] } };
+    const bytes = body.result?.result ?? [];
+    if (!bytes.length) return null;
+    const parsed = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes))) as { symbol?: string; decimals?: number };
+    const decimals = Number(parsed.decimals);
+    if (!(decimals > 0)) return null;
+    const row = { symbol: String(parsed.symbol ?? "").replace(/\s/g, ""), decimals };
+    localMeta.set(contract, row);
+    return row;
+  } catch {
+    return null;
+  }
+}
 
 function addBalance(book: Record<string, number>, contract: string, raw: string, amount: number) {
   const symbol = terminalSymbol(contract, raw);

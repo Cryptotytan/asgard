@@ -53,6 +53,7 @@ export function TokenTrade({
   onMode,
   onSymbol,
   onFlash,
+  onSwap,
 }: {
   symbol: string;
   mode: TicketMode;
@@ -60,6 +61,7 @@ export function TokenTrade({
   onMode: (mode: TicketMode) => void;
   onSymbol: (symbol: string) => void;
   onFlash: (message: string) => void;
+  onSwap?: (symbol: string) => void;
 }) {
   const mark = useDesk((s) => s.marks[symbol]);
   useDesk((s) => s.clock);
@@ -199,7 +201,7 @@ export function TokenTrade({
         </div>
         )}
         <div className={`border-t border-line lg:row-span-2 lg:row-start-1 lg:self-stretch lg:border-t-0 ${showBook ? "lg:col-start-3" : "lg:col-start-2"}`}>
-          <Ticket token={token} mode={mode} quickUsd={quickUsd} scanning={scanning} onMode={onMode} onFlash={onFlash} onPlaced={() => setBook("Orders")} />
+          <Ticket token={token} mode={mode} quickUsd={quickUsd} scanning={scanning} onMode={onMode} onFlash={onFlash} onSwap={onSwap} onPlaced={() => setBook("Orders")} />
         </div>
         </div>
         <section className={`book-hinge order-4 border-t border-line lg:col-start-1 lg:row-start-2 lg:self-stretch lg:border-r lg:border-t-0 ${showBook ? "lg:col-span-2" : "lg:col-span-1"}`}>
@@ -843,6 +845,7 @@ function Ticket({
   scanning,
   onMode,
   onFlash,
+  onSwap,
   onPlaced,
 }: {
   token: Token;
@@ -851,6 +854,7 @@ function Ticket({
   scanning: boolean;
   onMode: (mode: TicketMode) => void;
   onFlash: (message: string) => void;
+  onSwap?: (symbol: string) => void;
   onPlaced: () => void;
 }) {
   const listed = canPerp(token.symbol);
@@ -929,6 +933,7 @@ function Ticket({
   const picked = quotes[0];
   const receive = picked?.receive ?? 0;
   const blocked = isHoneypot(token);
+  const memeSwap = viewMode === "spot" && side === "buy" && token.kind === "meme" && !tradingViewSpot(token.symbol);
   const usdtFree = balances.USDT ?? 0;
   const heldUsdt = (balances[token.symbol] ?? 0) * token.price;
   const windows = [
@@ -1053,6 +1058,10 @@ function Ticket({
 
   function submit() {
     if (scanning || busy || blocked) return;
+    if (memeSwap) {
+      onSwap?.(token.symbol);
+      return;
+    }
     setBusy(true);
     window.setTimeout(() => {
       setBusy(false);
@@ -1372,7 +1381,7 @@ function Ticket({
         onClick={submit}
         className="press mt-2 h-10 w-full rounded-full bg-primary text-sm font-semibold text-primary-fg disabled:opacity-50 lg:rounded-xl lg:h-12"
       >
-        {blocked ? "Swap blocked" : scanning || busy ? "Scanning" : connected ? (viewMode === "perp" ? `Open ${perpSide} ${token.symbol}/USDT` : `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}/USDT`) : "Enable Trading"}
+        {blocked ? "Swap blocked" : scanning || busy ? "Scanning" : memeSwap ? `Buy ${token.symbol}` : connected ? (viewMode === "perp" ? `Open ${perpSide} ${token.symbol}/USDT` : `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}/USDT`) : "Enable Trading"}
       </button>
 
       <dl className="mt-3 hidden grid-cols-2 gap-2 font-mono text-xs sm:grid">

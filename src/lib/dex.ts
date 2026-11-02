@@ -507,10 +507,10 @@ export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (mar
   if (assets) {
     publishForeign(assets);
     void warmLogos(assets);
-    void refreshDexMarkets();
     onPaint?.({ ...marks });
   }
   marketsSynced = true;
+  rememberMarketSnapshot();
   return marks;
 }
 
@@ -1030,4 +1030,123 @@ function paintDex(best: Map<string, DexPair>, marks: Record<string, number>) {
     owned.set(symbol, address);
     marks[symbol] = price;
   }
+  rememberMarketSnapshot();
 }
+
+const MARKET_SNAP = "asgard-markets-v1";
+
+type MarketSnap = {
+  symbol: string;
+  name: string;
+  price: number;
+  chain: string;
+  icon?: string;
+  address?: string;
+  change: number;
+  windows: (typeof TOKENS)[number]["windows"];
+  volBy: (typeof TOKENS)[number]["volBy"];
+  volN: number;
+  liqN: number;
+  mcapN: number;
+  txnsN: number;
+  buys: number;
+  sells: number;
+  ageH: number;
+  kind: (typeof TOKENS)[number]["kind"];
+  verified: boolean;
+  score: number;
+  pool?: string;
+};
+
+export function restoreMarketSnapshot() {
+  if (typeof localStorage === "undefined") return false;
+  try {
+    const raw = localStorage.getItem(MARKET_SNAP);
+    if (!raw) return false;
+    const rows = JSON.parse(raw) as MarketSnap[];
+    if (!Array.isArray(rows) || rows.length < 4) return false;
+    let count = 0;
+    for (const row of rows) {
+      if (!row?.symbol || !(row.price > 0)) continue;
+      const token = ensureToken({
+        symbol: row.symbol,
+        name: row.name || row.symbol,
+        price: row.price,
+        chain: row.chain || "NEAR",
+        icon: row.icon,
+        address: row.address,
+      });
+      token.price = row.price;
+      token.listed = true;
+      token.change = Number(row.change) || 0;
+      if (row.windows) token.windows = row.windows;
+      if (row.volBy) token.volBy = row.volBy;
+      token.volN = Number(row.volN) || 0;
+      token.volume = token.volN > 0 ? money(token.volN) : token.volume;
+      token.liqN = Number(row.liqN) || 0;
+      token.liquidity = token.liqN > 0 ? money(token.liqN) : token.liquidity;
+      token.mcapN = Number(row.mcapN) || 0;
+      token.mcap = token.mcapN > 0 ? money(token.mcapN) : token.mcap;
+      if (!token.fdv || token.fdv === "—") token.fdv = token.mcap;
+      token.txnsN = Number(row.txnsN) || 0;
+      token.buys = Number(row.buys) || 0;
+      token.sells = Number(row.sells) || 0;
+      token.txns = token.txnsN > 0 ? token.txnsN.toLocaleString("en-US") : token.txns;
+      if (row.ageH > 0) token.ageH = row.ageH;
+      if (row.kind === "meme" || row.kind === "major" || row.kind === "defi") token.kind = row.kind;
+      token.verified = Boolean(row.verified);
+      token.score = Number(row.score) || token.score;
+      if (row.pool && row.address) rememberPool(row.chain || "NEAR", row.address, row.pool);
+      count += 1;
+    }
+    if (count > 0) {
+      marketsSynced = true;
+      useDesk.setState((state) => ({ clock: state.clock + 1 }));
+    }
+    return count > 0;
+  } catch {
+    return false;
+  }
+}
+
+let snapTimer = 0;
+
+export function rememberMarketSnapshot() {
+  if (typeof localStorage === "undefined") return;
+  if (snapTimer) window.clearTimeout(snapTimer);
+  snapTimer = window.setTimeout(() => {
+    snapTimer = 0;
+    try {
+      const rows: MarketSnap[] = TOKENS.filter((token) => token.listed && token.price > 0)
+        .sort((a, b) => b.volN - a.volN || b.liqN - a.liqN)
+        .slice(0, 400)
+        .map((token) => ({
+          symbol: token.symbol,
+          name: token.name,
+          price: token.price,
+          chain: token.chain,
+          icon: token.icon || undefined,
+          address: token.address,
+          change: token.change,
+          windows: token.windows,
+          volBy: token.volBy,
+          volN: token.volN,
+          liqN: token.liqN,
+          mcapN: token.mcapN,
+          txnsN: token.txnsN,
+          buys: token.buys,
+          sells: token.sells,
+          ageH: token.ageH,
+          kind: token.kind,
+          verified: token.verified,
+          score: token.score,
+          pool: token.address ? knownPool(token.chain, token.address) || undefined : undefined,
+        }));
+      if (rows.length < 4) return;
+      localStorage.setItem(MARKET_SNAP, JSON.stringify(rows));
+    } catch {
+      /* private mode or a full disk */
+    }
+  }, 600);
+}
+

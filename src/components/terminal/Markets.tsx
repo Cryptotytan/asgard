@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Search, Star, X } from "lucide-react";
 import { TokenIcon, VerifiedMark, ChainBadge, AllChainsMark } from "@/components/terminal/TokenIcon";
 import {
@@ -14,7 +14,7 @@ import {
   type Token,
   type WindowId,
 } from "@/lib/market";
-import { marketsSynced, trendScore } from "@/lib/dex";
+import { marketsSynced, restoreMarketSnapshot, trendScore } from "@/lib/dex";
 import { chainIcon } from "@/lib/chains";
 import { hideToken, toggleStar, useWatch, visitToken } from "@/lib/watch";
 import { warmCharts } from "@/lib/live";
@@ -41,6 +41,10 @@ export function Markets({
   const [chainQuery, setChainQuery] = useState("");
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const chainMenu = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    restoreMarketSnapshot();
+  }, []);
 
   const windowLabel = WINDOWS.find((item) => item.id === win)?.label ?? "24H";
   const chainOptions = useMemo(() => {

@@ -1,5 +1,6 @@
 import { ensureToken, isCanonical, isMajorAsset, isVerifiedAsset, LEND_MARKETS, money, qualityScore, TOKENS, type Candle, type LendMarket, type Print } from "@/lib/market";
-import { iconFor, geckoIdFor, knownPool, loadIconBook, refreshDexMarkets, syncNearMarkets, applyIconBook, fillListedStats } from "@/lib/dex";
+import { previewPathPrefix } from "@/lib/preview-path-prefix";
+import { iconFor, geckoIdFor, knownPool, loadIconBook, marketsSynced, refreshDexMarkets, restoreMarketSnapshot, rememberMarketSnapshot, syncNearMarkets, applyIconBook, fillListedStats } from "@/lib/dex";
 import { syncPerpMarkets } from "@/lib/perps";
 import { useDesk } from "@/lib/store";
 
@@ -411,8 +412,10 @@ const warming = new Set<string>();
 export function warmCharts(symbol: string) {
   if (warming.has(symbol)) return;
   warming.add(symbol);
+  const meme = TOKENS.find((item) => item.symbol === symbol)?.kind === "meme";
   void (async () => {
     await loadCandles(symbol, "15m").catch(() => undefined);
+    if (meme) return;
     await loadCandles(symbol, "1m").catch(() => undefined);
     await loadCandles(symbol, "5m").catch(() => undefined);
     await loadCandles(symbol, "1H").catch(() => undefined);
@@ -473,7 +476,10 @@ function mergeBars(left: Candle[] = [], right: Candle[] = []) {
 }
 
 async function geckoGet(url: string) {
-  const response = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) }).catch(() => null);
+  const path = url.startsWith("https://api.geckoterminal.com") ? url.slice("https://api.geckoterminal.com".length) : "";
+  const prefix = typeof window !== "undefined" ? (previewPathPrefix(window.location.hostname, window.location.pathname) ?? "") : "";
+  const target = path.startsWith("/api/v2/") ? `${prefix}/api/gecko?path=${encodeURIComponent(path)}` : url;
+  const response = await fetch(target, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) }).catch(() => null);
   if (!response || response.status === 429 || response.status >= 500 || !response.ok) return null;
   return response.json() as Promise<Record<string, unknown>>;
 }
@@ -521,30 +527,32 @@ export function geckoNetwork(chain: string) {
 
 const geckoStatAt = new Map<string, number>();
 
+function bareGeckoAddress(raw: string) {
+  const bare = raw.trim().replace(/^(nep141:|nep245:)/i, "");
+  if (!bare || bare.includes(" ") || bare.includes(":")) return "";
+  return bare.startsWith("0x") ? bare.toLowerCase() : bare;
+}
+
 export async function syncGeckoStats(symbol: string) {
   const token = TOKENS.find((item) => item.symbol === symbol);
   if (!token) return;
   const network = geckoNetwork(token.chain);
-  const raw = (token.address ?? "").trim().replace(/^(nep141:|nep245:)/i, "");
-  if (!network || !raw || raw.includes(" ") || raw.includes(":")) {
+  const address = bareGeckoAddress(token.address ?? "");
+  if (!network || !address) {
     const { refreshTokenCard } = await import("@/lib/dex");
     await refreshTokenCard(symbol);
     return;
   }
-  const address = raw.startsWith("0x") ? raw.toLowerCase() : raw;
   const key = `${network}:${address}`;
   if (Date.now() - (geckoStatAt.get(key) ?? 0) < 20_000) return;
   geckoStatAt.set(key, Date.now());
-  const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${encodeURIComponent(address)}`, {
-    headers: { accept: "application/json" },
-  }).catch(() => null);
-  if (!response?.ok) {
+  const body = await geckoGet(`https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${encodeURIComponent(address)}`);
+  const attrs = (body as { data?: { attributes?: Record<string, unknown> } } | null)?.data?.attributes;
+  if (!attrs) {
     const { refreshTokenCard } = await import("@/lib/dex");
     await refreshTokenCard(symbol);
     return;
   }
-  const body = (await response.json()) as { data?: { attributes?: Record<string, unknown> } };
-  const attrs = body.data?.attributes ?? {};
   const price = Number(attrs.price_usd);
   const mcap = Number(attrs.market_cap_usd);
   const fdv = Number(attrs.fdv_usd);
@@ -582,11 +590,11 @@ async function geckoBars(network: string, pool: string, frame: string, before?: 
 async function loadGeckoBook(symbol: string, frame: string, book: Book) {
   const token = TOKENS.find((item) => item.symbol === symbol);
   const network = token ? GECKO_NET[token.chain] : "";
-  const raw = token?.address ?? "";
-  if (!network || !raw || raw.includes(":")) return false;
-  const address = raw.startsWith("0x") ? raw.toLowerCase() : raw;
+  const address = bareGeckoAddress(token?.address ?? "");
+  if (!network || !address) return false;
+  const hintedRaw = token ? knownPool(token.chain, token.address ?? address) || knownPool(token.chain, address) : "";
+  const hinted = hintedRaw;
   const expect = token?.price ?? 0;
-  const hinted = token ? knownPool(token.chain, raw) : "";
   let pool = book.id.startsWith("gecko:") ? book.id.split(":").slice(2).join(":") : hinted || (await geckoPool(network, address, expect));
   if (!pool) return false;
   let bars = await geckoBars(network, pool, frame, undefined, 40);
@@ -645,6 +653,15 @@ async function fetchCandles(symbol: string, frame: string, key: string) {
     books.set(key, book);
   }
   if (!book.id) {
+    const token = TOKENS.find((item) => item.symbol === symbol);
+    if (token?.kind === "meme") {
+      const found = await loadGeckoBook(symbol, frame, book);
+      if (found) {
+        publishBook(key, book);
+        void deepen(symbol, frame, key);
+      }
+      return candles.get(key) ?? [];
+    }
     const market = marketChartId(symbol);
     const primary = market || llamaCandidates(symbol)[0] || "";
     const start = Math.max(ORIGIN, now - PAGE * plan.step);
@@ -803,6 +820,7 @@ async function llamaSpot() {
 
 function publish(marks: Record<string, number>) {
   useDesk.setState((state) => ({ marks: { ...state.marks, ...marks }, clock: state.clock + 1 }));
+  rememberMarketSnapshot();
 }
 
 export type HolderRow = { account: string; amount: number; share: number | null };
@@ -918,16 +936,25 @@ function humanRaw(raw: string, decimals: number) {
 
 let marketFlight: Promise<void> | null = null;
 let flightAt = 0;
+let fullAt = 0;
 
 async function refreshMarkets() {
   const marks: Record<string, number> = {};
+  const full = !marketsSynced || Date.now() - fullAt > 45_000;
   const iconsPromise = loadIconBook().catch(() => new Map<string, string>());
   const rheaPromise = rheaRows().catch(() => [] as RheaRow[]);
   const spotPromise = llamaSpot().catch(() => ({}) as Record<string, number>);
-  const dexPromise = syncNearMarkets(undefined, (batch) => {
-    Object.assign(marks, batch);
-    publish(batch);
-  }).catch(() => ({}) as Record<string, number>);
+  const dexPromise = full
+    ? syncNearMarkets(undefined, (batch) => {
+        Object.assign(marks, batch);
+        publish(batch);
+      })
+        .then((batch) => {
+          fullAt = Date.now();
+          return batch;
+        })
+        .catch(() => ({}) as Record<string, number>)
+    : Promise.resolve({} as Record<string, number>);
 
   const rows = await rheaPromise;
   const rheaBySymbol = indexRhea(rows);
@@ -951,8 +978,10 @@ async function refreshMarkets() {
     const price = spots[token.symbol] ?? spots[token.symbol.toUpperCase()] ?? Number(rheaBySymbol.get(token.symbol)?.price);
     if (!Number.isFinite(price) || price <= 0) continue;
     token.price = price;
+    if (token.kind === "major" || token.symbol === "AURORA" || token.symbol === "STNEAR" || token.symbol === "SWEAT" || token.symbol === "RHEA") token.listed = true;
     marks[token.symbol] = price;
   }
+  if (TOKENS.some((token) => token.listed && token.price > 0)) publish(marks);
   const capPromise = nearCap().catch(() => 0);
   const [dexMarks, freshIcons, cap] = await Promise.all([dexPromise, iconsPromise, capPromise]);
   Object.assign(marks, dexMarks);
@@ -1102,15 +1131,16 @@ export function startLiveFeed() {
   if (started || typeof window === "undefined") return;
   started = true;
   restoreLend();
+  restoreMarketSnapshot();
   const run = () => {
     void refreshLive().catch(() => undefined);
   };
   run();
-  window.setInterval(run, 10_000);
+  window.setInterval(run, 20_000);
   window.setInterval(() => {
     void refreshDexMarkets().catch(() => undefined);
     void syncPerpMarkets().catch(() => undefined);
-  }, 30_000);
+  }, 60_000);
   void syncPerpMarkets().catch(() => undefined);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") run();
