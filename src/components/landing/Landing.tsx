@@ -4,9 +4,9 @@ import { TOKENS, tokenBySymbol, usd } from "@/lib/market";
 
 const FAQ = [
   ["What sits on this desk?", "Markets, spot, NEAR and ETH perps, swap, a vault, lending, and a wallet tracker. One terminal."],
-  ["Which wallets can sign in?", "Meteor, HOT, HERE, MyNearWallet, Nightly, Sender, and Intear on NEAR mainnet."],
-  ["Do trades leave my wallet?", "Swap, spot, vault, and lend do. You confirm a deposit, and NEAR Intents settles it back to the same account. Perp margin stays in the wallet."],
-  ["How does a route get picked?", "The terminal asks NEAR Intents 1-Click for a live quote. Other venues stay on the book as estimates. Only Intents is signed."],
+  ["Which wallets can sign in?", "Meteor, HOT, HERE, Nightly, Sender, and Intear on NEAR mainnet. HOT opens its browser extension."],
+  ["Do trades leave my wallet?", "Swap, spot, vault, and lend do. You confirm each one in the wallet you connected. Perp margin stays in the wallet."],
+  ["How does a route get picked?", "Swap and spot ask NEAR Intents for a live quote. The vault stakes NEAR into stNEAR on Meta Pool, and lending settles on Rhea."],
 ];
 
 export function Landing() {
@@ -163,13 +163,13 @@ export function Landing() {
               <VaultFace />
               <span>04</span>
               <h3>Vault and lending</h3>
-              <p>A deposit swaps into stNEAR through Intents, and a withdraw swaps it back. Borrowing stays inside the collateral line and does not mint tokens.</p>
+              <p>A deposit stakes NEAR into stNEAR on Meta Pool. A withdraw sends it back to the same wallet. Borrowing stays inside the collateral line and does not mint tokens.</p>
             </article>
             <article>
               <WalletFace />
               <span>05</span>
               <h3>A wallet you already have</h3>
-              <p>Meteor, HOT, HERE, MyNearWallet, Nightly, Sender, Intear. The header shows the account and its on-chain NEAR.</p>
+              <p>Meteor, HOT, HERE, Nightly, Sender, and Intear. HOT uses the browser extension. The header shows the account and its on-chain NEAR.</p>
             </article>
             <article>
               <PhoneFace />
@@ -209,7 +209,7 @@ export function Landing() {
           <div className="faq-intro">
             <p className="landing-kicker">FAQ</p>
             <h2>Before you open it</h2>
-            <p>Sign-in is a real NEAR wallet. Swap, spot, vault, and lend settle through NEAR Intents.</p>
+            <p>Sign-in is a real NEAR wallet. Swap and spot settle through NEAR Intents. The vault uses Meta Pool, and lending uses Rhea.</p>
           </div>
           <div className="faq-list">
             {FAQ.map(([question, answer], index) => (
@@ -248,7 +248,7 @@ function Mock() {
         <p className="mock-line">
           <img src={near.icon} alt="" />
           {near.symbol}
-          <b>{usd(near.price)}</b>
+          <b>{shown(near.price, "$—")}</b>
         </p>
         <p>Verified pool. Honeypot clear.</p>
         <p>Quote comes from NEAR Intents.</p>
@@ -266,7 +266,7 @@ function Mock() {
         </label>
         <label>
           <span>Buying</span>
-          <strong>{(100 / near.price).toFixed(2)}</strong>
+          <strong>{Number.isFinite(near.price) && near.price > 0 ? (100 / near.price).toFixed(2) : "—"}</strong>
           <em>
             <img src={near.icon} alt="" />
             NEAR
@@ -282,6 +282,10 @@ function Mock() {
       </aside>
     </div>
   );
+}
+
+function shown(n: number, fallback: string) {
+  return Number.isFinite(n) && n > 0 ? usd(n) : fallback;
 }
 
 function Stat({ k, v }: { k: string; v: string }) {
@@ -387,7 +391,7 @@ function PhoneFace() {
           <p key={symbol}>
             <img src={token.icon} alt="" />
             <b>{symbol}</b>
-            <span>{usd(token.price)}</span>
+            <span>{shown(token.price, "—")}</span>
           </p>
         );
       })}
@@ -404,7 +408,7 @@ function MarketFace() {
           <p key={symbol}>
             <img src={token.icon} alt="" />
             <b>{token.symbol}</b>
-            <span>{usd(token.price)}</span>
+            <span>{shown(token.price, "—")}</span>
           </p>
         );
       })}

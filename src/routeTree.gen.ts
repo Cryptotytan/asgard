@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as ApiGeckoRouteImport } from './routes/api/gecko'
+import { Route as ApiRefPathRouteImport } from './routes/api/ref-path'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -28,35 +29,44 @@ const ApiGeckoRoute = ApiGeckoRouteImport.update({
   path: '/api/gecko',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiRefPathRoute = ApiRefPathRouteImport.update({
+  id: '/api/ref-path',
+  path: '/api/ref-path',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/api/gecko': typeof ApiGeckoRoute
+  '/api/ref-path': typeof ApiRefPathRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/api/gecko': typeof ApiGeckoRoute
+  '/api/ref-path': typeof ApiRefPathRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/api/gecko': typeof ApiGeckoRoute
+  '/api/ref-path': typeof ApiRefPathRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/app' | '/api/gecko'
+  fullPaths: '/' | '/app' | '/api/gecko' | '/api/ref-path'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/app' | '/api/gecko'
-  id: '__root__' | '/' | '/app' | '/api/gecko'
+  to: '/' | '/app' | '/api/gecko' | '/api/ref-path'
+  id: '__root__' | '/' | '/app' | '/api/gecko' | '/api/ref-path'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRoute
   ApiGeckoRoute: typeof ApiGeckoRoute
+  ApiRefPathRoute: typeof ApiRefPathRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -82,6 +92,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiGeckoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/ref-path': {
+      id: '/api/ref-path'
+      path: '/api/ref-path'
+      fullPath: '/api/ref-path'
+      preLoaderRoute: typeof ApiRefPathRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -89,6 +106,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRoute,
   ApiGeckoRoute: ApiGeckoRoute,
+  ApiRefPathRoute: ApiRefPathRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

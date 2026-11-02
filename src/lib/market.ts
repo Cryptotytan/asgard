@@ -255,7 +255,7 @@ export const TOKENS: Token[] = [
   ["ETH", "Ether", "eth.bridge.near", "/tokens/eth.png", "major"],
   ["wBTC", "Wrapped Bitcoin", "2260fac5e5542a773aa44fbcfedf7c193bc2c599.factory.bridge.near", "/tokens/wbtc.png", "major"],
   ["AURORA", "Aurora", "aaaaaa20d9e0e2461697782ef11675f668207961.factory.bridge.near", "/tokens/aurora.jpg", "defi"],
-  ["STNEAR", "Staked NEAR", "meta-pool.near", "/tokens/stnear.svg", "defi"],
+  ["STNEAR", "Staked NEAR", "meta-pool.near", "/tokens/stnear.png", "defi"],
   ["SWEAT", "Sweat Economy", "token.sweat", "/tokens/sweat.svg", "defi"],
   ["RHEA", "Rhea", "token.rhealab.near", "/tokens/rhea.svg", "defi"],
 ].map(([symbol, name, address, icon, kind]) => {

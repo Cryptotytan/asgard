@@ -98,7 +98,7 @@ export const LOGO_BOOK: Record<string, string> = {
   "SPX": "/logos/spx.svg",
   "SPX500": "/logos/spx500.svg",
   "STEAKUSDC": "/logos/steakusdc.svg",
-  "STNEAR": "/logos/stnear.svg",
+  "STNEAR": "/logos/stnear.png",
   "STRK": "/logos/strk.svg",
   "SUI": "/logos/sui.svg",
   "SUSDC": "/logos/susdc.svg",

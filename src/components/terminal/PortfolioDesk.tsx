@@ -6,6 +6,7 @@ import { ensureToken, money, qty, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 import { useHoldings } from "@/lib/wallet-holdings";
 import { loadChainHistory, useWalletHistory, type WalletTx } from "@/lib/wallet-history";
+import { stNearPrice } from "@/lib/near-wallet";
 
 const RANGES = ["1D", "7D", "30D", "1Y"] as const;
 const TABS = ["Balances", "Vault", "Lending", "Positions", "History"] as const;
@@ -71,8 +72,8 @@ export function PortfolioDesk() {
     return rows.sort((a, b) => b.amount * b.price - a.amount * a.price);
   }, [nearHold.book, evmHold.book, solHold.book, btcHold.book, marks]);
   const walletValue = holdings.reduce((sum, row) => sum + row.amount * row.price, 0);
-  const staked = chain.STNEAR ?? chain.stNEAR ?? 0;
-  const stPrice = holdingPrice("STNEAR", TOKENS.find((token) => token.symbol === "STNEAR") ?? TOKENS.find((token) => token.symbol === "NEAR")!, marks) || marks.NEAR || TOKENS.find((token) => token.symbol === "NEAR")?.price || 0;
+  const staked = Math.max(chain.STNEAR ?? 0, chain.stNEAR ?? 0);
+  const stPrice = stNearPrice() || marks.NEAR || TOKENS.find((token) => token.symbol === "NEAR")?.price || 0;
   const vaultRows = useMemo(() => (staked > 1e-8 ? [{ symbol: "STNEAR", amount: staked, usd: staked * (Number.isFinite(stPrice) ? stPrice : 0) }] : []), [staked, stPrice]);
   const lendRows = useMemo(() => rowsOf(supplied, marks), [supplied, marks]);
   const debtRows = useMemo(() => rowsOf(loans, marks), [loans, marks]);

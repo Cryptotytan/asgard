@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { fmt, qty, tokenBySymbol, usd } from "@/lib/market";
+import { fmt, qty, tokenBySymbol } from "@/lib/market";
 import { parseUnits } from "@/lib/intents";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
-import { applyStake, armWalletPopup, cancelNearSigning, moveVault, nearFromStnear, primeVaultMove, stakeMintEstimate, stakeNear, syncWallet, warmMetaPool, warmNearSigner, warmSmallStake } from "@/lib/near-wallet";
+import { applyStake, armWalletPopup, cancelNearSigning, moveVault, nearFromStnear, primeVaultMove, stakeMintEstimate, stakeNear, stNearPrice, syncWallet, warmMetaPool, warmNearSigner, warmSmallStake } from "@/lib/near-wallet";
 import { useDesk } from "@/lib/store";
 import { ConfirmGate } from "@/components/terminal/ConfirmGate";
 
@@ -12,6 +12,7 @@ const SHOWN = ["STNEAR", "USDC", "NEAR", "ETH"];
 function cleanVaultError(error: unknown) {
   const message = error instanceof Error ? error.message : "Vault move failed.";
   if (/rate limit|fastnear|-429|jsonrpc/i.test(message)) return "NEAR RPC is busy. Retry in a moment.";
+  if (/failed to fetch|networkerror|load failed/i.test(message)) return "The pool did not answer. Retry in a moment.";
   if (/minimum deposit amount is 1000000000000000000000000|minimum stake is 1 NEAR/i.test(message)) return "Meta Pool's minimum stake is 1 NEAR.";
   return message;
 }
@@ -21,6 +22,8 @@ export function VaultDesk() {
   const accountId = useDesk((s) => s.accountId);
   const connect = useDesk((s) => s.connect);
   const chain = useDesk((s) => s.chain);
+  const nearMark = useDesk((s) => s.marks.NEAR);
+  const stMark = useDesk((s) => s.marks.STNEAR);
   const nearYocto = useDesk((s) => s.nearYocto);
   const [symbol, setSymbol] = useState("NEAR");
   const [amount, setAmount] = useState("");
@@ -31,7 +34,8 @@ export function VaultDesk() {
   const [flight, setFlight] = useState<{ title: string; detail: string } | null>(null);
   const flightGen = useRef(0);
   const staked = chain.STNEAR ?? chain.stNEAR ?? 0;
-  const value = staked * tokenBySymbol("STNEAR").price;
+  const price = stNearPrice() || nearMark || stMark || 0;
+  const value = staked * (price > 0 ? price : 0);
   useEffect(() => {
     warmNearSigner();
     if (accountId) {
@@ -93,12 +97,12 @@ export function VaultDesk() {
         setAmount("");
         setNote(`Deposited ${fmt(n)} ${symbol} into stNEAR.`);
       } else {
-        await moveVault(wallet, "STNEAR", amount, "out");
-        applyStake(-nearFromStnear(n), -n);
+        const mode = await moveVault(wallet, "STNEAR", amount, "out");
+        applyStake(mode === "delayed" ? 0 : -nearFromStnear(n), -n);
         void syncWallet(wallet);
         setAmount("");
         setWithdrawing(false);
-        setNote(`Withdrew ${fmt(n)} stNEAR. NEAR returns to this wallet.`);
+        setNote(mode === "delayed" ? `Unstake started for ${fmt(n)} stNEAR. NEAR unlocks after Meta Pool's waiting period.` : `Withdrew ${fmt(n)} stNEAR. NEAR returns to this wallet.`);
       }
     } catch (error) {
       if (flightGen.current !== generation) return;
@@ -139,7 +143,7 @@ export function VaultDesk() {
         <div className="flex items-end justify-between gap-3">
           <div>
             <p className="text-[10px] uppercase tracking-widest text-muted">Vault</p>
-            <h2 className="font-mono text-base leading-tight sm:text-3xl">{usd(value)}</h2>
+            <h2 className="font-mono text-base leading-tight sm:text-3xl">{usd2(value)}</h2>
           </div>
         </div>
         <ul className="lift-deck mt-1">
@@ -163,7 +167,7 @@ export function VaultDesk() {
                       <p className="font-mono text-[10px] text-muted sm:text-xs">{qty(held)} in this wallet</p>
                     </div>
                   </div>
-                  <p className="font-mono text-xs sm:text-sm">{usd(held * token.price)}</p>
+                  <p className="font-mono text-xs sm:text-sm">{usd2(held * (item === "STNEAR" ? (price > 0 ? price : 0) : token.price))}</p>
                 </button>
               </li>
             );
@@ -186,7 +190,7 @@ export function VaultDesk() {
                   <p className="font-mono text-[11px] text-muted">{qty(staked)} in this wallet</p>
                 </div>
               </div>
-              <p className="font-mono text-sm">{usd(value)}</p>
+              <p className="font-mono text-sm">{usd2(value)}</p>
             </div>
             <input
               inputMode="decimal"
@@ -240,4 +244,9 @@ export function VaultDesk() {
       {flight && <ConfirmGate title={flight.title} detail={flight.detail} onDismiss={dismissFlight} />}
     </div>
   );
+}
+
+function usd2(n: number) {
+  if (!Number.isFinite(n)) return "—";
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }

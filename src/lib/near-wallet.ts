@@ -1,12 +1,13 @@
 import { actionCreators } from "@near-js/transactions";
 import { installBrowserGlobals } from "@/lib/node-globals";
-import { ensureToken, TOKENS } from "@/lib/market";
+import { ensureToken, tokenBySymbol, TOKENS } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 
 const CONTRACT_ID = "social.near";
 const KEY_STORE = "functionCallKey";
 const ACCOUNT_STORE = "signedAccountId";
 const READONLY_STORE = "asgardReadonly";
+const SIGNER_STORE = "asgard-signer";
 
 let booted: Promise<void> | null = null;
 let modalShow: (() => void) | null = null;
@@ -59,6 +60,11 @@ export async function connectHereWallet() {
 }
 
 export async function connectSelectorWallet(id: "intear-wallet" | "here-wallet" | "meteor-wallet" | "hot-wallet" | "nightly" | "sender") {
+  if (id === "hot-wallet") {
+    await connectHotWallet();
+    return;
+  }
+  localStorage.setItem(SIGNER_STORE, id);
   await connectNamed(id);
 }
 
@@ -161,6 +167,63 @@ function boot() {
 
 let hotWallet: WalletApi | null = null;
 
+type HotSigner = {
+  getAccounts: () => Promise<{ accountId: string }[]>;
+  signOut: () => Promise<void>;
+  signAndSendTransactions: (input: { transactions: { receiverId: string; actions: Call[] }[] }) => Promise<unknown>;
+};
+type HotConnector = {
+  whenManifestLoaded: Promise<void>;
+  connect: (input: { walletId: string }) => Promise<HotSigner>;
+  disconnect: () => Promise<void>;
+  getConnectedWallet: () => Promise<{ wallet: HotSigner; accounts: { accountId: string }[] }>;
+};
+
+let hotConnector: HotConnector | null = null;
+
+async function hotApi() {
+  if (typeof window === "undefined") throw new Error("HOT Wallet only runs in the browser.");
+  if (!hotConnector) {
+    const { NearConnector } = await import("@hot-labs/near-connect");
+    hotConnector = new NearConnector({ network: "mainnet" }) as HotConnector;
+  }
+  await hotConnector.whenManifestLoaded;
+  return hotConnector;
+}
+
+function rememberHot(accountId: string) {
+  localStorage.setItem(ACCOUNT_STORE, accountId);
+  localStorage.setItem(SIGNER_STORE, "hot-wallet");
+  localStorage.removeItem(READONLY_STORE);
+  useDesk.getState().setAccount(accountId);
+  void readNearBalance(accountId);
+  void syncWallet(accountId);
+}
+
+async function connectHotWallet() {
+  const connector = await hotApi();
+  const wallet = await connector.connect({ walletId: "hot-wallet" });
+  const accounts = await wallet.getAccounts();
+  const accountId = accounts[0]?.accountId;
+  if (!accountId) throw new Error("HOT Wallet did not return an account. Open the HOT extension and try again.");
+  rememberHot(accountId);
+}
+
+async function resumeHotWallet() {
+  const connector = await hotApi().catch(() => null);
+  if (!connector) return;
+  const current = await connector.getConnectedWallet().catch(() => null);
+  const accountId = current?.accounts[0]?.accountId;
+  if (accountId) rememberHot(accountId);
+}
+
+async function hotReadyWallet() {
+  const connector = await hotApi();
+  const current = await connector.getConnectedWallet().catch(() => null);
+  if (current?.wallet) return current.wallet;
+  return connector.connect({ walletId: "hot-wallet" });
+}
+
 export function warmNearSigner() {
   void boot()
     .then(async () => {
@@ -169,6 +232,7 @@ export function warmNearSigner() {
       hotWallet = await selector.wallet().catch(() => null);
     })
     .catch(() => undefined);
+  if (typeof window !== "undefined") void hotApi().catch(() => undefined);
 }
 
 export function openNearWallets() {
@@ -183,6 +247,12 @@ export async function signOutNear() {
   localStorage.removeItem(ACCOUNT_STORE);
   localStorage.removeItem(KEY_STORE);
   localStorage.removeItem(READONLY_STORE);
+  const signer = localStorage.getItem(SIGNER_STORE);
+  localStorage.removeItem(SIGNER_STORE);
+  if (signer === "hot-wallet") {
+    const connector = await hotApi().catch(() => null);
+    await connector?.disconnect().catch(() => undefined);
+  }
   const selector = await selectorPromise;
   if (selector) {
     try {
@@ -201,6 +271,7 @@ export function restoreNearSession() {
   const id = useDesk.getState().accountId;
   if (id) void syncWallet(id);
   warmNearSigner();
+  if (typeof localStorage !== "undefined" && localStorage.getItem(SIGNER_STORE) === "hot-wallet") void resumeHotWallet();
   return boot();
 }
 
@@ -216,15 +287,17 @@ function hasInjectedSigner() {
   const host = window as Window & {
     meteor_wallet?: unknown;
     hotWallet?: unknown;
+    hotExtension?: unknown;
     nightly?: { near?: unknown };
     near?: { isSender?: boolean };
   };
-  return Boolean(host.meteor_wallet || host.hotWallet || host.nightly?.near || host.near?.isSender);
+  return Boolean(host.meteor_wallet || host.hotWallet || host.hotExtension || host.nightly?.near || host.near?.isSender);
 }
 
 export function armWalletPopup() {
   if (typeof window === "undefined") return;
   abandonSign = false;
+  if (localStorage.getItem(SIGNER_STORE) === "hot-wallet") return;
   if (hasInjectedSigner()) return;
   disarmWalletPopup();
   primedUsed = false;
@@ -611,6 +684,7 @@ export async function syncWallet(accountId: string, _focus: string[] = [], fresh
 }
 
 async function loadWallet(key: string) {
+  const stakeP = readStNearAmount(key);
   const fastP = fetch(`https://api.fastnear.com/v1/account/${encodeURIComponent(key)}/full`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
   const invP = fetch(`https://api.nearblocks.io/v1/account/${encodeURIComponent(key)}/inventory`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
   const meta = new Map<string, { symbol: string; decimals: number }>(refMeta ?? []);
@@ -634,13 +708,21 @@ async function loadWallet(key: string) {
   if (!inventory && invRes?.ok) inventory = (await invRes.json()) as InventoryAccount;
   const missing = missingContracts(fast, inventory, meta);
   let book = assembleWallet(fast, inventory, meta);
-  if (book.NEAR || Object.keys(book).length) publishHoldings(key, book, missing.length ? "merge" : "replace");
+  if (book.NEAR || Object.keys(book).length) publishHoldings(key, book, "merge");
   if (missing.length) {
     await Promise.all(missing.slice(0, 16).map((contract) => readFtMeta(contract)));
     for (const [id, row] of localMeta) meta.set(id, row);
     book = assembleWallet(fast, inventory, meta);
   }
   const unresolved = missingContracts(fast, inventory, meta);
+  const staked = await stakeP;
+  if (staked == null) {
+    const kept = useDesk.getState().chain.STNEAR ?? 0;
+    if (kept > 0) book.STNEAR = Math.max(book.STNEAR ?? 0, kept);
+  } else if (staked > 0) {
+    book.STNEAR = staked;
+  }
+  publishStNearMark();
   if (book.NEAR || Object.keys(book).length) publishHoldings(key, book, unresolved.length ? "merge" : "replace");
   void accountAmount(key).then((amount) => {
     if (amount && useDesk.getState().accountId === key) useDesk.getState().setNearYocto(amount);
@@ -651,6 +733,7 @@ async function loadWallet(key: string) {
       const current = { ...useDesk.getState().chain };
       if (staked > (current.STNEAR ?? 0)) current.STNEAR = staked;
       publishHoldings(key, current);
+      publishStNearMark();
     })
     .catch(() => undefined);
   void import("@/lib/burrow").then(({ readBurrow }) =>
@@ -664,6 +747,8 @@ async function loadWallet(key: string) {
     void refMetadata().then((full) => {
       if (useDesk.getState().accountId !== key) return;
       const richer = assembleWallet(fast, inventory, full);
+      const kept = useDesk.getState().chain.STNEAR ?? 0;
+      if (kept > (richer.STNEAR ?? 0)) richer.STNEAR = kept;
       const left = missingContracts(fast, inventory, full);
       if (richer.NEAR || Object.keys(richer).length) publishHoldings(key, richer, left.length ? "merge" : "replace");
     });
@@ -903,24 +988,28 @@ function unitsOf(amount: string, decimals: number) {
 }
 
 async function findRef(tokenIn: string, tokenOut: string, units: string): Promise<RefReady | null> {
-  if (!units || units === "0") return null;
-  const response = await fetch(
-    `https://smartrouter.ref.finance/findPath?amountIn=${units}&tokenIn=${encodeURIComponent(tokenIn)}&tokenOut=${encodeURIComponent(tokenOut)}&pathDeep=3&slippage=0.05`,
-  );
-  if (!response.ok) return null;
-  const body = (await response.json()) as { result_code?: number; result_data?: { routes?: { pools?: RefHop[] }[] } };
-  const hops = (body.result_data?.routes?.[0]?.pools ?? [])
-    .map((pool) => ({
-      pool_id: Number(pool.pool_id),
-      token_in: pool.token_in || "",
-      token_out: pool.token_out || "",
-      amount_in: pool.amount_in || "",
-      min_amount_out: pool.min_amount_out || "",
-    }))
-    .filter((pool) => pool.pool_id > 0 && pool.token_in && pool.token_out && pool.min_amount_out);
-  if (body.result_code !== 0 || !hops.length || !hops[0]?.amount_in || hops[0].amount_in === "0") return null;
-  const last = hops[hops.length - 1];
-  return { tokenIn, hops, unwrap: tokenOut === "wrap.near" ? last.min_amount_out : undefined };
+  if (!units || units === "0" || !tokenIn || !tokenOut) return null;
+  const query = `amountIn=${units}&tokenIn=${encodeURIComponent(tokenIn)}&tokenOut=${encodeURIComponent(tokenOut)}&pathDeep=3&slippage=0.05`;
+  try {
+    const direct = await fetch(`https://smartrouter.ref.finance/findPath?${query}`).catch(() => null);
+    const response = direct?.ok ? direct : await fetch(`/api/ref-path?${query}`).catch(() => null);
+    if (!response?.ok) return null;
+    const body = (await response.json()) as { result_code?: number; result_data?: { routes?: { pools?: RefHop[] }[] } };
+    const hops = (body.result_data?.routes?.[0]?.pools ?? [])
+      .map((pool) => ({
+        pool_id: Number(pool.pool_id),
+        token_in: pool.token_in || "",
+        token_out: pool.token_out || "",
+        amount_in: pool.amount_in || "",
+        min_amount_out: pool.min_amount_out || "",
+      }))
+      .filter((pool) => pool.pool_id > 0 && pool.token_in && pool.token_out && pool.min_amount_out && pool.min_amount_out !== "0");
+    if (body.result_code !== 0 || !hops.length || !hops[0]?.amount_in || hops[0].amount_in === "0") return null;
+    const last = hops[hops.length - 1];
+    return { tokenIn, hops, unwrap: tokenOut === "wrap.near" ? last.min_amount_out : undefined };
+  } catch {
+    return null;
+  }
 }
 
 export function primeVaultMove(symbol: string, amount: string, direction: "in" | "out") {
@@ -1065,6 +1154,7 @@ export function warmMetaPool(accountId: string) {
     if (typeof price === "string" && /^\d+$/.test(price.replace(/"/g, ""))) stNearPriceYocto = BigInt(price.replace(/"/g, ""));
     if (typeof available === "string" && /^\d+$/.test(available)) metaLiquidity = BigInt(available);
     if (typeof discount === "number" && Number.isFinite(discount) && discount >= 0) metaDiscountBps = BigInt(Math.floor(discount));
+    publishStNearMark();
   })().finally(() => {
     metaFlight = null;
   });
@@ -1088,6 +1178,65 @@ export function nearFromStnear(stnear: number) {
   return rate > 0 ? stnear * rate : stnear;
 }
 
+export function stNearPrice() {
+  const marks = useDesk.getState().marks;
+  if ((marks.STNEAR ?? 0) > 0) return marks.STNEAR;
+  const listed = tokenBySymbol("NEAR").price;
+  const near = (marks.NEAR ?? 0) > 0 ? marks.NEAR : listed > 0 ? listed : 0;
+  const rate = stNearPriceYocto > 0n ? Number(stNearPriceYocto) / 1e24 : 0;
+  if (near > 0 && rate > 0) return near * rate;
+  const own = tokenBySymbol("STNEAR").price;
+  return own > 0 ? own : near;
+}
+
+function publishStNearMark() {
+  const price = stNearPrice();
+  if (!(price > 0)) return;
+  const token = TOKENS.find((item) => item.symbol === "STNEAR");
+  if (token) token.price = price;
+  const marks = useDesk.getState().marks;
+  if (marks.STNEAR === price) return;
+  useDesk.setState({ marks: { ...marks, STNEAR: price } });
+}
+
+async function readStNearAmount(accountId: string): Promise<number | null> {
+  const [ft, info, priceRaw] = await Promise.all([
+    ftBalance(accountId, "meta-pool.near"),
+    metaView("get_account_info", { account_id: accountId }).catch(() => null),
+    metaView("get_st_near_price", {}).catch(() => null),
+  ]);
+  const priceText = typeof priceRaw === "string" ? priceRaw.replace(/"/g, "") : "";
+  if (/^\d+$/.test(priceText)) stNearPriceYocto = BigInt(priceText);
+  if (ft == null && info == null) return null;
+  const fromFt = ft && /^\d+$/.test(ft) ? Number(ft) / 1e24 : 0;
+  const raw = (info as { st_near?: string } | null)?.st_near;
+  const fromInfo = raw && /^\d+$/.test(raw) ? Number(raw) / 1e24 : 0;
+  const amount = Math.max(fromFt, fromInfo);
+  if (fromInfo > 0) metaYocto = BigInt(raw as string);
+  return amount;
+}
+
+async function stakeSnapshot(accountId: string) {
+  const [info, priceRaw, state, ft] = await Promise.all([
+    metaView("get_account_info", { account_id: accountId }).catch(() => null),
+    metaView("get_st_near_price", {}).catch(() => null),
+    metaView("get_contract_state", {}).catch(() => null),
+    ftBalance(accountId, "meta-pool.near"),
+  ]);
+  const raw = (info as { st_near?: string } | null)?.st_near;
+  const fromInfo = raw && /^\d+$/.test(raw) ? BigInt(raw) : 0n;
+  const fromFt = ft && /^\d+$/.test(ft) ? BigInt(ft) : 0n;
+  const priceText = typeof priceRaw === "string" ? priceRaw.replace(/"/g, "") : "";
+  const price = /^\d+$/.test(priceText) ? BigInt(priceText) : stNearPriceYocto;
+  const available = (state as { total_available?: string } | null)?.total_available;
+  const liquidity = available && /^\d+$/.test(available) ? BigInt(available) : metaLiquidity;
+  if (fromInfo > 0n) metaYocto = fromInfo;
+  if (price > 0n) stNearPriceYocto = price;
+  if (liquidity > 0n) metaLiquidity = liquidity;
+  publishStNearMark();
+  return { held: fromInfo > fromFt ? fromInfo : fromFt, price, liquidity, known: price > 0n && liquidity > 0n };
+}
+
 export function applyStake(nearSpent: number, stNearMinted: number, paid?: { symbol: string; amount: number }) {
   const state = useDesk.getState();
   const chain = { ...state.chain };
@@ -1106,12 +1255,15 @@ export async function moveVault(accountId: string, symbol: string, amount: strin
   if (direction === "out") {
     const units = unitsOf(amount, 24);
     const yocto = units && /^\d+$/.test(units) ? BigInt(units) : 0n;
-    if (metaFlight) await metaFlight;
-    const expected = stNearPriceYocto > 0n ? (yocto * stNearPriceYocto) / 10n ** 24n : 0n;
-    if (yocto > 0n && metaYocto + 1n >= yocto && expected > 0n && metaLiquidity >= expected) {
+    if (yocto <= 0n) throw new Error("Enter an amount.");
+    const snap = await stakeSnapshot(accountId);
+    if (snap.held > 0n && snap.held + 1n < yocto) throw new Error("This account does not hold that much stNEAR.");
+    const expected = snap.price > 0n ? (yocto * snap.price) / 10n ** 24n : 0n;
+    const instant = !snap.known || snap.liquidity >= expected;
+    if (instant) {
       const haircut = metaDiscountBps + 50n;
       const keep = haircut >= 9_500n ? 500n : 10_000n - haircut;
-      const min = (expected * keep) / 10_000n;
+      const min = expected > 0n ? (expected * keep) / 10_000n : 1n;
       const floor = min > 0n ? min : 1n;
       await sendNearTransactions(accountId, [
         {
@@ -1119,17 +1271,23 @@ export async function moveVault(accountId: string, symbol: string, amount: strin
           actions: [call("liquid_unstake", { st_near_to_burn: units, min_expected_near: floor.toString() }, 180_000_000_000_000n, 1n)],
         },
       ]);
-      metaYocto -= yocto;
-      return;
+      if (metaYocto >= yocto) metaYocto -= yocto;
+      return "instant" as const;
     }
+    await sendNearTransactions(accountId, [
+      {
+        receiverId: "meta-pool.near",
+        actions: [call("unstake", { amount: units }, 180_000_000_000_000n, 1n)],
+      },
+    ]);
+    if (metaYocto >= yocto) metaYocto -= yocto;
+    return "delayed" as const;
   }
   const key = `${direction}:${symbol}:${amount}`;
-  const ready = await (vaultQuotes.get(key) ??
-    (direction === "in"
-      ? findRef(VAULT_IN[symbol]?.contract ?? "", "meta-pool.near", unitsOf(amount, VAULT_IN[symbol]?.decimals ?? 0))
-      : findRef("meta-pool.near", "wrap.near", unitsOf(amount, 24))));
-  if (!ready) throw new Error(direction === "out" ? "Meta Pool has no instant NEAR for that size, and Ref has no stNEAR route." : "No stNEAR pool can take that size right now.");
+  const ready = await (vaultQuotes.get(key) ?? findRef(VAULT_IN[symbol]?.contract ?? "", "meta-pool.near", unitsOf(amount, VAULT_IN[symbol]?.decimals ?? 0))).catch(() => null);
+  if (!ready) throw new Error("No stNEAR pool can take that size right now.");
   await sendRef(accountId, ready);
+  return "swap" as const;
 }
 
 export async function sendNearTransactions(accountId: string, transactions: { receiverId: string; actions: Call[] }[]) {
@@ -1137,6 +1295,15 @@ export async function sendNearTransactions(accountId: string, transactions: { re
     await boot();
     modalShow?.();
     throw new Error("This account is view-only. Choose a wallet that can sign.");
+  }
+  if (localStorage.getItem(SIGNER_STORE) === "hot-wallet") {
+    const wallet = await hotReadyWallet();
+    const sent = await wallet.signAndSendTransactions({
+      transactions: transactions.map((tx) => ({ receiverId: tx.receiverId, actions: tx.actions })),
+    });
+    const account = (await wallet.getAccounts().catch(() => []))[0]?.accountId;
+    if (account) rememberHot(account);
+    return hashOf(sent);
   }
   let wallet = hotWallet;
   if (!wallet) {

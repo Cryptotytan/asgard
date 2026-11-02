@@ -612,25 +612,19 @@ function Reserve({
         <section className="order-1 flex flex-col gap-6 rounded-2xl border border-line bg-surface p-4">
           <h3 className="text-lg font-semibold">Reserve status</h3>
           <div>
-            <p className="text-sm text-muted">Supply info</p>
-            <div className="mt-3 flex flex-wrap items-center gap-4">
-              <Ring value={supplyFill} tone="supply" />
-              <div>
-                <p className="text-xs text-muted">{supplyCap > 0 ? "Total supplied" : "Pool utilization"}</p>
-                <p className="font-mono text-lg">
-                  {compact(market.supplied)}
-                  {supplyCap > 0 ? ` of ${compact(supplyCap)}` : ""}
-                </p>
-                <p className="text-sm text-muted">
-                  {money(market.suppliedUsd)}
-                  {supplyCap > 0 ? ` of ${money(supplyCap * price)}` : ""}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted">Supply APY</p>
-                <p className="font-mono text-lg text-primary">{apyText(market.supplyApy)}</p>
-              </div>
-            </div>
+            <PoolFacts
+              title="Supply info"
+              fill={supplyFill}
+              tone="supply"
+              cells={[
+                {
+                  label: supplyCap > 0 ? "Total supplied" : "Pool utilization",
+                  value: `${compact(market.supplied)}${supplyCap > 0 ? ` of ${compact(supplyCap)}` : ""}`,
+                  sub: `${money(market.suppliedUsd)}${supplyCap > 0 ? ` of ${money(supplyCap * price)}` : ""}`,
+                },
+                { label: "Supply APY", value: apyText(market.supplyApy), sub: "", tone: "primary" },
+              ]}
+            />
           </div>
 
           <div>
@@ -651,33 +645,20 @@ function Reserve({
           </div>
 
           <div>
-            <p className="text-sm text-muted">Borrow info</p>
-            <div className="mt-3 flex flex-wrap items-center gap-4">
-              <Ring value={borrowFill} tone="borrow" />
-              <div>
-                <p className="text-xs text-muted">{borrowCap > 0 ? "Total borrowed" : "Pool utilization"}</p>
-                <p className="font-mono text-lg">
-                  {compact(market.borrowed)}
-                  {borrowCap > 0 ? ` of ${compact(borrowCap)}` : ""}
-                </p>
-                <p className="text-sm text-muted">
-                  {money(market.borrowedUsd)}
-                  {borrowCap > 0 ? ` of ${money(borrowCap * price)}` : ""}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted">Borrow APY</p>
-                <p className="font-mono text-lg">{apyText(market.borrowApy)}</p>
-                {config && !config.borrowable && <p className="text-xs text-muted">Disabled</p>}
-              </div>
-              {borrowCap > 0 && (
-                <div>
-                  <p className="text-xs text-muted">Borrow cap</p>
-                  <p className="font-mono text-lg">{compact(borrowCap)}</p>
-                  <p className="text-sm text-muted">{money(borrowCap * price)}</p>
-                </div>
-              )}
-            </div>
+            <PoolFacts
+              title="Borrow info"
+              fill={borrowFill}
+              tone="borrow"
+              cells={[
+                {
+                  label: borrowCap > 0 ? "Total borrowed" : "Pool utilization",
+                  value: `${compact(market.borrowed)}${borrowCap > 0 ? ` of ${compact(borrowCap)}` : ""}`,
+                  sub: `${money(market.borrowedUsd)}${borrowCap > 0 ? ` of ${money(borrowCap * price)}` : ""}`,
+                },
+                { label: "Borrow APY", value: apyText(market.borrowApy), sub: config && !config.borrowable ? "Disabled" : "" },
+                ...(borrowCap > 0 ? [{ label: "Borrow cap", value: compact(borrowCap), sub: money(borrowCap * price) }] : []),
+              ]}
+            />
           </div>
 
           <div>
@@ -725,6 +706,36 @@ function RateChart({ points, current, optimal }: { points: RatePoint[]; current:
           <Area type="monotone" dataKey="borrow" stroke="var(--color-danger)" fill="var(--color-danger)" fillOpacity={0.08} dot={false} />
         </AreaChart>
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+function PoolFacts({
+  title,
+  fill,
+  tone,
+  cells,
+}: {
+  title: string;
+  fill: number;
+  tone: "supply" | "borrow";
+  cells: { label: string; value: string; sub?: string; tone?: "primary" }[];
+}) {
+  return (
+    <div>
+      <p className="text-sm text-muted">{title}</p>
+      <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-start">
+        <Ring value={fill} tone={tone} />
+        <div className={`grid flex-1 grid-cols-2 gap-x-5 gap-y-3 ${cells.length > 2 ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
+          {cells.map((cell) => (
+            <div key={cell.label} className="min-w-0">
+              <p className="text-xs leading-4 text-muted">{cell.label}</p>
+              <p className={cn("mt-1 font-mono text-base leading-6 tabular-nums sm:text-lg", cell.tone === "primary" && "text-primary")}>{cell.value}</p>
+              <p className="mt-0.5 h-5 truncate text-sm leading-5 text-muted">{cell.sub || "\u00a0"}</p>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
