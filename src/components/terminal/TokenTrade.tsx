@@ -953,9 +953,9 @@ function Ticket({
     }
     const desk = useDesk.getState();
     if (viewMode === "perp") {
-      if (!desk.connected) {
+      if (!desk.connected || !desk.accountId) {
         desk.connect();
-        onFlash("Connect a wallet. Perps settle on Hyperliquid.");
+        onFlash("Connect a NEAR wallet. Perps use that account's USDT.");
         return;
       }
       const limit = perpType === "limit" ? Number(limitPrice) || token.price : undefined;
@@ -964,51 +964,27 @@ function Ticket({
         onFlash("This market has no price yet.");
         return;
       }
-      onFlash("Confirm the order in your EVM wallet. It settles on Hyperliquid.");
-      void import("@/lib/hyperliquid")
-        .then(async (mod) => {
-          const filled = await mod.placeHyperliquid({
-            symbol: token.symbol,
-            side: perpSide,
-            notional: qty,
-            mark,
-            leverage: lev,
-            limit,
-            reduceOnly,
-          });
-          if (reduceOnly) {
-            onFlash("Reduce sent to Hyperliquid.");
-            return;
-          }
-          if (filled.resting) {
-            desk.placeOrder({
-              symbol: token.symbol,
-              kind: "perp",
-              side: perpSide,
-              amount: qty,
-              limit: filled.price,
-              pay: "USDT",
-              receive: token.symbol,
-              base: token.symbol,
-              leverage: lev,
-              external: true,
-              hlOid: filled.oid,
-              hlAsset: filled.asset,
-            });
-            onFlash("Limit is resting on Hyperliquid.");
-            onPlaced();
-            return;
-          }
-          const opened = desk.openPerp(`${token.symbol}-PERP`, token.symbol, perpSide, qty, lev, {
-            external: true,
-            entry: filled.price,
-            size: filled.size,
-            tp: Number(tp) || undefined,
-            sl: Number(sl) || undefined,
-          });
-          onFlash(opened ? `${perpSide === "long" ? "Long" : "Short"} filled on Hyperliquid.` : "Hyperliquid filled, but the position could not be tracked.");
-        })
-        .catch((error: unknown) => onFlash(error instanceof Error ? error.message : "Hyperliquid rejected the order. Nothing was opened."));
+      const opened = desk.openPerp(`${token.symbol}-PERP`, token.symbol, perpSide, qty, lev, {
+        tp: Number(tp) || undefined,
+        sl: Number(sl) || undefined,
+        reduceOnly,
+        limit,
+      });
+      if (!opened) {
+        onFlash(reduceOnly ? "Nothing to reduce on this NEAR account." : "Not enough USDT in this NEAR account.");
+        return;
+      }
+      const resting = Boolean(limit) && !(perpSide === "long" ? mark < (limit as number) : mark > (limit as number));
+      if (resting) {
+        onFlash(`Limit ${perpSide} stays in Open orders. Margin is this NEAR account's USDT.`);
+        onPlaced();
+        return;
+      }
+      onFlash(
+        reduceOnly
+          ? `Reduced on ${desk.accountId}.`
+          : `${perpSide === "long" ? "Long" : "Short"} ${token.symbol}/USDT ${lev}x opened. Margin is this NEAR account's USDT.`,
+      );
       return;
     }
     if (!desk.connected) {

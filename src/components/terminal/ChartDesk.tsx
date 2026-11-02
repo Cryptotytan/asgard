@@ -300,43 +300,22 @@ function PerpTicket({ token, mark }: { token: ReturnType<typeof tokenBySymbol>; 
   const notion = Number(amount) || 0;
   const margin = notion / leverage;
 
-  async function trade() {
+  function trade() {
     if (!connected) {
       connect();
-      setNote("Connect a wallet. Perps settle on Hyperliquid.");
+      setNote("Connect a NEAR wallet to trade.");
       return;
     }
     if (notion <= 0) {
       setNote("Enter a size.");
       return;
     }
-    setNote("Confirm the order in your EVM wallet. It settles on Hyperliquid.");
-    try {
-      const { placeHyperliquid } = await import("@/lib/hyperliquid");
-      const filled = await placeHyperliquid({ symbol: token.symbol, side, notional: notion, mark, leverage, reduceOnly: false });
-      if (filled.resting) {
-        useDesk.getState().placeOrder({
-          symbol: token.symbol,
-          kind: "perp",
-          side,
-          amount: notion,
-          limit: filled.price,
-          pay: "USDT",
-          receive: token.symbol,
-          base: token.symbol,
-          leverage,
-          external: true,
-          hlOid: filled.oid,
-          hlAsset: filled.asset,
-        });
-        setNote("Limit is resting on Hyperliquid.");
-        return;
-      }
-      const opened = openPerp(`${token.symbol}-PERP`, token.symbol, side, notion, leverage, { external: true, entry: filled.price, size: filled.size });
-      setNote(opened ? `${side} filled on Hyperliquid` : "Hyperliquid filled, but the position could not be tracked.");
-    } catch (error) {
-      setNote(error instanceof Error ? error.message : "Hyperliquid rejected the order. Nothing was opened.");
+    if (token.symbol !== "NEAR" && token.symbol !== "ETH") {
+      setNote("Perps on NEAR are listed for NEAR and ETH.");
+      return;
     }
+    const ok = openPerp(`${token.symbol}-PERP`, token.symbol, side, notion, leverage);
+    setNote(ok ? `${side} opened against this NEAR account's USDT.` : "Not enough USDT in this NEAR account.");
   }
 
   return (
@@ -353,7 +332,7 @@ function PerpTicket({ token, mark }: { token: ReturnType<typeof tokenBySymbol>; 
       unit="USD"
       presets={[25, 50, 100, 250]}
       onPreset={(usdAmt) => setAmount(String(usdAmt))}
-      onPercent={(pct) => setAmount(String(Math.floor((balances.USDC ?? 0) * leverage * pct)))}
+      onPercent={(pct) => setAmount(String(Math.floor((balances.USDT ?? 0) * leverage * pct)))}
       footer={
         <>
           <label className="mt-3 block text-xs text-muted">
@@ -370,8 +349,8 @@ function PerpTicket({ token, mark }: { token: ReturnType<typeof tokenBySymbol>; 
               <dd>{usd(side === "long" ? mark * (1 - 1 / leverage + 0.04) : mark * (1 + 1 / leverage - 0.04))}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-muted">USDC free</dt>
-              <dd>{usd(balances.USDC ?? 0)}</dd>
+              <dt className="text-muted">USDT free</dt>
+              <dd>{usd(balances.USDT ?? 0)}</dd>
             </div>
           </dl>
           <button type="button" onClick={trade} className="mt-3 h-12 w-full rounded-xl bg-primary font-semibold text-primary-fg">
