@@ -369,6 +369,14 @@ function Empty({ title, body }: { title: string; body: string }) {
 function holdingPrice(symbol: string, token: Token, marks: Record<string, number>) {
   const base = symbol.split(".")[0]?.toUpperCase() ?? "";
   if (["USDT", "USDC", "DAI", "FRAX", "USN"].includes(base)) return 1;
+  if (base === "STNEAR") {
+    const st = stNearPrice();
+    if (st > 0) return st;
+  }
+  if (base === "WNEAR") {
+    const near = marks.NEAR || TOKENS.find((item) => item.symbol === "NEAR")?.price || 0;
+    if (near > 0) return near;
+  }
   const mark = marks[symbol] ?? marks[base];
   if (mark > 0) return mark;
   return token.price > 0 ? token.price : 0;

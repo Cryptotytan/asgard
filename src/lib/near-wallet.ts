@@ -645,11 +645,8 @@ function assembleWallet(fast: FastAccount | null, inventory: InventoryAccount | 
   for (const row of fast?.tokens ?? []) {
     const contract = (row.contract_id ?? "").toLowerCase();
     const raw = row.balance ?? "";
-    if (!contract || contract === "wrap.near" || !/^\d+$/.test(raw)) continue;
-    if (raw === "0") {
-      seen.add(contract);
-      continue;
-    }
+    if (!contract || !/^\d+$/.test(raw)) continue;
+    if (raw === "0") continue;
     const known = metaFor(contract, meta);
     const decimals = known?.decimals ?? 0;
     if (decimals <= 0) continue;
@@ -659,7 +656,7 @@ function assembleWallet(fast: FastAccount | null, inventory: InventoryAccount | 
   }
   for (const row of inventory?.inventory?.fts ?? []) {
     const contract = (row.contract ?? "").toLowerCase();
-    if (!contract || contract === "wrap.near" || seen.has(contract)) continue;
+    if (!contract || seen.has(contract)) continue;
     const decimals = row.ft_meta?.decimals || metaFor(contract, meta)?.decimals || 0;
     const amount = human(row.amount ?? "0", decimals);
     if (amount > 0) addBalance(book, contract, row.ft_meta?.symbol || metaFor(contract, meta)?.symbol || "", amount);
@@ -710,7 +707,7 @@ async function loadWallet(key: string) {
   let book = assembleWallet(fast, inventory, meta);
   if (book.NEAR || Object.keys(book).length) publishHoldings(key, book, "merge");
   if (missing.length) {
-    await Promise.all(missing.slice(0, 16).map((contract) => readFtMeta(contract)));
+    await readAllMeta(missing);
     for (const [id, row] of localMeta) meta.set(id, row);
     book = assembleWallet(fast, inventory, meta);
   }
@@ -723,7 +720,9 @@ async function loadWallet(key: string) {
     book.STNEAR = staked;
   }
   publishStNearMark();
-  if (book.NEAR || Object.keys(book).length) publishHoldings(key, book, unresolved.length ? "merge" : "replace");
+  await applyWalletPrices(book);
+  const complete = unresolved.length === 0 && Boolean(fast || inventory);
+  if (book.NEAR || Object.keys(book).length) publishHoldings(key, book, complete ? "replace" : "merge");
   void accountAmount(key).then((amount) => {
     if (amount && useDesk.getState().accountId === key) useDesk.getState().setNearYocto(amount);
   });
@@ -744,12 +743,13 @@ async function loadWallet(key: string) {
       .catch(() => undefined),
   );
   if (!refMeta) {
-    void refMetadata().then((full) => {
+    void refMetadata().then(async (full) => {
       if (useDesk.getState().accountId !== key) return;
       const richer = assembleWallet(fast, inventory, full);
       const kept = useDesk.getState().chain.STNEAR ?? 0;
       if (kept > (richer.STNEAR ?? 0)) richer.STNEAR = kept;
       const left = missingContracts(fast, inventory, full);
+      await applyWalletPrices(richer);
       if (richer.NEAR || Object.keys(richer).length) publishHoldings(key, richer, left.length ? "merge" : "replace");
     });
   }
@@ -760,6 +760,66 @@ if (typeof window !== "undefined") {
   const idle = window.requestIdleCallback;
   if (typeof idle === "function") idle(kick, { timeout: 2500 });
   else window.setTimeout(kick, 1200);
+}
+
+async function readAllMeta(contracts: string[]) {
+  const queue = [...new Set(contracts)];
+  const workers = Array.from({ length: Math.min(8, queue.length) }, async () => {
+    while (queue.length) {
+      const contract = queue.pop();
+      if (contract) await readFtMeta(contract);
+    }
+  });
+  await Promise.all(workers);
+}
+
+const STABLE_SYMBOLS = new Set(["USDT", "USDC", "DAI", "FRAX", "USN"]);
+let refPrices: Map<string, number> | null = null;
+let refPricesAt = 0;
+
+async function tokenPrices() {
+  if (refPrices && Date.now() - refPricesAt < 60_000) return refPrices;
+  const book = new Map<string, number>();
+  const response = await fetch("https://indexer.ref.finance/list-token-price", { signal: AbortSignal.timeout(8000) }).catch(() => null);
+  if (response?.ok) {
+    const data = (await response.json()) as Record<string, { price?: string }>;
+    for (const [id, row] of Object.entries(data)) {
+      const price = Number(row?.price);
+      if (price > 0) book.set(id.toLowerCase(), price);
+    }
+    refPrices = book;
+    refPricesAt = Date.now();
+  }
+  return refPrices ?? book;
+}
+
+async function applyWalletPrices(book: Record<string, number>) {
+  const prices = await tokenPrices().catch(() => new Map<string, number>());
+  const near = prices.get("wrap.near") || useDesk.getState().marks.NEAR || tokenBySymbol("NEAR").price || 0;
+  const marks = { ...useDesk.getState().marks };
+  let changed = false;
+  for (const [symbol, amount] of Object.entries(book)) {
+    if (!(amount > 0)) continue;
+    const base = symbol.split(".")[0]?.toUpperCase() ?? "";
+    const token = TOKENS.find((item) => item.symbol === symbol);
+    const contract = token?.address?.toLowerCase() ?? "";
+    let price = 0;
+    if (STABLE_SYMBOLS.has(base)) price = 1;
+    else if (base === "NEAR" || base === "WNEAR") price = near;
+    else if (base === "STNEAR") price = stNearPrice() || (near > 0 ? near : 0);
+    else price = (contract && prices.get(contract)) || prices.get(symbol.toLowerCase()) || (token && token.price > 0 ? token.price : 0);
+    if (!(price > 0)) continue;
+    if (token && !(token.price > 0)) token.price = price;
+    if (marks[symbol] !== price) {
+      marks[symbol] = price;
+      changed = true;
+    }
+  }
+  if (near > 0 && marks.NEAR !== near) {
+    marks.NEAR = near;
+    changed = true;
+  }
+  if (changed) useDesk.setState({ marks });
 }
 
 function missingContracts(fast: FastAccount | null, inventory: InventoryAccount | null, meta: Map<string, { symbol: string; decimals: number }>) {
@@ -850,6 +910,7 @@ function human(raw: string, decimals: number) {
 }
 
 function terminalSymbol(contract: string, raw: string) {
+  if (contract === "wrap.near") return "WNEAR";
   if (FT_META[contract]) return FT_META[contract].symbol;
   const known: Record<string, string> = {
     "wrap.near": "NEAR",
@@ -865,7 +926,9 @@ function terminalSymbol(contract: string, raw: string) {
   if (known[contract]) return known[contract];
   const mapped = TOKENS.find((token) => token.address?.toLowerCase() === contract);
   if (mapped) return mapped.symbol;
-  const cleaned = raw.replace(/\s/g, "");
+  const cleaned = raw.replace(/\s/g, "") || contract.slice(0, 6).toUpperCase();
+  const collision = TOKENS.some((token) => token.symbol.toLowerCase() === cleaned.toLowerCase() && token.address && token.address.toLowerCase() !== contract);
+  if (collision) return `${cleaned}.${contract.slice(0, 4)}`;
   const byName = TOKENS.find((token) => !token.address && token.symbol.toLowerCase() === cleaned.toLowerCase());
   return byName?.symbol ?? cleaned;
 }

@@ -312,16 +312,80 @@ function evmFast(address: string) {
 }
 
 async function evmRest(address: string, book: Record<string, number>) {
-  const extra = await readEvm(
-    address,
-    CHAINS_META.filter((chain) => chain.kind === "evm" && chain.rpc),
-    false,
-  );
+  const [extra, explored] = await Promise.all([
+    readEvm(
+      address,
+      CHAINS_META.filter((chain) => chain.kind === "evm" && chain.rpc),
+      false,
+    ),
+    readExplorers(address),
+  ]);
   for (const [symbol, amount] of Object.entries(extra)) {
-    if (amount > 0) book[symbol] = (book[symbol] ?? 0) + amount;
+    if (amount > 0) book[symbol] = Math.max(book[symbol] ?? 0, amount);
   }
+  const totals = new Map<string, number>();
+  for (const row of explored) {
+    if (!(row.amount > 0)) continue;
+    totals.set(row.symbol, (totals.get(row.symbol) ?? 0) + row.amount);
+    const token = TOKENS.find((item) => item.symbol === row.symbol && item.chain === row.chain) ?? ensureToken({ symbol: row.symbol, name: row.name, price: row.price, chain: row.chain, address: row.address, icon: row.icon });
+    token.listed = true;
+    if (row.decimals) token.decimals = row.decimals;
+    if (row.price > 0 && !(token.price > 0)) token.price = row.price;
+  }
+  for (const [symbol, amount] of totals) book[symbol] = Math.max(book[symbol] ?? 0, amount);
   return book;
 }
+
+const EXPLORERS: Record<string, string> = {
+  Ethereum: "https://eth.blockscout.com",
+  Base: "https://base.blockscout.com",
+  Optimism: "https://optimism.blockscout.com",
+  Arbitrum: "https://arbitrum.blockscout.com",
+  Polygon: "https://polygon.blockscout.com",
+  Gnosis: "https://gnosis.blockscout.com",
+  Scroll: "https://scroll.blockscout.com",
+  BNB: "https://bsc.blockscout.com",
+};
+
+const KNOWN_STABLE = new Set(
+  Object.values(EVM_STABLES)
+    .flat()
+    .map((item) => item.address.toLowerCase()),
+);
+
+async function readExplorers(address: string): Promise<{ symbol: string; amount: number; price: number; chain: string; address: string; name: string; decimals: number; icon: string }[]> {
+  const rows = await Promise.all(
+    Object.entries(EXPLORERS).map(async ([chain, host]) => {
+      const response = await fetch(`${host}/api/v2/addresses/${address}/token-balances`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+      if (!response?.ok) return [];
+      const body = (await response.json().catch(() => null)) as ExplorerRow[] | null;
+      if (!Array.isArray(body)) return [];
+      return body.flatMap((row) => {
+        const token = row.token;
+        const reputation = (token?.reputation || "").toLowerCase();
+        if (reputation === "spam" || reputation === "scam") return [];
+        const decimals = Number(token?.decimals);
+        const raw = row.value ?? "0";
+        if (!token?.symbol || !(decimals >= 0) || !/^\d+$/.test(raw) || raw === "0") return [];
+        const amount = Number(raw) / 10 ** decimals;
+        if (!Number.isFinite(amount) || amount <= 0) return [];
+        const rate = Number(token.exchange_rate) || 0;
+        const address = token.address_hash || "";
+        const stable = KNOWN_STABLE.has(address.toLowerCase());
+        const price = stable ? 1 : rate;
+        if (!(price > 0) || amount * price < 0.01) return [];
+        const symbol = token.symbol.replace(/\s/g, "");
+        return [{ symbol, amount, price, chain, address, name: token.name || symbol, decimals, icon: token.icon_url || "" }];
+      });
+    }),
+  );
+  return rows.flat();
+}
+
+type ExplorerRow = {
+  value?: string;
+  token?: { address_hash?: string; decimals?: string; exchange_rate?: string; symbol?: string; name?: string; reputation?: string; icon_url?: string };
+};
 
 async function solBook(address: string) {
   const book: Record<string, number> = {};
@@ -373,11 +437,12 @@ async function solBook(address: string) {
     }
   }
   if (!rpcOk) throw new Error("Solana RPC unavailable");
-  const mints = [...unknown.keys()].slice(0, 30);
-  if (mints.length) {
-    const response = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.join(",")}`).catch(() => null);
+  const mints = [...unknown.keys()];
+  for (let index = 0; index < mints.length; index += 30) {
+    const batch = mints.slice(index, index + 30);
+    const response = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${batch.join(",")}`).catch(() => null);
     const pairs = response?.ok ? ((await response.json()) as { baseToken?: { address?: string; symbol?: string; name?: string }; priceUsd?: string; info?: { imageUrl?: string } }[]) : [];
-    for (const mint of mints) {
+    for (const mint of batch) {
       const pair = Array.isArray(pairs) ? pairs.find((item) => item.baseToken?.address === mint) : undefined;
       const symbol = pair?.baseToken?.symbol?.replace(/\s/g, "") || mint.slice(0, 4);
       const price = Number(pair?.priceUsd) || 0;
@@ -393,12 +458,19 @@ async function solBook(address: string) {
 
 async function btcBook(address: string) {
   const book: Record<string, number> = {};
-  const native = listed("btc").sort((a, b) => b.price - a.price)[0];
   const response = await fetch(`https://blockstream.info/api/address/${encodeURIComponent(address)}`);
-  if (!response.ok || !native) return book;
+  if (!response.ok) return book;
   const body = (await response.json()) as { chain_stats?: { funded_txo_sum?: number; spent_txo_sum?: number } };
   const sats = (body.chain_stats?.funded_txo_sum ?? 0) - (body.chain_stats?.spent_txo_sum ?? 0);
-  if (sats > 0) book[native.symbol] = sats / 1e8;
+  if (sats > 0) {
+    const native = listed("btc").sort((a, b) => b.price - a.price)[0];
+    const symbol = native?.symbol || "BTC";
+    if (!native) {
+      const created = ensureToken({ symbol: "BTC", name: "Bitcoin", price: 0, chain: "Bitcoin" });
+      created.listed = true;
+    }
+    book[symbol] = sats / 1e8;
+  }
   return book;
 }
 

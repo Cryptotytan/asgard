@@ -235,7 +235,13 @@ export function refreshChain(address: string) {
 
 function tokenPrice(symbol: string, contract?: string) {
   const base = symbol.split(".")[0]?.toUpperCase() ?? symbol.toUpperCase();
-  if (base === "USDT" || base === "USDC" || base === "DAI" || base === "USN") return 1;
+  if (base === "USDT" || base === "USDC" || base === "DAI" || base === "USN" || base === "FRAX") return 1;
+  const listed = contract ? ftPriceBook?.get(contract.toLowerCase()) ?? 0 : 0;
+  if (listed > 0) return listed;
+  if (base === "NEAR" || base === "WNEAR") {
+    const near = ftPriceBook?.get("wrap.near") ?? 0;
+    if (near > 0) return near;
+  }
   const byAddress = contract
     ? TOKENS.find((token) => token.chain === "NEAR" && token.address?.toLowerCase() === contract.toLowerCase() && token.price > 0)
     : undefined;
@@ -309,8 +315,9 @@ function holdingsFrom(tokens: { contract_id?: string; balance?: string }[], near
     if (!id || !/^\d+$/.test(raw) || raw === "0") continue;
     const known = meta.get(id);
     const decimals = known?.decimals ?? 0;
-    const amount = decimals > 0 ? Number(raw) / 10 ** decimals : 0;
-    if (decimals > 0 && (!Number.isFinite(amount) || amount <= 0)) continue;
+    if (!(decimals > 0)) continue;
+    const amount = Number(raw) / 10 ** decimals;
+    if (!Number.isFinite(amount) || amount <= 0) continue;
     const symbol = known?.symbol || contractLabel(id);
     const price = tokenPrice(symbol, id);
     holdings.push({ symbol, amount, usd: amount > 0 && price > 0 ? amount * price : 0, share: 0, contract: id });
@@ -390,14 +397,20 @@ async function fetchChain(account: string): Promise<ChainWallet> {
     const current = chainCache.get(account) ?? next;
     remember(account, { ...current, value: named.value, usdt: named.usdt, holdings: named.holdings });
   });
-  if (!(ftPriceBook && Date.now() - ftPriceAt < 60_000)) {
-    void loadFtPrices().then((book) => {
-      if (chainGen.get(account) !== gen || !acted.freshFills.length) return;
-      const priced = mergeActivity(acted.txns, acted.fts, [], book);
-      const current = chainCache.get(account) ?? next;
-      remember(account, { ...current, ago: priced[0]?.ago ?? current.ago, fills: priced });
+  void loadFtPrices().then((book) => {
+    if (chainGen.get(account) !== gen) return;
+    const named = holdingsFrom(tokenRows, Number.isFinite(near) ? near : 0, metaBook ?? seedMeta());
+    const fills = acted.fetched ? mergeActivity(acted.txns, acted.fts, [], book) : (chainCache.get(account) ?? next).fills;
+    const current = chainCache.get(account) ?? next;
+    remember(account, {
+      ...current,
+      value: named.holdings.length ? named.value : current.value,
+      usdt: named.holdings.length ? named.usdt : current.usdt,
+      holdings: named.holdings.length ? named.holdings : current.holdings,
+      ago: fills[0]?.ago ?? current.ago,
+      fills,
     });
-  }
+  });
   return next;
 }
 
