@@ -1,6 +1,6 @@
 import { parseUnits } from "@/lib/intents";
 import { TOKENS } from "@/lib/market";
-import { isRegisteredOn, nearFunctionCall, registrationCached, sendNearTransactions, storageDepositAmount, type NearCall } from "@/lib/near-wallet";
+import { isRegisteredOn, nearFunctionCall, sendNearTransactions, storageDepositAmount, type NearCall } from "@/lib/near-wallet";
 
 const BURROW = "contract.main.burrow.near";
 const MIN_STORAGE = 110_000_000_000_000_000_000_000n;
@@ -25,8 +25,8 @@ export async function readBurrow(accountId: string) {
 export async function supplyOnBurrow(accountId: string, token: string, amount: string, decimals: number) {
   const units = parseUnits(amount, decimals);
   if (!units) throw new Error("Enter an amount.");
-  const inner = await innerAmount(token, units);
-  const msg = JSON.stringify({ Execute: { actions: [{ IncreaseCollateral: { token_id: token, max_amount: inner } }] } });
+  const collateral = configCache?.[token.toLowerCase()]?.collateral !== false;
+  const msg = collateral ? JSON.stringify("OnlyIncreaseCollateral") : "";
   await sendToken(accountId, token, units, msg);
 }
 
@@ -34,40 +34,34 @@ export async function withdrawFromBurrow(accountId: string, token: string, amoun
   const units = parseUnits(amount, decimals);
   if (!units) throw new Error("Enter an amount.");
   const inner = await innerAmount(token, units);
-  const actions = [
+  await sendPriced(accountId, token, [
     nearCall("execute_with_pyth", {
       actions: [
-        { DecreaseCollateral: { token_id: token, amount: inner } },
+        { DecreaseCollateral: { token_id: token, max_amount: inner } },
         { Withdraw: { token_id: token, max_amount: inner } },
       ],
     }, 280_000_000_000_000n, 1n),
-  ];
-  await sendNearTransactions(accountId, [{ receiverId: BURROW, actions }]);
+  ]);
 }
 
 export async function borrowFromBurrow(accountId: string, token: string, amount: string, decimals: number) {
   const units = parseUnits(amount, decimals);
   if (!units) throw new Error("Enter an amount.");
   const inner = await innerAmount(token, units);
-  await sendNearTransactions(accountId, [
-    {
-      receiverId: BURROW,
-      actions: [nearCall("execute_with_pyth", {
-        actions: [
-          { Borrow: { token_id: token, amount: inner } },
-          { Withdraw: { token_id: token, max_amount: inner } },
-        ],
-      }, 280_000_000_000_000n, 1n)],
-    },
+  await sendPriced(accountId, token, [
+    nearCall("execute_with_pyth", {
+      actions: [
+        { Borrow: { token_id: token, amount: inner } },
+        { Withdraw: { token_id: token, max_amount: inner } },
+      ],
+    }, 280_000_000_000_000n, 1n),
   ]);
 }
 
 export async function repayOnBurrow(accountId: string, token: string, amount: string, decimals: number) {
   const units = parseUnits(amount, decimals);
   if (!units) throw new Error("Enter an amount.");
-  const inner = await innerAmount(token, units);
-  const msg = JSON.stringify({ Execute: { actions: [{ Repay: { token_id: token, max_amount: inner } }] } });
-  await sendToken(accountId, token, units, msg);
+  await sendToken(accountId, token, units, JSON.stringify("OnlyRepay"));
 }
 
 const KNOWN_EXTRA: Record<string, number> = {
@@ -77,23 +71,44 @@ const KNOWN_EXTRA: Record<string, number> = {
 
 function extraOf(token: string) {
   const id = token.toLowerCase();
-  return extraCache?.[id] ?? KNOWN_EXTRA[id] ?? 0;
+  if (extraCache && id in extraCache) return extraCache[id];
+  return KNOWN_EXTRA[id] ?? 0;
 }
 
-function innerAmount(token: string, units: string) {
-  const extra = extraOf(token);
+async function innerAmount(token: string, units: string) {
   if (!/^\d+$/.test(units)) throw new Error("Enter an amount.");
+  try {
+    await extraDecimals();
+  } catch {
+    /* Known extras still apply when the asset list is down. */
+  }
+  const extra = extraOf(token);
   if (extra <= 0) return units;
   return (BigInt(units) * 10n ** BigInt(extra)).toString();
 }
 
+async function sendPriced(accountId: string, token: string, actions: NearCall[]) {
+  const txs: { receiverId: string; actions: NearCall[] }[] = [];
+  if (!(await isRegisteredOn(token, accountId))) {
+    const tokenStorage = await storageDepositAmount(token, TOKEN_STORAGE);
+    txs.push({
+      receiverId: token,
+      actions: [nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, tokenStorage)],
+    });
+  }
+  txs.push({ receiverId: BURROW, actions });
+  await sendNearTransactions(accountId, txs);
+}
+
 async function sendToken(accountId: string, token: string, units: string, msg: string) {
   const txs: { receiverId: string; actions: NearCall[] }[] = [];
-  const [burrowStorage, tokenStorage] = await Promise.all([
+  const [burrowStorage, tokenStorage, onBurrow, onToken] = await Promise.all([
     storageDepositAmount(BURROW, MIN_STORAGE),
     storageDepositAmount(token, TOKEN_STORAGE),
+    isRegisteredOn(BURROW, accountId),
+    isRegisteredOn(token, accountId),
   ]);
-  if (!registrationCached(BURROW, accountId)) {
+  if (!onBurrow) {
     txs.push({ receiverId: BURROW, actions: [nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, burrowStorage)] });
   }
   if (token === "wrap.near") {
@@ -102,10 +117,10 @@ async function sendToken(accountId: string, token: string, units: string, msg: s
     const wrapped = BigInt(raw || "0");
     const need = BigInt(units);
     const prep: NearCall[] = [];
-    if (!registrationCached(token, accountId)) prep.push(nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, tokenStorage));
+    if (!onToken) prep.push(nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, tokenStorage));
     if (wrapped < need) prep.push(nearCall("near_deposit", {}, 30_000_000_000_000n, need - wrapped));
     if (prep.length) txs.push({ receiverId: token, actions: prep });
-  } else if (!registrationCached(token, accountId)) {
+  } else if (!onToken) {
     txs.push({ receiverId: token, actions: [nearCall("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, tokenStorage)] });
   }
   txs.push({

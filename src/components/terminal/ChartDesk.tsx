@@ -249,7 +249,11 @@ function SpotTicket({ token }: { token: ReturnType<typeof tokenBySymbol> }) {
       }
       setNote(`Confirm in your wallet. ${best.name} has the route.`);
       const result = await best.execute();
-      setNote(`${side === "buy" ? "Bought" : "Sold"} ${fmt(result.amountOutHuman)} ${receive} via ${best.name}`);
+      setNote(
+        result.status === "SUBMITTED"
+          ? `Sent. ${best.name} has not finished delivering ${receive} yet.`
+          : `${side === "buy" ? "Bought" : "Sold"} ${fmt(result.amountOutHuman)} ${receive} via ${best.name}`,
+      );
     } catch (error) {
       setNote(error instanceof Error ? error.message : "The route rejected the trade. Nothing was sent.");
     }

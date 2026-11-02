@@ -221,7 +221,11 @@ export function SwapDesk({ focus }: { focus?: string }) {
       useDesk.getState().log(`Swap via ${best.name}`, `${tokenLabel(sell)} → ${tokenLabel(buy)}`, amountN * sell.price);
       await Promise.race([refreshBalances(touched), new Promise((resolve) => window.setTimeout(resolve, 4000))]);
       setAmount("");
-      setNote(`Settled ${fmt(result.amountOutHuman)} ${tokenLabel(buy)} on ${buy.chain}.`);
+      setNote(
+        result.status === "SUBMITTED"
+          ? `Sent. ${best.name} has not finished delivering ${tokenLabel(buy)} yet.`
+          : `Settled ${fmt(result.amountOutHuman)} ${tokenLabel(buy)} on ${buy.chain}.`,
+      );
     } catch (error) {
       setNote(error instanceof Error ? error.message : "Swap failed. Nothing else was sent.");
     } finally {

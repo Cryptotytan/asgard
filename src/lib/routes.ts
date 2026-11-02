@@ -594,7 +594,7 @@ async function collectRoutes(input: {
   const usd = Number(input.amount) * (input.from.price || 0);
   const nearPair = input.from.chain === "NEAR" && input.to.chain === "NEAR";
   const [intents, evm, lifi, jupiter, debridge, intear, ref] = await Promise.all([
-    usd >= 1000 ? intentsJob() : Promise.resolve({ route: null as LiveRoute | null, error: "" }),
+    cross || usd >= 1000 ? intentsJob() : Promise.resolve({ route: null as LiveRoute | null, error: "" }),
     !cross && sameKind === "evm"
       ? timeout(evmDexRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient, slip), 8000).catch(() => [] as LiveRoute[])
       : Promise.resolve([] as LiveRoute[]),
