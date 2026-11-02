@@ -41,12 +41,37 @@ export function GeckoChart({ token, frame }: { token: Token; frame: string }) {
   if (src) {
     return (
       <div className="relative h-[304px] overflow-hidden bg-black sm:h-[404px] lg:h-[524px]">
+        <svg className="pointer-events-none absolute h-0 w-0" aria-hidden>
+          <filter id="gt-axis-white" colorInterpolationFilters="sRGB" x="0" y="0" width="100%" height="100%">
+            <feColorMatrix
+              in="SourceGraphic"
+              type="matrix"
+              result="luma"
+              values="0.2126 0.7152 0.0722 0 0  0.2126 0.7152 0.0722 0 0  0.2126 0.7152 0.0722 0 0  0 0 0 1 0"
+            />
+            <feComposite in="SourceGraphic" in2="luma" operator="difference" result="diff" />
+            <feColorMatrix in="diff" type="matrix" result="sat" values="1 1 1 0 0  1 1 1 0 0  1 1 1 0 0  0 0 0 1 0" />
+            <feComponentTransfer in="sat" result="gray">
+              <feFuncR type="linear" slope="-3" intercept="1" />
+              <feFuncG type="linear" slope="-3" intercept="1" />
+              <feFuncB type="linear" slope="-3" intercept="1" />
+            </feComponentTransfer>
+            <feComponentTransfer in="luma" result="mid">
+              <feFuncR type="gamma" amplitude="80" exponent="2" offset="0" />
+              <feFuncG type="gamma" amplitude="80" exponent="2" offset="0" />
+              <feFuncB type="gamma" amplitude="80" exponent="2" offset="0" />
+            </feComponentTransfer>
+            <feComposite in="gray" in2="mid" operator="arithmetic" k1="1" k2="0" k3="0" k4="0" result="mask" />
+            <feColorMatrix in="mask" type="matrix" result="maskA" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0.333 0.333 0.333 0 0" />
+            <feComposite in="maskA" in2="SourceGraphic" operator="over" />
+          </filter>
+        </svg>
         <iframe
           key={src}
           title={`${token.symbol} price`}
           src={src}
           className="absolute left-0 top-0 w-full border-0 bg-black"
-          style={{ height: "calc(100% + 41px)" }}
+          style={{ height: "calc(100% + 41px)", filter: "url(#gt-axis-white)" }}
           loading="eager"
         />
       </div>
