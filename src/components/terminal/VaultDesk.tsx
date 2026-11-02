@@ -12,7 +12,7 @@ const SHOWN = ["STNEAR", "USDC", "NEAR", "ETH"];
 function cleanVaultError(error: unknown) {
   const message = error instanceof Error ? error.message : "Vault move failed.";
   if (/rate limit|fastnear|-429|jsonrpc/i.test(message)) return "NEAR RPC is busy. Retry in a moment.";
-  if (message.trim().startsWith("{")) return "The NEAR network rejected that vault move. Retry in a moment.";
+  if (/minimum deposit amount is 1000000000000000000000000|minimum stake is 1 NEAR/i.test(message)) return "Meta Pool's minimum stake is 1 NEAR.";
   return message;
 }
 
@@ -56,6 +56,10 @@ export function VaultDesk() {
     const wallet = useDesk.getState().accountId;
     if (!wallet) return;
     if (kind === "in" && symbol === "NEAR") {
+      if (n + 1e-8 < 1) {
+        setNote("Meta Pool's minimum stake is 1 NEAR.");
+        return;
+      }
       const liquid = nearYocto ? Number(nearYocto) / 1e24 : 0;
       if (liquid + 1e-8 < n + 0.05) {
         setNote(`This account has ${qty(liquid)} liquid NEAR. Leave about 0.05 NEAR for gas.`);
@@ -220,6 +224,7 @@ export function VaultDesk() {
               value={amount}
               onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))}
               aria-label="Vault amount"
+              placeholder={symbol === "NEAR" ? "Min 1 NEAR" : "Amount"}
               className="mt-1.5 h-8 w-full rounded-xl border border-line bg-bg px-3 font-mono text-sm outline-none sm:mt-3 sm:h-10 sm:rounded-2xl"
             />
             <div className="mt-1.5 grid grid-cols-2 gap-1.5">

@@ -691,6 +691,7 @@ export async function sendIntentDeposit(input: {
 export async function stakeNear(accountId: string, yocto: string) {
   if (localStorage.getItem(READONLY_STORE)) throw new Error("This account is view-only. Connect a wallet to sign.");
   if (!/^\d+$/.test(yocto) || yocto === "0") throw new Error("Enter an amount.");
+  if (BigInt(yocto) < 1_000_000_000_000_000_000_000_000n) throw new Error("Meta Pool's minimum stake is 1 NEAR.");
   const outcome = await sendNearTransactions(accountId, [
     {
       receiverId: "meta-pool.near",
