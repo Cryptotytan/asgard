@@ -691,7 +691,10 @@ export async function sendIntentDeposit(input: {
 export async function stakeNear(accountId: string, yocto: string) {
   if (localStorage.getItem(READONLY_STORE)) throw new Error("This account is view-only. Connect a wallet to sign.");
   if (!/^\d+$/.test(yocto) || yocto === "0") throw new Error("Enter an amount.");
-  if (BigInt(yocto) < 1_000_000_000_000_000_000_000_000n) throw new Error("Meta Pool's minimum stake is 1 NEAR.");
+  if (BigInt(yocto) < 1_000_000_000_000_000_000_000_000n) {
+    await stakeOnMarket(accountId, yocto);
+    return null;
+  }
   const outcome = await sendNearTransactions(accountId, [
     {
       receiverId: "meta-pool.near",
@@ -699,6 +702,67 @@ export async function stakeNear(accountId: string, yocto: string) {
     },
   ]);
   return hashOf(outcome);
+}
+
+const wrappedCache = new Map<string, Promise<string>>();
+
+function wrappedBalance(accountId: string) {
+  const hit = wrappedCache.get(accountId);
+  if (hit) return hit;
+  const job = ftBalance(accountId, "wrap.near").then((value) => value || "0");
+  wrappedCache.set(accountId, job);
+  void job.finally(() => {
+    window.setTimeout(() => wrappedCache.delete(accountId), 20_000);
+  });
+  return job;
+}
+
+export function warmSmallStake(accountId: string) {
+  void isRegistered("wrap.near", accountId);
+  void isRegistered("v2.ref-finance.near", accountId);
+  void isRegistered("meta-pool.near", accountId);
+  void wrappedBalance(accountId);
+}
+
+async function stakeOnMarket(accountId: string, yocto: string) {
+  const ready = await (vaultQuotes.get(`market:${yocto}`) ?? findRef("wrap.near", "meta-pool.near", yocto));
+  if (!ready) throw new Error("No stNEAR market can take that size right now.");
+  const spend = BigInt(ready.hops[0]?.amount_in || yocto);
+  const [onWrap, onRef, onSt, wrappedRaw] = await Promise.all([
+    isRegistered("wrap.near", accountId),
+    isRegistered("v2.ref-finance.near", accountId),
+    isRegistered("meta-pool.near", accountId),
+    wrappedBalance(accountId),
+  ]);
+  const txs: { receiverId: string; actions: Call[] }[] = [];
+  if (!onRef) {
+    txs.push({
+      receiverId: "v2.ref-finance.near",
+      actions: [call("storage_deposit", { account_id: accountId, registration_only: true }, 30_000_000_000_000n, 10_000_000_000_000_000_000n)],
+    });
+  }
+  if (!onSt) txs.push({ receiverId: "meta-pool.near", actions: [register(accountId)] });
+  const wrapCalls: Call[] = [];
+  if (!onWrap) wrapCalls.push(register(accountId));
+  const wrapped = BigInt(wrappedRaw || "0");
+  if (wrapped < spend) wrapCalls.push(call("near_deposit", {}, 20_000_000_000_000n, spend - wrapped));
+  if (wrapCalls.length) txs.push({ receiverId: "wrap.near", actions: wrapCalls });
+  txs.push({
+    receiverId: "wrap.near",
+    actions: [
+      call(
+        "ft_transfer_call",
+        {
+          receiver_id: "v2.ref-finance.near",
+          amount: ready.hops[0]?.amount_in || yocto,
+          msg: JSON.stringify({ force: 0, actions: ready.hops }),
+        },
+        280_000_000_000_000n,
+        1n,
+      ),
+    ],
+  });
+  await sendNearTransactions(accountId, txs);
 }
 
 const VAULT_IN: Record<string, { contract: string; decimals: number }> = {
@@ -742,6 +806,18 @@ async function findRef(tokenIn: string, tokenOut: string, units: string): Promis
 export function primeVaultMove(symbol: string, amount: string, direction: "in" | "out") {
   const key = `${direction}:${symbol}:${amount}`;
   if (vaultQuotes.has(key)) return;
+  if (direction === "in" && symbol === "NEAR") {
+    const units = unitsOf(amount, 24);
+    const yocto = units && /^\d+$/.test(units) ? BigInt(units) : 0n;
+    if (yocto > 0n && yocto < 1_000_000_000_000_000_000_000_000n && !vaultQuotes.has(`market:${units}`)) {
+      const job = findRef("wrap.near", "meta-pool.near", units);
+      vaultQuotes.set(`market:${units}`, job);
+      void job.finally(() => {
+        window.setTimeout(() => vaultQuotes.delete(`market:${units}`), 20_000);
+      });
+    }
+    return;
+  }
   const job =
     direction === "in"
       ? (() => {

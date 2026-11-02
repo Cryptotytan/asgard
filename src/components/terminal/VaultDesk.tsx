@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { fmt, qty, tokenBySymbol, usd } from "@/lib/market";
 import { parseUnits } from "@/lib/intents";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
-import { applyStake, armWalletPopup, cancelNearSigning, moveVault, nearFromStnear, primeVaultMove, stakeMintEstimate, stakeNear, syncWallet, warmMetaPool, warmNearSigner } from "@/lib/near-wallet";
+import { applyStake, armWalletPopup, cancelNearSigning, moveVault, nearFromStnear, primeVaultMove, stakeMintEstimate, stakeNear, syncWallet, warmMetaPool, warmNearSigner, warmSmallStake } from "@/lib/near-wallet";
 import { useDesk } from "@/lib/store";
 import { ConfirmGate } from "@/components/terminal/ConfirmGate";
 
@@ -43,7 +43,8 @@ export function VaultDesk() {
     const n = Number(amount) || 0;
     if (n <= 0) return;
     primeVaultMove(withdrawing ? "STNEAR" : symbol, amount, withdrawing ? "out" : "in");
-  }, [amount, symbol, withdrawing]);
+    if (!withdrawing && symbol === "NEAR" && n < 1 && accountId) warmSmallStake(accountId);
+  }, [amount, symbol, withdrawing, accountId]);
 
   async function run(kind: "in" | "out") {
     if (!connected || !accountId) {
@@ -56,10 +57,6 @@ export function VaultDesk() {
     const wallet = useDesk.getState().accountId;
     if (!wallet) return;
     if (kind === "in" && symbol === "NEAR") {
-      if (n + 1e-8 < 1) {
-        setNote("Meta Pool's minimum stake is 1 NEAR.");
-        return;
-      }
       const liquid = nearYocto ? Number(nearYocto) / 1e24 : 0;
       if (liquid + 1e-8 < n + 0.05) {
         setNote(`This account has ${qty(liquid)} liquid NEAR. Leave about 0.05 NEAR for gas.`);
@@ -224,7 +221,7 @@ export function VaultDesk() {
               value={amount}
               onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))}
               aria-label="Vault amount"
-              placeholder={symbol === "NEAR" ? "Min 1 NEAR" : "Amount"}
+              placeholder="Amount"
               className="mt-1.5 h-8 w-full rounded-xl border border-line bg-bg px-3 font-mono text-sm outline-none sm:mt-3 sm:h-10 sm:rounded-2xl"
             />
             <div className="mt-1.5 grid grid-cols-2 gap-1.5">
