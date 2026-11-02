@@ -1268,7 +1268,7 @@ export async function moveVault(accountId: string, symbol: string, amount: strin
       await sendNearTransactions(accountId, [
         {
           receiverId: "meta-pool.near",
-          actions: [call("liquid_unstake", { st_near_to_burn: units, min_expected_near: floor.toString() }, 180_000_000_000_000n, 1n)],
+          actions: [call("liquid_unstake", { st_near_to_burn: units, min_expected_near: floor.toString() }, 180_000_000_000_000n, 0n)],
         },
       ]);
       if (metaYocto >= yocto) metaYocto -= yocto;
@@ -1277,7 +1277,7 @@ export async function moveVault(accountId: string, symbol: string, amount: strin
     await sendNearTransactions(accountId, [
       {
         receiverId: "meta-pool.near",
-        actions: [call("unstake", { amount: units }, 180_000_000_000_000n, 1n)],
+        actions: [call("unstake", { amount: units }, 180_000_000_000_000n, 0n)],
       },
     ]);
     if (metaYocto >= yocto) metaYocto -= yocto;

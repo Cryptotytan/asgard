@@ -58,6 +58,7 @@ export const LOGO_BOOK: Record<string, string> = {
   "KNC": "/logos/knc.svg",
   "LAUSDC": "/logos/lausdc.svg",
   "LINK": "/logos/link.svg",
+  "LINEAR": "/logos/linear.svg",
   "LIT": "/logos/lit.svg",
   "LOUD": "/logos/loud.svg",
   "LTC": "/logos/ltc.svg",
