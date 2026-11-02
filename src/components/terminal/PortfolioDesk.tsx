@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { TokenIcon, ChainBadge } from "@/components/terminal/TokenIcon";
 import { PnlCard } from "@/components/terminal/PnlCard";
 import { linkedWallets, useForeign, WALLET_MARK, type LinkedWallet } from "@/lib/foreign-wallet";
+import { chainByLabel } from "@/lib/chains";
 import { ensureToken, money, qty, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
 import { useHoldings } from "@/lib/wallet-holdings";
@@ -57,20 +58,26 @@ export function PortfolioDesk() {
 
   const holdings = useMemo(() => {
     const rows: { token: Token; amount: number; wallet: string; price: number }[] = [];
-    const take = (book: Record<string, number>, label: string) => {
+    const take = (book: Record<string, number>, detail: { chain: string; symbol: string; amount: number }[], label: string) => {
+      const lines = detail.filter((line) => line.amount > 1e-8);
+      const source = lines.length ? lines : Object.entries(book).filter(([, amount]) => amount > 1e-8).map(([symbol, amount]) => ({ chain: "", symbol, amount }));
+      for (const line of source) {
+        const token = tokenForBalance(line.symbol, line.chain, label);
+        rows.push({ token, amount: line.amount, wallet: label, price: holdingPrice(line.symbol, token, marks) });
+      }
+      if (!lines.length) return;
       for (const [symbol, amount] of Object.entries(book)) {
-        if (amount <= 1e-8) continue;
-        const token = TOKENS.find((item) => item.symbol === symbol) ?? ensureToken({ symbol, name: symbol, price: marks[symbol] || 0, chain: label === "NEAR" ? "NEAR" : label });
-        const price = holdingPrice(symbol, token, marks);
-        rows.push({ token, amount, wallet: label, price });
+        if (amount <= 1e-8 || lines.some((line) => line.symbol === symbol)) continue;
+        const token = tokenForBalance(symbol, "", label);
+        rows.push({ token, amount, wallet: label, price: holdingPrice(symbol, token, marks) });
       }
     };
-    take(nearHold.book, "NEAR");
-    take(evmHold.book, "EVM");
-    take(solHold.book, "Solana");
-    take(btcHold.book, "Bitcoin");
+    take(nearHold.book, nearHold.rows, "NEAR");
+    take(evmHold.book, evmHold.rows, "EVM");
+    take(solHold.book, solHold.rows, "Solana");
+    take(btcHold.book, btcHold.rows, "Bitcoin");
     return rows.sort((a, b) => b.amount * b.price - a.amount * a.price);
-  }, [nearHold.book, evmHold.book, solHold.book, btcHold.book, marks]);
+  }, [nearHold.book, nearHold.rows, evmHold.book, evmHold.rows, solHold.book, solHold.rows, btcHold.book, btcHold.rows, marks]);
   const walletValue = holdings.reduce((sum, row) => sum + row.amount * row.price, 0);
   const staked = Math.max(chain.STNEAR ?? 0, chain.stNEAR ?? 0);
   const stPrice = stNearPrice() || marks.NEAR || TOKENS.find((token) => token.symbol === "NEAR")?.price || 0;
@@ -265,20 +272,19 @@ function Holdings({
   empty,
   loading,
 }: {
-  rows: { token: Token; amount: number; wallet: string }[];
+  rows: { token: Token; amount: number; wallet: string; price: number }[];
   wallet: number;
   empty: string;
   loading?: boolean;
 }) {
   if (rows.length === 0) return <Empty title={loading ? "Reading wallets…" : "Nothing here yet"} body={loading ? "Balances are loaded from each connected chain." : empty} />;
-  const marks = useDesk.getState().marks;
   return (
     <ul className="divide-y divide-line px-3 sm:px-4">
       {rows.map((row) => {
-        const value = row.amount * (marks[row.token.symbol] ?? row.token.price);
-        const share = wallet > 0 ? Math.min(100, (value / wallet) * 100) : 0;
+        const value = Number.isFinite(row.price) ? row.amount * row.price : 0;
+        const share = wallet > 0 && value > 0 ? Math.min(100, (value / wallet) * 100) : 0;
         return (
-          <li key={`${row.wallet}-${row.token.symbol}`} className="flex items-center gap-3 py-3">
+          <li key={`${row.wallet}-${row.token.chain}-${row.token.symbol}`} className="flex items-center gap-3 py-3">
             <TokenIcon token={row.token} className="size-9" />
             <span className="min-w-0 flex-1">
               <span className="flex items-baseline justify-between gap-2">
@@ -366,6 +372,17 @@ function Empty({ title, body }: { title: string; body: string }) {
   );
 }
 
+function tokenForBalance(symbol: string, chain: string, wallet: string) {
+  if (chain) {
+    const exact = TOKENS.find((token) => token.symbol === symbol && token.chain === chain);
+    if (exact) return exact;
+  }
+  const kind = wallet === "NEAR" ? "near" : wallet === "EVM" ? "evm" : wallet === "Solana" ? "sol" : "btc";
+  const same = TOKENS.filter((token) => token.symbol === symbol && chainByLabel(token.chain)?.kind === kind);
+  if (same.length) return same.sort((a, b) => (b.price || 0) - (a.price || 0))[0];
+  return ensureToken({ symbol, name: symbol, price: 0, chain: chain || (wallet === "NEAR" ? "NEAR" : wallet) });
+}
+
 function holdingPrice(symbol: string, token: Token, marks: Record<string, number>) {
   const base = symbol.split(".")[0]?.toUpperCase() ?? "";
   if (["USDT", "USDC", "DAI", "FRAX", "USN"].includes(base)) return 1;
@@ -373,13 +390,12 @@ function holdingPrice(symbol: string, token: Token, marks: Record<string, number
     const st = stNearPrice();
     if (st > 0) return st;
   }
-  if (base === "WNEAR") {
-    const near = marks.NEAR || TOKENS.find((item) => item.symbol === "NEAR")?.price || 0;
+  if (base === "WNEAR" || base === "NEAR") {
+    const near = marks.NEAR || TOKENS.find((item) => item.symbol === "NEAR" && item.price > 0)?.price || 0;
     if (near > 0) return near;
   }
-  const mark = marks[symbol] ?? marks[base];
-  if (mark > 0) return mark;
-  return token.price > 0 ? token.price : 0;
+  const priced = [marks[symbol], marks[base], token.price, ...TOKENS.filter((item) => item.symbol === symbol).map((item) => item.price)].find((price) => price > 0);
+  return priced || 0;
 }
 
 function money2(n: number) {

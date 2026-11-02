@@ -5,6 +5,7 @@ import { useDesk } from "@/lib/store";
 import { foreignWallets, type LinkedWallet } from "@/lib/foreign-wallet";
 
 const cache = new Map<string, Record<string, number>>();
+const lines = new Map<string, { chain: string; symbol: string; amount: number }[]>();
 const inflight = new Map<string, Promise<Record<string, number>>>();
 
 export function holdingOf(id: "near" | "evm" | "sol" | "btc", address: string, symbol: string) {
@@ -128,6 +129,7 @@ function storeForeign(key: string, book: Record<string, number>) {
 export function useHoldings(wallet: LinkedWallet | null) {
   const chain = useDesk((state) => state.chain);
   const [book, setBook] = useState<Record<string, number>>({});
+  const [rows, setRows] = useState<{ chain: string; symbol: string; amount: number }[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -139,6 +141,7 @@ export function useHoldings(wallet: LinkedWallet | null) {
       next[symbol] = amount;
     }
     setBook(next);
+    setRows(Object.entries(next).map(([symbol, amount]) => ({ chain: "NEAR", symbol, amount })));
     setLoading(false);
   }, [wallet?.id, wallet?.address, chain]);
 
@@ -146,6 +149,7 @@ export function useHoldings(wallet: LinkedWallet | null) {
     if (!wallet || wallet.id === "near") {
       if (!wallet) {
         setBook({});
+        setRows([]);
         setLoading(false);
       }
       return;
@@ -155,12 +159,14 @@ export function useHoldings(wallet: LinkedWallet | null) {
     if (saved) {
       cache.set(key, saved);
       setBook(saved);
+      setRows(lines.get(key) ?? []);
       setLoading(false);
     } else setLoading(true);
     let cancel = false;
     void loadHoldings(wallet.id, wallet.address, true).then((next) => {
       if (cancel) return;
       setBook(next);
+      setRows(lines.get(key) ?? []);
       setLoading(false);
     });
     return () => {
@@ -174,9 +180,11 @@ export function useHoldings(wallet: LinkedWallet | null) {
     const listener = (updated: string) => {
       if (updated !== key) return;
       const next = cache.get(key);
-      if (!next) return;
-      setBook(next);
-      setLoading(false);
+      if (next) {
+        setBook(next);
+        setRows(lines.get(key) ?? []);
+        setLoading(false);
+      }
     };
     listeners.add(listener);
     return () => {
@@ -184,7 +192,7 @@ export function useHoldings(wallet: LinkedWallet | null) {
     };
   }, [wallet?.id, wallet?.address]);
 
-  return { book, loading };
+  return { book, rows, loading };
 }
 
 async function loadHoldings(id: "evm" | "sol" | "btc", address: string, fresh = false) {
@@ -197,9 +205,10 @@ async function loadHoldings(id: "evm" | "sol" | "btc", address: string, fresh = 
   if (pending) return pending;
   const job =
     id === "evm"
-      ? evmFast(address, (book) => {
+      ? evmFast(address, (book, parts) => {
           const shown = overlayForeign(key, { ...(cache.get(key) ?? {}), ...book });
           cache.set(key, shown);
+          lines.set(key, parts);
           storeForeign(key, shown);
           notifyHoldings(key);
         }).then((book) => {
@@ -317,7 +326,7 @@ async function readEvm(address: string, chains: typeof CHAINS_META, stablesOnly:
   return book;
 }
 
-function evmFast(address: string, onPart?: (book: Record<string, number>) => void) {
+function evmFast(address: string, onPart?: (book: Record<string, number>, parts: { chain: string; symbol: string; amount: number }[]) => void) {
   const chains = CHAINS_META.filter((chain) => chain.kind === "evm" && chain.rpc && (EVM_STABLES[chain.label] || NATIVE_SYMBOL[chain.label]));
   const parts = new Map<string, Record<string, number>>();
   const publish = () => {
@@ -327,7 +336,12 @@ function evmFast(address: string, onPart?: (book: Record<string, number>) => voi
         if (amount > 0) book[symbol] = (book[symbol] ?? 0) + amount;
       }
     }
-    if (Object.keys(book).length) onPart?.(book);
+    const rows = [...parts.entries()].flatMap(([chain, part]) =>
+      Object.entries(part)
+        .filter(([, amount]) => amount > 0)
+        .map(([symbol, amount]) => ({ chain, symbol, amount })),
+    );
+    if (Object.keys(book).length) onPart?.(book, rows);
     return book;
   };
   return Promise.all(
