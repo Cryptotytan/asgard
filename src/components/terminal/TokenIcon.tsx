@@ -122,14 +122,14 @@ export function TokenPicker({
     const ordered = CHAINS.filter((id) => present.has(id));
     const extra = [...present].filter((id) => !(CHAINS as readonly string[]).includes(id)).sort();
     const rows = [{ id: "All", label: "All chains", icon: "" }, ...[...ordered, ...extra].map((id) => ({ id, label: id, icon: CHAIN_ICON[id] || chainIcon(id) }))];
-    if (!walletKind) return rows;
+    if (!walletKind || !heldOnly) return rows;
     return rows.filter((item) => item.id === "All" || chainByLabel(item.id)?.kind === walletKind);
   }, [clock, walletKind]);
   const list = useMemo(
     () =>
       TOKENS.filter((token) => {
         if (heldOnly && (balances?.[token.symbol] ?? 0) <= 0) return false;
-        if (walletKind && chainByLabel(token.chain)?.kind !== walletKind) return false;
+        if (heldOnly && walletKind && chainByLabel(token.chain)?.kind !== walletKind) return false;
         if (!heldOnly && (!token.listed || !Number.isFinite(token.price) || token.price <= 0)) return false;
         if (chain !== "All" && token.chain !== chain) return false;
         if (!needle) return true;

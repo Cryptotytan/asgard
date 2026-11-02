@@ -579,7 +579,7 @@ async function collectRoutes(input: {
   const usd = Number(input.amount) * (input.from.price || 0);
   const nearPair = input.from.chain === "NEAR" && input.to.chain === "NEAR";
   const [intents, evm, lifi, jupiter, debridge, intear, ref] = await Promise.all([
-    cross || usd >= 1000 ? intentsJob() : Promise.resolve({ route: null as LiveRoute | null, error: "" }),
+    cross || input.from.chain === "NEAR" || input.to.chain === "NEAR" || usd >= 1000 ? intentsJob() : Promise.resolve({ route: null as LiveRoute | null, error: "" }),
     !cross && sameKind === "evm"
       ? timeout(evmDexRoutes(input.from, input.to, input.amount, input.refundTo, input.recipient, slip), 8000).catch(() => [] as LiveRoute[])
       : Promise.resolve([] as LiveRoute[]),
@@ -591,7 +591,11 @@ async function collectRoutes(input: {
   ]);
   const routes = [...(intents.route ? [intents.route] : []), ...evm, ...lifi, ...(jupiter ? [jupiter] : []), ...(debridge ? [debridge] : []), ...(intear ? [intear] : []), ...(ref ? [ref] : [])];
   const minimum = /1,000|minimum swap/i.test(intents.error);
-  const error = minimum ? "No venue quoted this size. NEAR Intents currently requires $1,000, and the other exchanges did not return a route." : intents.error || (cross ? "No route for this pair." : "No live route for this pair.");
+  const error = minimum
+    ? "No venue quoted this size. NEAR Intents currently requires $1,000, and the other exchanges did not return a route."
+    : cross && (input.from.chain === "NEAR" || input.to.chain === "NEAR")
+      ? intents.error || "NEAR Intents did not return a bridge for this pair."
+      : intents.error || (cross ? "No route for this pair." : "No live route for this pair.");
   return { routes, error };
 }
 

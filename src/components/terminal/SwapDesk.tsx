@@ -13,7 +13,7 @@ import { armWalletPopup } from "@/lib/near-wallet";
 function tokenForWallet(symbol: string, chain: string | null, walletId: LinkedWallet["id"] | null) {
   if (chain) {
     const exact = TOKENS.find((token) => token.symbol === symbol && token.chain === chain);
-    if (exact && (!walletId || chainByLabel(exact.chain)?.kind === walletId)) return exact;
+    if (exact) return exact;
   }
   if (walletId) {
     const match = TOKENS.find((token) => token.symbol === symbol && chainByLabel(token.chain)?.kind === walletId);
@@ -143,7 +143,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
     if (chainByLabel(next.chain)?.kind !== sellWalletId) return;
     setSellS(next.symbol);
     setSellChain(next.chain);
-  }, [sellWalletId, sellHold.book, sellS, sellChain]);
+  }, [sellWalletId]);
   useEffect(() => {
     if (!buyWalletId) return;
     const current = tokenForWallet(buyS, buyChain, buyWalletId);
@@ -156,7 +156,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
     if (chainByLabel(next.chain)?.kind !== buyWalletId) return;
     setBuyS(next.symbol);
     setBuyChain(next.chain);
-  }, [buyWalletId, buyHold.book, buyS, buyChain]);
+  }, [buyWalletId]);
 
   useEffect(() => {
     setAcked(false);
@@ -455,6 +455,8 @@ export function SwapDesk({ focus }: { focus?: string }) {
         loadingBalances={picking === "buy" ? buyHold.loading : sellHold.loading}
         onClose={() => setPicking(null)}
         onPick={(token) => {
+          const kind = chainByLabel(token.chain)?.kind;
+          const match = kind ? wallets.find((wallet) => wallet.id === kind) : undefined;
           if (picking === "sell") {
             if (token.symbol === buy.symbol && token.chain === buy.chain) {
               setBuyS(sell.symbol);
@@ -462,6 +464,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
             }
             setSellS(token.symbol);
             setSellChain(token.chain);
+            if (match && match.id !== sellWalletId) setSellWalletId(match.id);
           } else {
             if (token.symbol === sell.symbol && token.chain === sell.chain) {
               setSellS(buy.symbol);
@@ -469,6 +472,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
             }
             setBuyS(token.symbol);
             setBuyChain(token.chain);
+            if (match && match.id !== buyWalletId) setBuyWalletId(match.id);
           }
         }}
       />
