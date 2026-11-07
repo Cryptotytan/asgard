@@ -41,7 +41,7 @@ export function TokenIcon({ token, className }: { token: Pick<Token, "icon" | "s
     const base = (token.symbol.split(".")[0] ?? token.symbol).toLowerCase();
     const pack = /^[a-z0-9]{2,12}$/.test(base) ? `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/${base}.png` : "";
     const extra = logoFallback(token);
-    const list = [iconCache.get(key), remote, localFile, booked, known, extra, coin, pack].filter((src): src is string => Boolean(src && !src.startsWith("data:image/svg+xml;utf8,")));
+    const list = [booked, known, localFile, iconCache.get(key), remote, extra, coin, pack].filter((src): src is string => Boolean(src && !src.startsWith("data:image/svg+xml;utf8,")));
     return [...new Set(list)];
   }, [key, token.icon, token.symbol]);
   useEffect(() => {

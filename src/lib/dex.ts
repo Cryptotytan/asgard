@@ -34,6 +34,7 @@ const LOCAL: Record<string, string> = {
   NEAR: "/tokens/near.svg",
   WNEAR: "/tokens/near.svg",
   USDC: "/tokens/usdc.png",
+  USDT: "/tokens/usdt.png",
   ETH: "/tokens/eth.png",
   WBTC: "/tokens/wbtc.png",
   AURORA: "/tokens/aurora.jpg",
@@ -43,16 +44,17 @@ const LOCAL: Record<string, string> = {
   BRRR: "/tokens/brrr.svg",
   HOT: "/tokens/hot.svg",
   LINEAR: "/logos/linear.svg",
-  SOL: "/chains/solana.png",
-  BNB: "/chains/bnb.png",
-  BTC: "/chains/bitcoin.png",
-  AVAX: "/chains/avalanche.png",
-  POL: "/chains/polygon.png",
-  MATIC: "/chains/polygon.png",
+  SOL: "/tokens/sol.png",
+  BNB: "/tokens/bnb.png",
+  BTC: "/tokens/btc.png",
+  AVAX: "/tokens/avax.png",
+  POL: "/tokens/pol.png",
+  MATIC: "/tokens/pol.png",
   ARB: "/chains/arbitrum.png",
   OP: "/chains/optimism.png",
   SUI: "/chains/sui.png",
   APT: "/chains/aptos.png",
+  DAI: "/tokens/dai.png",
   DOGE: "/chains/doge.png",
   XRP: "/chains/xrp.png",
   LTC: "/chains/ltc.png",
@@ -311,7 +313,7 @@ export function geckoIdFor(symbol: string) {
 
 function safeIcon(icon: unknown) {
   if (typeof icon !== "string" || icon.length > 80_000) return "";
-  if (icon.startsWith("https://") || icon.startsWith("/tokens/") || icon.startsWith("/chains/") || icon.startsWith("data:image/")) return icon;
+  if (icon.startsWith("https://") || icon.startsWith("/tokens/") || icon.startsWith("/logos/") || icon.startsWith("/chains/") || icon.startsWith("data:image/")) return icon;
   return "";
 }
 
@@ -338,9 +340,9 @@ export function knownLogo(symbol: string) {
 
 const PINNED_ICON: Record<string, string> = {
   "wrap.near": "/tokens/near.svg",
-  "usdt.tether-token.near": "/logos/usdt.svg",
+  "usdt.tether-token.near": "/tokens/usdt.png",
   "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": "/tokens/usdc.png",
-  "dac17f958d2ee523a2206206994597c13d831ec7.factory.bridge.near": "/logos/usdt.svg",
+  "dac17f958d2ee523a2206206994597c13d831ec7.factory.bridge.near": "/tokens/usdt.png",
   "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.factory.bridge.near": "/tokens/usdc.png",
   "eth.bridge.near": "/tokens/eth.png",
   aurora: "/tokens/eth.png",

@@ -251,7 +251,7 @@ const w = (m5: number, h1: number, h6: number, h24: number): Record<WindowId, nu
 export const TOKENS: Token[] = [
   ["NEAR", "NEAR", "wrap.near", "/tokens/near.svg", "major"],
   ["USDC", "USD Coin", "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1", "/tokens/usdc.png", "major"],
-  ["USDT", "Tether", "usdt.tether-token.near", "", "major"],
+  ["USDT", "Tether", "usdt.tether-token.near", "/tokens/usdt.png", "major"],
   ["ETH", "Ether", "eth.bridge.near", "/tokens/eth.png", "major"],
   ["wBTC", "Wrapped Bitcoin", "2260fac5e5542a773aa44fbcfedf7c193bc2c599.factory.bridge.near", "/tokens/wbtc.png", "major"],
   ["AURORA", "Aurora", "aaaaaa20d9e0e2461697782ef11675f668207961.factory.bridge.near", "/tokens/aurora.jpg", "defi"],
@@ -475,6 +475,9 @@ function sameTokenAddress(left?: string, right?: string) {
 
 export function preferIcon(current: string, incoming?: string) {
   if (!incoming || incoming.startsWith("javascript:") || incoming.startsWith("data:text")) return current;
+  const local = (src: string) => src.startsWith("/tokens/") || src.startsWith("/logos/") || src.startsWith("/chains/");
+  if (local(current)) return current;
+  if (local(incoming)) return incoming;
   if (iconRank(incoming) > iconRank(current) && iconRank(incoming) > 0) return incoming;
   return current;
 }
