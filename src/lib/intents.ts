@@ -3,6 +3,7 @@ import { sendIntentDeposit } from "@/lib/near-wallet";
 import { sendOriginDeposit } from "@/lib/foreign-wallet";
 import { TOKENS } from "@/lib/market";
 import { useDesk } from "@/lib/store";
+import { net } from "@/lib/net";
 
 const BASE = "https://1click.chaindefuser.com";
 const PENDING_KEY = "asgard-intent";
@@ -62,7 +63,7 @@ export function formatUnits(units: string, decimals: number): number {
 
 export async function loadIntentAssets(): Promise<IntentAsset[]> {
   if (assets) return assets;
-  const response = await fetch(`${BASE}/v0/tokens`);
+  const response = await net(`${BASE}/v0/tokens`, { signal: AbortSignal.timeout(8000) });
   if (!response.ok) throw new Error("NEAR Intents token list is unavailable.");
   const body = (await response.json()) as IntentAsset[];
   assets = body.filter((asset) => asset.assetId && asset.symbol);
@@ -127,7 +128,7 @@ export async function quoteIntent(input: {
     if (frac.length > places && /[1-9]/.test(frac.slice(places))) throw new Error(`That amount is smaller than this token allows (${places} decimals).`);
     throw new Error("Enter an amount.");
   }
-  const response = await fetch(`${BASE}/v0/quote`, {
+  const response = await net(`${BASE}/v0/quote`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -309,7 +310,7 @@ async function submitDeposit(quote: IntentQuote, txHash: string | null) {
   if (!quote.depositAddress || !txHash) return;
   for (let attempt = 0; attempt < 12; attempt += 1) {
     try {
-      const response = await fetch(`${BASE}/v0/deposit/submit`, {
+      const response = await net(`${BASE}/v0/deposit/submit`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ txHash, depositAddress: quote.depositAddress, depositMemo: quote.depositMemo || undefined }),
@@ -329,7 +330,7 @@ async function pollStatus(depositAddress: string, depositMemo?: string | null, l
   for (let attempt = 0; attempt < limit; attempt += 1) {
     await wait(attempt === 0 ? 800 : 2000);
     try {
-      const response = await fetch(url);
+      const response = await net(url.toString());
       if (!response.ok) continue;
       const body = (await response.json()) as { status?: string };
       if (!body.status || body.status === "PENDING_DEPOSIT" || body.status === "KNOWN_DEPOSIT_TX" || body.status === "PROCESSING" || body.status === "INCOMPLETE_DEPOSIT") continue;

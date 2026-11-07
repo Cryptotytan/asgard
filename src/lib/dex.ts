@@ -2,6 +2,7 @@ import { ensureToken, isCanonical, isVerifiedAsset, money, preferIcon, qualitySc
 import { logoOf } from "@/lib/logo-book";
 import { chainById, chainByLabel } from "@/lib/chains";
 import { loadIntentAssets, type IntentAsset } from "@/lib/intents";
+import { net } from "@/lib/net";
 import { useDesk } from "@/lib/store";
 
 const REF = "https://indexer.ref.finance/list-token";
@@ -261,7 +262,7 @@ async function warmLogos(assets: IntentAsset[]) {
   let changed = false;
   for (let i = 0; i < ids.length; i += 80) {
     const chunk = ids.slice(i, i + 80).join(",");
-    const response = await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${encodeURIComponent(chunk)}&per_page=250&sparkline=false`).catch(() => null);
+    const response = await net(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${encodeURIComponent(chunk)}&per_page=250&sparkline=false`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
     if (!response?.ok) continue;
     const rows = (await response.json()) as { id?: string; image?: string; market_cap?: number; total_volume?: number; price_change_percentage_24h?: number }[];
     for (const row of rows) if (row.id && row.image) images.set(row.id, row.image);
@@ -395,8 +396,8 @@ export function applyIconBook(book?: Map<string, string>) {
 }
 
 async function refIcons() {
-  const response = await fetch(REF);
-  if (!response.ok) return new Map<string, string>();
+  const response = await net(REF, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+  if (!response?.ok) return new Map<string, string>();
   const body = (await response.json()) as Record<string, { icon?: string }>;
   const map = new Map<string, string>();
   for (const [address, meta] of Object.entries(body)) {
@@ -411,8 +412,8 @@ async function nearIcons() {
   const ranked: string[] = [];
   const pages = await Promise.all(
     [1, 2].map(async (page) => {
-      const response = await fetch(`${BLOCKS}?page=${page}&per_page=50`);
-      if (!response.ok) return [] as { contract?: string; icon?: string }[];
+      const response = await net(`${BLOCKS}?page=${page}&per_page=50`, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+      if (!response?.ok) return [] as { contract?: string; icon?: string }[];
       const body = (await response.json()) as { tokens?: { contract?: string; icon?: string }[] };
       return body.tokens ?? [];
     }),
@@ -443,9 +444,13 @@ export async function loadIconBook() {
 }
 
 async function getJson<T>(url: string): Promise<T | null> {
-  const response = await fetch(url);
-  if (!response.ok) return null;
-  return (await response.json()) as T;
+  try {
+    const response = await net(url, { signal: AbortSignal.timeout(8000) });
+    if (!response.ok) return null;
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
 }
 
 function num(value: unknown) {
@@ -464,7 +469,7 @@ function windows(source: Partial<Record<WindowId, number>> | undefined): Record<
 
 export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (marks: Record<string, number>) => void) {
   if (book) iconBook = book;
-  const gate = await tradableMap().catch(() => null);
+  const gatePromise = tradableMap().catch(() => null);
   const marks: Record<string, number> = {};
   const batches = await Promise.all(ANCHORS.map((address) => getJson<DexPair[]>(`${PAIRS}/${address}`).catch(() => null)));
   const pairs = batches.flatMap((rows) => (Array.isArray(rows) ? rows : []));
@@ -480,7 +485,8 @@ export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (mar
   };
   for (const pair of pairs) take(pair);
   paintDex(best, marks);
-  if (gate) publishTradable(gate);
+  const earlyGate = await Promise.race([gatePromise, new Promise<null>((resolve) => setTimeout(() => resolve(null), 1200))]);
+  if (earlyGate) publishTradable(earlyGate);
   marketsSynced = pairs.length > 0 || marketsSynced;
   onPaint?.({ ...marks });
 
@@ -496,11 +502,11 @@ export async function syncNearMarkets(book?: Map<string, string>, onPaint?: (mar
   for (const rows of extras) for (const pair of Array.isArray(rows) ? rows : []) take(pair);
   if (extras.length) {
     paintDex(best, marks);
-    if (gate) publishTradable(gate);
     onPaint?.({ ...marks });
   }
   await pullNearMemes(take, seen);
   paintDex(best, marks);
+  const gate = await gatePromise;
   if (gate) publishTradable(gate);
   onPaint?.({ ...marks });
   const assets = await loadIntentAssets().catch(() => null);
@@ -731,6 +737,10 @@ async function pullDexMarkets() {
   const queries = ["bonk", "wif", "pepe", "brett", "mog", "popcat", "fartcoin", "pnut", "spx", "floki"];
   const searches = await Promise.all(queries.map((q) => getJson<{ pairs?: DexPair[] }>(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(q)}`).catch(() => null)));
   ingestForeignPairs(searches.flatMap((body) => body?.pairs ?? []), icons);
+  if (searches.some((body) => (body?.pairs?.length ?? 0) > 0)) {
+    marketsSynced = true;
+    useDesk.setState((state) => ({ clock: state.clock + 1 }));
+  }
   await Promise.all(
     [...bySlug.entries()].map(async ([slug, addresses]) => {
       for (let index = 0; index < addresses.length; index += 30) {

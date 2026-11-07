@@ -22,7 +22,7 @@ function tokenForWallet(symbol: string, chain: string | null, walletId: LinkedWa
   return tokenBySymbol(symbol);
 }
 
-export function SwapDesk({ focus }: { focus?: string }) {
+export function SwapDesk({ focus, seed }: { focus?: string; seed?: { symbol: string; chain: string; amount: string; at: number } | null }) {
   const connected = useDesk((s) => s.connected);
   const connect = useDesk((s) => s.connect);
   const balances = useDesk((s) => s.balances);
@@ -34,9 +34,9 @@ export function SwapDesk({ focus }: { focus?: string }) {
   const positions = useDesk((s) => s.positions);
   const [sellS, setSellS] = useState(focus && focus !== "USDT" ? "USDT" : "NEAR");
   const [buyS, setBuyS] = useState(focus || "USDT");
-  const [sellChain, setSellChain] = useState<string | null>(null);
-  const [buyChain, setBuyChain] = useState<string | null>(null);
-  const [amount, setAmount] = useState("");
+  const [sellChain, setSellChain] = useState<string | null>(seed ? "NEAR" : null);
+  const [buyChain, setBuyChain] = useState<string | null>(seed?.chain ?? null);
+  const [amount, setAmount] = useState(seed?.amount ?? "");
   const [picking, setPicking] = useState<"sell" | "buy" | null>(null);
   const [acked, setAcked] = useState(false);
   const [fetching, setFetching] = useState(false);
@@ -93,17 +93,21 @@ export function SwapDesk({ focus }: { focus?: string }) {
   }
 
   useEffect(() => {
-    if (!focus) return;
-    setBuyS(focus);
-    setBuyChain(null);
-    setSellS((current) => (current === focus ? (focus === "USDT" ? "NEAR" : "USDT") : current));
-    setSellChain(null);
-  }, [focus]);
+    if (!seed?.symbol) return;
+    setBuyS(seed.symbol);
+    setBuyChain(seed.chain || null);
+    setSellS(seed.symbol === "USDT" ? "NEAR" : "USDT");
+    setSellChain("NEAR");
+    setSellWalletId("near");
+    const kind = chainByLabel(seed.chain)?.kind;
+    setBuyWalletId(kind === "evm" || kind === "sol" || kind === "btc" || kind === "near" ? kind : "near");
+    if (seed.amount) setAmount(seed.amount);
+  }, [seed?.at]);
 
   const sell = tokenForWallet(sellS, sellChain, sellWalletId);
   const buy = tokenForWallet(buyS, buyChain, buyWalletId);
   const amountN = Number(amount) || 0;
-  const slipPct = 5;
+  const slipPct = sell.chain === buy.chain ? 12 : 20;
   const wallets = linkedWallets(accountId, foreign);
   const sellActive = wallets.find((wallet) => wallet.id === sellWalletId) ?? wallets.find((wallet) => wallet.id === chainByLabel(sell.chain)?.kind) ?? wallets[0] ?? null;
   const buyActive = wallets.find((wallet) => wallet.id === buyWalletId) ?? wallets.find((wallet) => wallet.id === chainByLabel(buy.chain)?.kind) ?? wallets[0] ?? null;
@@ -179,7 +183,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
         .catch((error: unknown) => {
           setRoutes([]);
           setPickedId(null);
-          setQuoteError(error instanceof Error ? error.message : "No live route.");
+          setQuoteError(error instanceof Error && /failed to fetch|networkerror|load failed/i.test(error.message) ? "The quote desk did not answer. Retry." : error instanceof Error ? error.message : "No live route.");
         })
         .finally(() => setFetching(false));
     }, 400);
@@ -422,7 +426,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
                       {index === 0 && <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">Best</span>}
                     </span>
                     <span className="mt-0.5 block truncate text-xs text-muted">
-                      {route.kind} · fee {(route.feeBps / 100).toFixed(2)}% · impact {route.impact.toFixed(2)}% · {route.eta}
+                      {route.kind} · spread {route.impact.toFixed(2)}% · {route.eta}
                     </span>
                   </span>
                   <span className="text-right">
@@ -441,7 +445,7 @@ export function SwapDesk({ focus }: { focus?: string }) {
           onClick={() => void submit()}
           className="mt-2 h-10 w-full rounded-xl bg-primary font-semibold text-primary-fg disabled:opacity-40"
         >
-          {settling ? "Settling…" : fetching ? "Fetching routes…" : amountN <= 0 ? "Enter an amount" : !sellActive ? "Connect wallet" : !originConnected ? `Connect a ${sell.chain} wallet` : short ? "Not enough balance" : best && best.impact > slipPct ? "Fee above 5%" : best ? `${best.kind} via ${best.name}` : "No live route"}
+          {settling ? "Settling…" : fetching ? "Fetching routes…" : amountN <= 0 ? "Enter an amount" : !sellActive ? "Connect wallet" : !originConnected ? `Connect a ${sell.chain} wallet` : short ? "Not enough balance" : best && best.impact > slipPct ? `Spread ${best.impact.toFixed(1)}%` : best ? `${best.kind} via ${best.name}` : "No live route"}
         </button>
         {quoteError && !note && <p className="mt-2 font-mono text-xs text-danger">{quoteError}</p>}
         {note && <p className="mt-3 break-words font-mono text-xs text-primary">{note}</p>}

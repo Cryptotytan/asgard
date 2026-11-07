@@ -61,7 +61,7 @@ export function TokenTrade({
   onMode: (mode: TicketMode) => void;
   onSymbol: (symbol: string) => void;
   onFlash: (message: string) => void;
-  onSwap?: (symbol: string) => void;
+  onSwap?: (symbol: string, amount?: string, chain?: string) => void;
 }) {
   const mark = useDesk((s) => s.marks[symbol]);
   useDesk((s) => s.clock);
@@ -854,7 +854,7 @@ function Ticket({
   scanning: boolean;
   onMode: (mode: TicketMode) => void;
   onFlash: (message: string) => void;
-  onSwap?: (symbol: string) => void;
+  onSwap?: (symbol: string, amount?: string, chain?: string) => void;
   onPlaced: () => void;
 }) {
   const listed = canPerp(token.symbol);
@@ -1058,8 +1058,8 @@ function Ticket({
 
   function submit() {
     if (scanning || busy || blocked) return;
-    if (memeSwap) {
-      onSwap?.(token.symbol);
+    if (viewMode === "spot" && side === "buy") {
+      onSwap?.(token.symbol, amount, token.chain);
       return;
     }
     setBusy(true);

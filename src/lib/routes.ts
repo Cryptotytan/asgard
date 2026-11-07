@@ -2,6 +2,7 @@ import { chainByLabel, validAddress } from "@/lib/chains";
 import { evmDexRoutes } from "@/lib/evm-dex";
 import { ensureEvmAllowance, sendEvmCall, sendSolanaSerialized } from "@/lib/foreign-wallet";
 import { executeIntent, parseUnits, quoteIntent } from "@/lib/intents";
+import { net } from "@/lib/net";
 import { nearFunctionCall, sendNearTransactions, sendRefSwap, settleHoldings } from "@/lib/near-wallet";
 import type { Token } from "@/lib/market";
 
@@ -144,7 +145,7 @@ function documentChains() {
 async function runLifi(steps: LifiStep[], fallback: string) {
   let hash = "";
   for (const step of steps) {
-    const response = await fetch(`${LIFI}/stepTransaction`, {
+    const response = await net(`${LIFI}/stepTransaction`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(step),
@@ -174,7 +175,7 @@ async function reloadLifiSteps(from: Token, to: Token, amount: string, sender: s
   if (!origin || !destination) return null;
   const units = parseUnits(amount, origin.decimals);
   if (!units) return null;
-  const response = await fetch(`${LIFI}/routes`, {
+  const response = await net(`${LIFI}/routes`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -205,7 +206,7 @@ async function lifiRoutes(from: Token, to: Token, amount: string, sender: string
   if (!validAddress(from.chain, sender) || !validAddress(to.chain, recipient)) return [];
   const units = parseUnits(amount, origin.decimals);
   if (!units) return [];
-  const response = await fetch(`${LIFI}/routes`, {
+  const response = await net(`${LIFI}/routes`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -270,7 +271,7 @@ async function jupiterRoute(from: Token, to: Token, amount: string, sender: stri
   const units = parseUnits(amount, origin.decimals);
   if (!units) return null;
   const quoteUrl = `${JUP}/quote?inputMint=${origin.address}&outputMint=${destination.address}&amount=${units}&slippageBps=${slippageBps}`;
-  const response = await fetch(quoteUrl);
+  const response = await net(quoteUrl);
   if (!response.ok) return null;
   const quote = (await response.json()) as { outAmount?: string; priceImpactPct?: string; routePlan?: { swapInfo?: { label?: string } }[] };
   const out = Number(quote.outAmount);
@@ -288,10 +289,10 @@ async function jupiterRoute(from: Token, to: Token, amount: string, sender: stri
     receive,
     eta: "live",
     execute: async () => {
-      const fresh = await fetch(quoteUrl);
+      const fresh = await net(quoteUrl);
       if (!fresh.ok) throw new Error("Jupiter did not return a quote. Nothing was sent.");
       const freshQuote = (await fresh.json()) as { outAmount?: string };
-      const swap = await fetch(`${JUP}/swap`, {
+      const swap = await net(`${JUP}/swap`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ quoteResponse: freshQuote, userPublicKey: sender, wrapAndUnwrapSol: true }),
@@ -355,7 +356,7 @@ async function debridgeRoute(from: Token, to: Token, amount: string, sender: str
     dstChainTokenOut: destination.address,
     prependOperatingExpenses: "false",
   });
-  const quoted = await fetch(`${DEBRIDGE}/quote?${query}`);
+  const quoted = await net(`${DEBRIDGE}/quote?${query}`);
   if (!quoted.ok) return null;
   const quote = (await quoted.json()) as { estimation?: { dstChainTokenOut?: { amount?: string; approximateUsdValue?: number } } };
   const out = Number(quote.estimation?.dstChainTokenOut?.amount);
@@ -375,7 +376,7 @@ async function debridgeRoute(from: Token, to: Token, amount: string, sender: str
       create.set("dstChainTokenOutRecipient", recipient);
       create.set("srcChainOrderAuthorityAddress", sender);
       create.set("dstChainOrderAuthorityAddress", recipient);
-      const response = await fetch(`${DEBRIDGE}/create-tx?${create}`);
+      const response = await net(`${DEBRIDGE}/create-tx?${create}`);
       if (!response.ok) throw new Error("deBridge did not return a transaction. Nothing was sent.");
       const body = (await response.json()) as { tx?: { to?: string; data?: string; value?: string }; errorMessage?: string };
       if (origin.chainId === 7565164) {
@@ -416,7 +417,7 @@ async function intearRoute(from: Token, to: Token, amount: string, accountId: st
   const slip = Math.min(0.5, Math.max(0.005, slippageBps / 10_000));
   const trader = accountId ? `&trader_account_id=${encodeURIComponent(accountId)}` : "";
   const url = `https://router.intear.tech/route?token_in=${encodeURIComponent(tokenIn)}&token_out=${encodeURIComponent(tokenOut)}&amount_in=${units}&max_wait_ms=4000&slippage_type=Fixed&slippage=${slip}${trader}`;
-  const response = await fetch(url);
+  const response = await net(url);
   if (!response.ok) return null;
   const routes = (await response.json()) as {
     estimated_amount?: { amount_out?: string };
@@ -436,7 +437,7 @@ async function intearRoute(from: Token, to: Token, amount: string, accountId: st
     receive,
     eta: "live",
     execute: async () => {
-      const fresh = await fetch(url);
+      const fresh = await net(url);
       if (!fresh.ok) throw new Error("Rhea did not return a route. Nothing was sent.");
       const next = (await fresh.json()) as typeof routes;
       const picked = (Array.isArray(next) ? next.find((route) => route.execution_instructions?.length) : undefined) ?? best;
@@ -515,7 +516,7 @@ async function refRoute(from: Token, to: Token, amount: string, accountId: strin
   if (!units) return null;
   const slip = Math.min(0.5, Math.max(0.005, slippageBps / 10_000));
   const quoted = `https://smartrouter.ref.finance/findPath?amountIn=${units}&tokenIn=${encodeURIComponent(tokenIn)}&tokenOut=${encodeURIComponent(tokenOut)}&pathDeep=3&slippage=${slip}`;
-  const response = await fetch(quoted);
+  const response = await net(quoted);
   if (!response.ok) return null;
   const body = (await response.json()) as {
     result_code?: number;
@@ -534,7 +535,7 @@ async function refRoute(from: Token, to: Token, amount: string, accountId: strin
     receive,
     eta: "live",
     execute: async () => {
-      const fresh = await fetch(quoted);
+      const fresh = await net(quoted);
       if (!fresh.ok) throw new Error("Ref Finance did not return a route. Nothing was sent.");
       const next = (await fresh.json()) as typeof body;
       const nextPools = next.result_data?.routes?.[0]?.pools?.filter((pool) => pool.pool_id && pool.min_amount_out) ?? pools;
@@ -569,8 +570,9 @@ async function collectRoutes(input: {
   slippageBps: number;
   purpose: "Swap" | "Spot";
 }) {
-  const slip = input.slippageBps;
   const cross = input.from.chain !== input.to.chain;
+  const asked = input.slippageBps;
+  const slip = cross ? Math.max(asked, 300) : asked;
   const intentsJob = () =>
     timeout(intentsRoute(input.from, input.to, input.amount, input.accountId || input.refundTo, input.refundTo, input.recipient, slip, input.purpose), 16000)
       .then((route) => ({ route, error: "" }))

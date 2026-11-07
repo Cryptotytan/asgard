@@ -32,6 +32,7 @@ export function Terminal() {
   const [symbol, setSymbol] = useState("NEAR");
   const [deskMode, setDeskMode] = useState<"spot" | "perp">("spot");
   const [swapFocus, setSwapFocus] = useState<string | undefined>(undefined);
+  const [swapSeed, setSwapSeed] = useState<{ symbol: string; chain: string; amount: string; at: number } | null>(null);
   const [query, setQuery] = useState("");
   const [quickUsd] = useState(20);
   const [flash, setFlash] = useState("");
@@ -113,9 +114,11 @@ export function Terminal() {
     visitToken(next);
   }
 
-  function openSwap(next: string) {
+  function openSwap(next: string, amount?: string, chain?: string) {
+    const token = TOKENS.find((item) => item.symbol === next && (!chain || item.chain === chain)) ?? tokenBySymbol(next);
     setSymbol(next);
     setSwapFocus(next);
+    setSwapSeed({ symbol: next, chain: chain || token.chain, amount: amount ?? "", at: Date.now() });
     setView("swap");
     setQuery("");
     visitToken(next);
@@ -292,7 +295,7 @@ export function Terminal() {
         )}
         {view === "swap" && (
           <div className="flex h-full min-h-0 flex-1 items-center overflow-hidden px-2 py-2 sm:px-4 sm:py-3">
-            <SwapDesk key={swapFocus ?? "desk"} focus={swapFocus} />
+            <SwapDesk key={`${swapFocus ?? "desk"}-${swapSeed?.at ?? 0}`} focus={swapFocus} seed={swapSeed} />
           </div>
         )}
         {view === "vault" && (

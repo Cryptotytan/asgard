@@ -1,6 +1,7 @@
 import { chainByLabel } from "@/lib/chains";
 import { ensureEvmAllowance, sendEvmCall } from "@/lib/foreign-wallet";
 import { parseUnits } from "@/lib/intents";
+import { net } from "@/lib/net";
 import type { Token } from "@/lib/market";
 
 const NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
@@ -53,7 +54,7 @@ async function kyber(from: Side, to: Side, units: string, sender: string, recipi
   const slug = KYBER[from.chainId];
   if (!slug) return null;
   const quote = async () => {
-    const response = await fetch(`https://aggregator-api.kyberswap.com/${slug}/api/v1/routes?tokenIn=${from.address}&tokenOut=${to.address}&amountIn=${units}`);
+    const response = await net(`https://aggregator-api.kyberswap.com/${slug}/api/v1/routes?tokenIn=${from.address}&tokenOut=${to.address}&amountIn=${units}`);
     if (!response.ok) return null;
     const body = (await response.json()) as { data?: { routeSummary?: KyberSummary } };
     return body.data?.routeSummary ?? null;
@@ -75,7 +76,7 @@ async function kyber(from: Side, to: Side, units: string, sender: string, recipi
     execute: async () => {
       const freshUnits = parseUnits(amount, from.decimals);
       const fresh = (freshUnits && (await quote())) || summary;
-      const built = await fetch(`https://aggregator-api.kyberswap.com/${slug}/api/v1/route/build`, {
+      const built = await net(`https://aggregator-api.kyberswap.com/${slug}/api/v1/route/build`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ routeSummary: fresh, sender, recipient, slippageTolerance: slippageBps }),
@@ -96,7 +97,7 @@ async function paraswap(from: Side, to: Side, units: string, sender: string, rec
   if (!PARASWAP.has(from.chainId)) return null;
   const quote = async (nextUnits: string) => {
     const url = `https://apiv5.paraswap.io/prices?srcToken=${from.address}&destToken=${to.address}&amount=${nextUnits}&srcDecimals=${from.decimals}&destDecimals=${to.decimals}&side=SELL&network=${from.chainId}&userAddress=${sender}`;
-    const response = await fetch(url);
+    const response = await net(url);
     if (!response.ok) return null;
     const body = (await response.json()) as { priceRoute?: ParaRoute };
     return body.priceRoute ?? null;
@@ -118,7 +119,7 @@ async function paraswap(from: Side, to: Side, units: string, sender: string, rec
     execute: async () => {
       const freshUnits = parseUnits(amount, from.decimals) || units;
       const fresh = (await quote(freshUnits)) || route;
-      const response = await fetch(`https://apiv5.paraswap.io/transactions/${from.chainId}?ignoreChecks=true`, {
+      const response = await net(`https://apiv5.paraswap.io/transactions/${from.chainId}?ignoreChecks=true`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -137,7 +138,7 @@ async function paraswap(from: Side, to: Side, units: string, sender: string, rec
       const tx = (await response.json()) as { to?: string; data?: string; value?: string };
       if (!tx.to || !tx.data) throw new Error("ParaSwap did not return a transaction. Nothing was sent.");
       if (!from.native) {
-        const contracts = await fetch(`https://apiv5.paraswap.io/adapters/contracts?network=${from.chainId}`);
+        const contracts = await net(`https://apiv5.paraswap.io/adapters/contracts?network=${from.chainId}`);
         const proxy = contracts.ok ? ((await contracts.json()) as { TokenTransferProxy?: string }).TokenTransferProxy : "";
         if (!proxy) throw new Error("ParaSwap did not return an approval target. Nothing was sent.");
         await ensureEvmAllowance(from.chain, from.address, proxy, fresh.srcAmount);

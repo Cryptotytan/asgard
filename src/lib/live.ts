@@ -1136,6 +1136,7 @@ export function startLiveFeed() {
     void refreshLive().catch(() => undefined);
   };
   run();
+  void refreshDexMarkets().catch(() => undefined);
   window.setInterval(run, 20_000);
   window.setInterval(() => {
     void refreshDexMarkets().catch(() => undefined);

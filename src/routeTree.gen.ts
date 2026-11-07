@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as ApiGeckoRouteImport } from './routes/api/gecko'
+import { Route as ApiNetRouteImport } from './routes/api/net'
 import { Route as ApiRefPathRouteImport } from './routes/api/ref-path'
 
 const IndexRoute = IndexRouteImport.update({
@@ -29,6 +30,11 @@ const ApiGeckoRoute = ApiGeckoRouteImport.update({
   path: '/api/gecko',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiNetRoute = ApiNetRouteImport.update({
+  id: '/api/net',
+  path: '/api/net',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiRefPathRoute = ApiRefPathRouteImport.update({
   id: '/api/ref-path',
   path: '/api/ref-path',
@@ -39,12 +45,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/api/gecko': typeof ApiGeckoRoute
+  '/api/net': typeof ApiNetRoute
   '/api/ref-path': typeof ApiRefPathRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/api/gecko': typeof ApiGeckoRoute
+  '/api/net': typeof ApiNetRoute
   '/api/ref-path': typeof ApiRefPathRoute
 }
 export interface FileRoutesById {
@@ -52,20 +60,22 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/api/gecko': typeof ApiGeckoRoute
+  '/api/net': typeof ApiNetRoute
   '/api/ref-path': typeof ApiRefPathRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/app' | '/api/gecko' | '/api/ref-path'
+  fullPaths: '/' | '/app' | '/api/gecko' | '/api/net' | '/api/ref-path'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/app' | '/api/gecko' | '/api/ref-path'
-  id: '__root__' | '/' | '/app' | '/api/gecko' | '/api/ref-path'
+  to: '/' | '/app' | '/api/gecko' | '/api/net' | '/api/ref-path'
+  id: '__root__' | '/' | '/app' | '/api/gecko' | '/api/net' | '/api/ref-path'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRoute
   ApiGeckoRoute: typeof ApiGeckoRoute
+  ApiNetRoute: typeof ApiNetRoute
   ApiRefPathRoute: typeof ApiRefPathRoute
 }
 
@@ -92,6 +102,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiGeckoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/net': {
+      id: '/api/net'
+      path: '/api/net'
+      fullPath: '/api/net'
+      preLoaderRoute: typeof ApiNetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/ref-path': {
       id: '/api/ref-path'
       path: '/api/ref-path'
@@ -106,6 +123,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRoute,
   ApiGeckoRoute: ApiGeckoRoute,
+  ApiNetRoute: ApiNetRoute,
   ApiRefPathRoute: ApiRefPathRoute,
 }
 export const routeTree = rootRouteImport
