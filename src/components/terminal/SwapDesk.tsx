@@ -22,6 +22,22 @@ function tokenForWallet(symbol: string, chain: string | null, walletId: LinkedWa
   return tokenBySymbol(symbol);
 }
 
+function bestHeld(
+  walletId: LinkedWallet["id"],
+  book: Record<string, number>,
+  rows: { chain: string; symbol: string; amount: number }[],
+) {
+  const price = (symbol: string, chain: string) => tokenForWallet(symbol, chain || null, walletId).price || 0;
+  const lines = rows.filter((line) => line.amount > 1e-8 && chainByLabel(line.chain)?.kind === walletId);
+  const pool = lines.length
+    ? lines
+    : Object.entries(book)
+        .filter(([, amount]) => amount > 1e-8)
+        .map(([symbol, amount]) => ({ symbol, amount, chain: tokenForWallet(symbol, null, walletId).chain }))
+        .filter((line) => chainByLabel(line.chain)?.kind === walletId);
+  return [...pool].sort((a, b) => b.amount * price(b.symbol, b.chain) - a.amount * price(a.symbol, a.chain))[0];
+}
+
 export function SwapDesk({ focus, seed }: { focus?: string; seed?: { symbol: string; chain: string; amount: string; at: number } | null }) {
   const connected = useDesk((s) => s.connected);
   const connect = useDesk((s) => s.connect);
@@ -137,17 +153,25 @@ export function SwapDesk({ focus, seed }: { focus?: string; seed?: { symbol: str
 
   useEffect(() => {
     if (!sellWalletId) return;
-    const current = tokenForWallet(sellS, sellChain, sellWalletId);
-    if (chainByLabel(current.chain)?.kind === sellWalletId) return;
-    const top = Object.entries(sellHold.book)
-      .filter(([, amount]) => amount > 0)
-      .sort((a, b) => b[1] * (tokenForWallet(b[0], null, sellWalletId).price || 0) - a[1] * (tokenForWallet(a[0], null, sellWalletId).price || 0))[0];
-    if (!top) return;
-    const next = tokenForWallet(top[0], null, sellWalletId);
-    if (chainByLabel(next.chain)?.kind !== sellWalletId) return;
-    setSellS(next.symbol);
-    setSellChain(next.chain);
-  }, [sellWalletId]);
+    const kind = sellChain ? chainByLabel(sellChain)?.kind : null;
+    const line = sellHold.rows.find((row) => row.symbol === sellS && row.chain === sellChain && row.amount > 1e-8);
+    const onThisWallet = kind === sellWalletId && (sellHold.rows.length ? Boolean(line) : (sellHold.book[sellS] ?? 0) > 1e-8);
+    if (onThisWallet) return;
+    const top = bestHeld(sellWalletId, sellHold.book, sellHold.rows);
+    if (top) {
+      if (top.symbol !== sellS || top.chain !== sellChain) {
+        setSellS(top.symbol);
+        setSellChain(top.chain);
+      }
+      return;
+    }
+    if (kind === sellWalletId) return;
+    const fallback = sellWalletId === "evm" ? { symbol: "ETH", chain: "Ethereum" } : sellWalletId === "sol" ? { symbol: "SOL", chain: "Solana" } : sellWalletId === "btc" ? { symbol: "BTC", chain: "Bitcoin" } : { symbol: "NEAR", chain: "NEAR" };
+    if (sellS !== fallback.symbol || sellChain !== fallback.chain) {
+      setSellS(fallback.symbol);
+      setSellChain(fallback.chain);
+    }
+  }, [sellWalletId, sellHold.book, sellHold.rows, sellS, sellChain]);
   useEffect(() => {
     if (!buyWalletId) return;
     const current = tokenForWallet(buyS, buyChain, buyWalletId);
