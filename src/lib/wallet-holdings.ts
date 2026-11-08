@@ -13,7 +13,7 @@ export function holdingOf(id: "near" | "evm" | "sol" | "btc", address: string, s
   return cache.get(`${id}:${address.toLowerCase()}`)?.[symbol] ?? 0;
 }
 
-const pendingForeign = new Map<string, { target: number; dir: 1 | -1; until: number }>();
+const pendingForeign = new Map<string, { target: number; line: number; dir: 1 | -1; until: number; chain: string }>();
 
 function overlayForeign(key: string, book: Record<string, number>) {
   const now = Date.now();
@@ -44,23 +44,27 @@ export function expectHolding(chainLabel: string, symbol: string, delta: number)
   const address = chain.kind === "evm" ? wallets.evm : chain.kind === "sol" ? wallets.sol : wallets.btc;
   if (!address) return;
   const key = `${chain.kind}:${address.toLowerCase()}`;
-  const book = overlayForeign(key, { ...(cache.get(key) ?? {}) });
-  const target = Math.max(0, (book[symbol] ?? 0) + delta);
-  book[symbol] = target;
-  pendingForeign.set(`${key}:${symbol}`, { target, dir: delta > 0 ? 1 : -1, until: Date.now() + 180_000 });
+  const existing = { ...(cache.get(key) ?? {}) };
+  const lineNow = (lines.get(key) ?? []).find((row) => row.symbol === symbol && row.chain === chainLabel)?.amount ?? 0;
+  const lineNext = Math.max(0, lineNow + delta);
+  const rest = Math.max(0, (existing[symbol] ?? 0) - lineNow);
+  const total = rest + lineNext;
+  const book = overlayForeign(key, { ...existing, [symbol]: total });
+  book[symbol] = total;
+  pendingForeign.set(`${key}:${symbol}`, { target: total, line: lineNext, dir: delta > 0 ? 1 : -1, until: Date.now() + 180_000, chain: chainLabel });
   cache.set(key, book);
+  writeLine(key, chainLabel, symbol, lineNext);
   notifyHoldings(key);
   useDesk.setState({ clock: useDesk.getState().clock + 1 });
   const kind: "evm" | "sol" | "btc" = chain.kind === "sol" ? "sol" : chain.kind === "btc" ? "btc" : "evm";
   const pull = () => {
-    cache.delete(key);
     inflight.delete(key);
     void loadHoldings(kind, address, true).then(() => notifyHoldings(key));
   };
   for (const delay of [2500, 7000, 16000, 32000]) window.setTimeout(pull, delay);
 }
 
-export function creditHolding(id: "near" | "evm" | "sol" | "btc", address: string, symbol: string, amount: number) {
+export function creditHolding(id: "near" | "evm" | "sol" | "btc", address: string, symbol: string, amount: number, chain = "") {
   if (!(amount > 0) || !symbol) return;
   if (id === "near") {
     const state = useDesk.getState();
@@ -73,7 +77,10 @@ export function creditHolding(id: "near" | "evm" | "sol" | "btc", address: strin
   }
   const key = `${id}:${address.toLowerCase()}`;
   const current = cache.get(key) ?? {};
-  cache.set(key, { ...current, [symbol]: (current[symbol] ?? 0) + amount });
+  const next = (current[symbol] ?? 0) + amount;
+  cache.set(key, { ...current, [symbol]: next });
+  writeLine(key, chain, symbol, next);
+  notifyHoldings(key);
   useDesk.setState({ clock: useDesk.getState().clock + 1 });
 }
 
@@ -84,13 +91,13 @@ export async function refreshBalances(wallets: LinkedWallet[]) {
       const key = `${wallet.id}:${wallet.address.toLowerCase()}`;
       if (seen.has(key)) return;
       seen.add(key);
-      cache.delete(key);
       inflight.delete(key);
       if (wallet.id === "near") {
         const { syncWallet } = await import("@/lib/near-wallet");
         await syncWallet(wallet.address, [], true).catch(() => undefined);
       } else {
-        await loadHoldings(wallet.id, wallet.address, true).catch(() => undefined);
+        const next = await loadHoldings(wallet.id, wallet.address, true).catch(() => cache.get(key) ?? {});
+        if (Object.keys(next).length) cache.set(key, next);
         notifyHoldings(key);
       }
     }),
@@ -103,6 +110,32 @@ const listeners = new Set<(key: string) => void>();
 
 function notifyHoldings(key: string) {
   for (const listener of listeners) listener(key);
+}
+
+function writeLine(key: string, chain: string, symbol: string, amount: number) {
+  const rows = [...(lines.get(key) ?? [])];
+  const index = rows.findIndex((row) => row.symbol === symbol && (row.chain === chain || !chain || !row.chain));
+  if (amount <= 1e-8) {
+    if (index >= 0) rows.splice(index, 1);
+  } else if (index >= 0) rows[index] = { chain: chain || rows[index].chain, symbol, amount };
+  else rows.push({ chain, symbol, amount });
+  lines.set(key, rows);
+}
+
+function withPendingLines(key: string, rows: { chain: string; symbol: string; amount: number }[]) {
+  const next = rows.map((row) => ({ ...row }));
+  const now = Date.now();
+  for (const [id, item] of pendingForeign) {
+    if (!id.startsWith(`${key}:`) || item.until < now) continue;
+    const symbol = id.slice(key.length + 1);
+    const hit = next.find((row) => row.symbol === symbol && (!item.chain || !row.chain || row.chain === item.chain));
+    if (item.dir > 0) {
+      if (hit) {
+        if (hit.amount + 1e-8 < item.line) hit.amount = item.line;
+      } else if (item.line > 0) next.push({ chain: item.chain, symbol, amount: item.line });
+    } else if (hit && hit.amount > item.line) hit.amount = item.line;
+  }
+  return next.filter((row) => row.amount > 1e-8);
 }
 
 function peekForeign(key: string) {
@@ -208,7 +241,9 @@ async function loadHoldings(id: "evm" | "sol" | "btc", address: string, fresh = 
       ? evmFast(address, (book, parts) => {
           const shown = overlayForeign(key, { ...(cache.get(key) ?? {}), ...book });
           cache.set(key, shown);
-          lines.set(key, parts);
+          const seen = new Set(parts.map((row) => `${row.chain}:${row.symbol}`));
+          const kept = (lines.get(key) ?? []).filter((row) => !seen.has(`${row.chain}:${row.symbol}`));
+          lines.set(key, withPendingLines(key, [...parts, ...kept]));
           storeForeign(key, shown);
           notifyHoldings(key);
         }).then((book) => {
@@ -217,14 +252,28 @@ async function loadHoldings(id: "evm" | "sol" | "btc", address: string, fresh = 
           storeForeign(key, shown);
           inflight.delete(key);
           notifyHoldings(key);
+          void stampPrices(shown);
           return shown;
         })
       : (id === "sol" ? solBook(address) : btcBook(address))
           .then((book) => {
-            const shown = overlayForeign(key, book);
+            const previous = cache.get(key) ?? {};
+            const shown = overlayForeign(key, Object.keys(book).length ? { ...previous, ...book } : previous);
             cache.set(key, shown);
+            const chain = id === "sol" ? "Solana" : "Bitcoin";
+            lines.set(
+              key,
+              withPendingLines(
+                key,
+                Object.entries(shown)
+                  .filter(([, amount]) => amount > 0)
+                  .map(([symbol, amount]) => ({ chain, symbol, amount })),
+              ),
+            );
             storeForeign(key, shown);
             inflight.delete(key);
+            notifyHoldings(key);
+            void stampPrices(shown);
             return shown;
           })
           .catch(() => {
@@ -233,15 +282,23 @@ async function loadHoldings(id: "evm" | "sol" | "btc", address: string, fresh = 
           });
   inflight.set(key, job);
   if (id === "evm") {
-    void evmRest(address, { ...(cache.get(key) ?? {}) }).then((full) => {
+    void evmRest(address).then((full) => {
       const current = { ...(cache.get(key) ?? {}) };
-      for (const [symbol, amount] of Object.entries(full)) {
-        if (amount > 0) current[symbol] = Math.max(current[symbol] ?? 0, amount);
+      for (const row of full) {
+        if (row.amount > 0) current[row.symbol] = Math.max(current[row.symbol] ?? 0, row.amount);
       }
       const next = overlayForeign(key, current);
       cache.set(key, next);
+      const rows = [...(lines.get(key) ?? [])];
+      for (const row of full) {
+        const hit = rows.find((line) => line.chain === row.chain && line.symbol === row.symbol);
+        if (hit) hit.amount = Math.max(hit.amount, row.amount);
+        else rows.push({ chain: row.chain, symbol: row.symbol, amount: row.amount });
+      }
+      lines.set(key, withPendingLines(key, rows));
       storeForeign(key, next);
       notifyHoldings(key);
+      void stampPrices(next);
     });
   }
   return job;
@@ -256,7 +313,10 @@ const EVM_STABLES: Record<string, { symbol: string; address: string; decimals: n
     { symbol: "USDC", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
     { symbol: "USDT", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
   ],
-  Base: [{ symbol: "USDC", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6 }],
+  Base: [
+    { symbol: "USDC", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6 },
+    { symbol: "USDT", address: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", decimals: 6 },
+  ],
   Arbitrum: [
     { symbol: "USDC", address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", decimals: 6 },
     { symbol: "USDT", address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", decimals: 6 },
@@ -410,7 +470,7 @@ async function rpcRace(rpcs: string[], calls: { method: string; params: unknown[
   }
 }
 
-async function evmRest(address: string, book: Record<string, number>) {
+async function evmRest(address: string) {
   const [extra, explored] = await Promise.all([
     readEvm(
       address,
@@ -419,20 +479,17 @@ async function evmRest(address: string, book: Record<string, number>) {
     ),
     readExplorers(address),
   ]);
+  const rows = explored.map((row) => ({ chain: row.chain, symbol: row.symbol, amount: row.amount, price: row.price }));
   for (const [symbol, amount] of Object.entries(extra)) {
-    if (amount > 0) book[symbol] = Math.max(book[symbol] ?? 0, amount);
+    if (amount > 0 && !rows.some((row) => row.symbol === symbol)) rows.push({ chain: "", symbol, amount, price: 0 });
   }
-  const totals = new Map<string, number>();
   for (const row of explored) {
-    if (!(row.amount > 0)) continue;
-    totals.set(row.symbol, (totals.get(row.symbol) ?? 0) + row.amount);
     const token = TOKENS.find((item) => item.symbol === row.symbol && item.chain === row.chain) ?? ensureToken({ symbol: row.symbol, name: row.name, price: row.price, chain: row.chain, address: row.address, icon: row.icon });
     token.listed = true;
     if (row.decimals) token.decimals = row.decimals;
-    if (row.price > 0 && !(token.price > 0)) token.price = row.price;
+    if (row.price > 0) token.price = row.price;
   }
-  for (const [symbol, amount] of totals) book[symbol] = Math.max(book[symbol] ?? 0, amount);
-  return book;
+  return rows;
 }
 
 const EXPLORERS: Record<string, string> = {
@@ -591,6 +648,82 @@ function hex(value: string) {
   } catch {
     return 0n;
   }
+}
+
+const MAJOR_ID: Record<string, string> = {
+  ETH: "ethereum",
+  WETH: "ethereum",
+  BNB: "binancecoin",
+  WBNB: "binancecoin",
+  SOL: "solana",
+  WSOL: "solana",
+  BTC: "bitcoin",
+  WBTC: "bitcoin",
+  POL: "polygon-ecosystem-token",
+  MATIC: "polygon-ecosystem-token",
+  AVAX: "avalanche-2",
+  NEAR: "near",
+  WNEAR: "near",
+};
+const majorSpot: Record<string, number> = {};
+let priceFlight: Promise<void> | null = null;
+
+export function ensureMajorPrices() {
+  if (priceFlight) return priceFlight;
+  priceFlight = (async () => {
+    const { net } = await import("@/lib/net");
+    const ids = [...new Set(Object.values(MAJOR_ID))].join(",");
+    const response = await net(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`).catch(() => null);
+    if (!response?.ok) return;
+    const body = (await response.json()) as Record<string, { usd?: number }>;
+    const marks = { ...useDesk.getState().marks };
+    let changed = false;
+    for (const [symbol, id] of Object.entries(MAJOR_ID)) {
+      const price = Number(body[id]?.usd);
+      if (!(price > 0)) continue;
+      majorSpot[symbol] = price;
+      if (!(marks[symbol] > 0)) {
+        marks[symbol] = price;
+        changed = true;
+      }
+      for (const token of TOKENS) {
+        if (token.symbol.split(".")[0]?.toUpperCase() === symbol && !(token.price > 0)) token.price = price;
+      }
+    }
+    if (changed) useDesk.setState({ marks, clock: useDesk.getState().clock + 1 });
+  })().finally(() => {
+    window.setTimeout(() => {
+      priceFlight = null;
+    }, 60_000);
+  });
+  return priceFlight;
+}
+
+function stampPrices(book: Record<string, number>) {
+  const marks = { ...useDesk.getState().marks };
+  let changed = false;
+  let missing = false;
+  for (const symbol of Object.keys(book)) {
+    const base = symbol.split(".")[0]?.toUpperCase() ?? "";
+    if (["USDT", "USDC", "DAI", "FRAX", "USN"].includes(base)) {
+      if (!(marks[symbol] > 0)) {
+        marks[symbol] = 1;
+        changed = true;
+      }
+      continue;
+    }
+    const price = majorSpot[base] || marks[base] || marks[symbol] || TOKENS.find((token) => token.symbol.split(".")[0]?.toUpperCase() === base && token.price > 0)?.price || 0;
+    if (!(price > 0)) {
+      missing = true;
+      continue;
+    }
+    if (!(marks[symbol] > 0)) {
+      marks[symbol] = price;
+      changed = true;
+    }
+  }
+  if (changed) useDesk.setState({ marks, clock: useDesk.getState().clock + 1 });
+  if (missing) void ensureMajorPrices();
 }
 
 async function mapPool<T>(items: T[], size: number, fn: (item: T) => Promise<bigint>) {

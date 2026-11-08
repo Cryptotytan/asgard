@@ -5,7 +5,7 @@ import { linkedWallets, useForeign, WALLET_MARK, type LinkedWallet } from "@/lib
 import { chainByLabel } from "@/lib/chains";
 import { ensureToken, money, qty, TOKENS, usd, type Token } from "@/lib/market";
 import { useDesk } from "@/lib/store";
-import { useHoldings } from "@/lib/wallet-holdings";
+import { ensureMajorPrices, useHoldings } from "@/lib/wallet-holdings";
 import { loadChainHistory, useWalletHistory, type WalletTx } from "@/lib/wallet-history";
 import { stNearPrice } from "@/lib/near-wallet";
 
@@ -61,15 +61,17 @@ export function PortfolioDesk() {
     const take = (book: Record<string, number>, detail: { chain: string; symbol: string; amount: number }[], label: string) => {
       const lines = detail.filter((line) => line.amount > 1e-8);
       const source = lines.length ? lines : Object.entries(book).filter(([, amount]) => amount > 1e-8).map(([symbol, amount]) => ({ chain: "", symbol, amount }));
+      const shown = new Map<string, number>();
       for (const line of source) {
+        shown.set(line.symbol, (shown.get(line.symbol) ?? 0) + line.amount);
         const token = tokenForBalance(line.symbol, line.chain, label);
         rows.push({ token, amount: line.amount, wallet: label, price: holdingPrice(line.symbol, token, marks) });
       }
-      if (!lines.length) return;
       for (const [symbol, amount] of Object.entries(book)) {
-        if (amount <= 1e-8 || lines.some((line) => line.symbol === symbol)) continue;
+        const have = shown.get(symbol) ?? 0;
+        if (amount <= have + 1e-6) continue;
         const token = tokenForBalance(symbol, "", label);
-        rows.push({ token, amount, wallet: label, price: holdingPrice(symbol, token, marks) });
+        rows.push({ token, amount: amount - have, wallet: label, price: holdingPrice(symbol, token, marks) });
       }
     };
     take(nearHold.book, nearHold.rows, "NEAR");
@@ -78,6 +80,9 @@ export function PortfolioDesk() {
     take(btcHold.book, btcHold.rows, "Bitcoin");
     return rows.sort((a, b) => b.amount * b.price - a.amount * a.price);
   }, [nearHold.book, nearHold.rows, evmHold.book, evmHold.rows, solHold.book, solHold.rows, btcHold.book, btcHold.rows, marks]);
+  useEffect(() => {
+    if (holdings.some((row) => !(row.price > 0))) void ensureMajorPrices();
+  }, [holdings]);
   const walletValue = holdings.reduce((sum, row) => sum + row.amount * row.price, 0);
   const staked = Math.max(chain.STNEAR ?? 0, chain.stNEAR ?? 0);
   const stPrice = stNearPrice() || marks.NEAR || TOKENS.find((token) => token.symbol === "NEAR")?.price || 0;
@@ -394,7 +399,8 @@ function holdingPrice(symbol: string, token: Token, marks: Record<string, number
     const near = marks.NEAR || TOKENS.find((item) => item.symbol === "NEAR" && item.price > 0)?.price || 0;
     if (near > 0) return near;
   }
-  const priced = [marks[symbol], marks[base], token.price, ...TOKENS.filter((item) => item.symbol === symbol).map((item) => item.price)].find((price) => price > 0);
+  const alias = base === "WETH" ? "ETH" : base === "WBNB" ? "BNB" : base === "WSOL" ? "SOL" : base === "WNEAR" ? "NEAR" : base === "MATIC" ? "POL" : base === "WBTC" ? "BTC" : base;
+  const priced = [marks[symbol], marks[base], marks[alias], token.price, ...TOKENS.filter((item) => item.symbol === symbol || item.symbol.split(".")[0]?.toUpperCase() === base || item.symbol === alias).map((item) => item.price)].find((price) => price > 0);
   return priced || 0;
 }
 

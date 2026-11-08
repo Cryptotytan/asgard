@@ -1050,7 +1050,7 @@ function Ticket({
         const before = keyKind && walletAddress ? holdingOf(keyKind, walletAddress, credited.symbol) : 0;
         await refreshBalances(wallets);
         const after = keyKind && walletAddress ? holdingOf(keyKind, walletAddress, credited.symbol) : 0;
-        if (received > 0 && keyKind && walletAddress && after + 1e-8 < before + received * 0.5) creditHolding(keyKind, walletAddress, credited.symbol, received);
+        if (received > 0 && keyKind && walletAddress && after + 1e-8 < before + received * 0.5) creditHolding(keyKind, walletAddress, credited.symbol, received, credited.chain);
         setFills((prev) => (side === "buy" ? { ...prev, bought: prev.bought + received } : { ...prev, sold: prev.sold + qty }));
         onFlash(`${side === "buy" ? "Bought" : "Sold"} ${token.symbol} via ${picked.name} · ${fmt(result.amountOutHuman)} ${receiveToken.symbol} · ${result.status}`);
       })
