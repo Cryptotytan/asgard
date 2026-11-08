@@ -11,6 +11,7 @@ import { PnlPoster } from "@/components/terminal/PnlPoster";
 import {
   canPerp,
   displayName,
+  failedScan,
   fmt,
   isHoneypot,
   money,
@@ -1065,7 +1066,7 @@ function Ticket({
     setBusy(true);
     window.setTimeout(() => {
       setBusy(false);
-      if (!token.verified && !acked) {
+      if (failedScan(token) && !acked) {
         setGate(true);
         return;
       }

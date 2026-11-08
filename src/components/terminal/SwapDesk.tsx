@@ -3,7 +3,7 @@ import { ArrowDownUp, ChevronDown, LoaderCircle, ShieldAlert } from "lucide-reac
 import { TokenIcon, TokenPicker, VerifiedMark, ChainBadge } from "@/components/terminal/TokenIcon";
 import { linkedWallets, useForeign, WALLET_MARK, type LinkedWallet } from "@/lib/foreign-wallet";
 import { canSign, chainByLabel, validAddress } from "@/lib/chains";
-import { fmt, qty, scoreLabel, tokenBySymbol, tokenLabel, TOKENS, usd } from "@/lib/market";
+import { failedScan, fmt, qty, scoreLabel, tokenBySymbol, tokenLabel, TOKENS, usd } from "@/lib/market";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 import { useDesk } from "@/lib/store";
 import { refreshBalances, useHoldings } from "@/lib/wallet-holdings";
@@ -149,7 +149,7 @@ export function SwapDesk({ focus, seed }: { focus?: string; seed?: { symbol: str
   const walletUsd = Object.entries(sellHold.book).reduce((sum, [symbol, amount]) => sum + amount * (tokenBySymbol(symbol).price || 0), 0);
   const short = Boolean(sellActive) && sellActive?.id === originKind && amountN > held + 1e-8;
   const needsWallet = amountN > 0 && !originConnected;
-  const risk = !sell.verified || !buy.verified;
+  const risk = failedScan(sell) || failedScan(buy);
 
   useEffect(() => {
     if (!sellWalletId) return;

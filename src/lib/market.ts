@@ -320,6 +320,7 @@ const KNOWN_REAL = new Set([
   "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
   "0x4200000000000000000000000000000000000006",
   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+  "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2",
   "0xc2132d05d31c914a87c6611c10748aeb04b58e8f",
   "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359",
   "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619",
@@ -354,13 +355,52 @@ function knownContract(address?: string) {
   return CANONICAL_ADDR.has(key) || KNOWN_REAL.has(key);
 }
 
-export function isVerifiedAsset(token: { symbol: string; address?: string; chain?: string; assetId?: string; kind?: string }) {
+function symbolBase(symbol: string) {
+  return symbol.split(".")[0]?.toUpperCase() ?? "";
+}
+
+const REAL_STABLES = new Set(["USDC", "USDC.E", "USDT", "USDT.E", "DAI", "FRAX", "USDE", "USD1", "BUSD", "TUSD", "PYUSD", "USDS"]);
+const STABLE_CHAINS = new Set(["Ethereum", "Base", "BNB", "Arbitrum", "Optimism", "Polygon", "Avalanche", "Solana", "Tron", "NEAR", "Scroll", "Gnosis", "Aurora"]);
+const CHAIN_NATIVE: Record<string, readonly string[]> = {
+  Ethereum: ["ETH", "WETH"],
+  Base: ["ETH", "WETH", "BASE"],
+  Arbitrum: ["ETH", "WETH"],
+  Optimism: ["ETH", "WETH"],
+  Scroll: ["ETH", "WETH"],
+  Aurora: ["ETH", "WETH", "AURORA"],
+  BNB: ["BNB", "WBNB"],
+  Polygon: ["POL", "MATIC", "WMATIC"],
+  Avalanche: ["AVAX", "WAVAX"],
+  Solana: ["SOL", "WSOL"],
+  NEAR: ["NEAR", "WNEAR"],
+  Bitcoin: ["BTC", "WBTC"],
+  Tron: ["TRX"],
+  Gnosis: ["XDAI", "GNO"],
+};
+
+export function isChainToken(token: { symbol: string; chain?: string; address?: string }) {
   if (knownContract(token.address)) return true;
-  const base = token.symbol.split(".")[0]?.toUpperCase() ?? "";
+  const base = symbolBase(token.symbol);
+  const chain = token.chain ?? "";
+  if (REAL_STABLES.has(base) && STABLE_CHAINS.has(chain)) return true;
+  if (CHAIN_NATIVE[chain]?.includes(base)) return true;
+  const home = MAJOR_HOME[base];
+  return Boolean(home && home !== "*" && chain && home.includes(chain));
+}
+
+export function isVerifiedAsset(token: { symbol: string; address?: string; chain?: string; assetId?: string; kind?: string }) {
+  if (isChainToken(token)) return true;
+  const base = symbolBase(token.symbol);
   if (token.assetId && BLUE_CHIP.has(base)) return true;
   if (token.kind === "meme") return false;
   if (!token.address && token.chain && isMajorAsset(base, token.chain)) return true;
   return false;
+}
+
+export function failedScan(token: { symbol: string; chain?: string; address?: string; kind?: string; verified?: boolean }) {
+  if (token.kind !== "meme") return false;
+  if (isChainToken(token)) return false;
+  return !token.verified;
 }
 
 const MAJOR_HOME: Record<string, "*" | readonly string[]> = {
@@ -405,7 +445,10 @@ export function isMajorAsset(symbol: string, chain: string) {
 }
 
 export function sealMajors() {
-  for (const token of TOKENS) token.verified = isVerifiedAsset(token);
+  for (const token of TOKENS) {
+    token.verified = isVerifiedAsset(token);
+    if (token.kind === "meme" && isChainToken(token)) token.kind = "defi";
+  }
 }
 
 export function qualityScore(token: { liqN: number; volN: number; txnsN: number; ageH: number; mcapN?: number }): number | null {
