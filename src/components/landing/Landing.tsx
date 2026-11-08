@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { TOKENS, tokenBySymbol, usd } from "@/lib/market";
+import { tokenBySymbol, usd } from "@/lib/market";
 
 const FAQ = [
   ["What sits on this desk?", "Markets, spot, perps, swap, a Meta Pool vault, Rhea lending, portfolio, and a wallet tracker. One NEAR terminal."],
@@ -133,7 +133,7 @@ export function Landing() {
         </section>
 
         <section className="landing-stats">
-          <Stat k="Tokens on the desk" v={String(TOKENS.length)} />
+          <Stat k="Tokens on the desk" v="500+" />
           <Stat k="NEAR wallets" v="6" />
           <Stat k="Vault" v="stNEAR" />
         </section>
