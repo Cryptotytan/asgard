@@ -937,8 +937,22 @@ async function scoutHolders(chain: string, address: string, limit: number): Prom
     .filter((row) => row.amount > 0 && row.account !== "—");
 }
 
+async function hostedHolders(chain: string, address: string, limit: number): Promise<HolderRow[]> {
+  const prefix = typeof window !== "undefined" ? (previewPathPrefix(window.location.hostname, window.location.pathname) ?? "") : "";
+  const query = new URLSearchParams({ chain, address, limit: String(limit) });
+  const response = await fetch(`${prefix}/api/holders?${query}`, { signal: AbortSignal.timeout(12000) }).catch(() => null);
+  if (!response?.ok) return [];
+  const body = (await response.json()) as { rows?: HolderRow[] };
+  return (body.rows ?? []).filter((row) => row.account && row.amount > 0);
+}
+
 export async function loadHolders(symbol: string, address?: string, limit = 15): Promise<{ rows: HolderRow[]; top10: number | null; count: number | null; bands: HolderBand[] }> {
   const { token, raw } = contractOf(symbol, address);
+  const hosted = raw && token?.chain !== "NEAR" ? await hostedHolders(token?.chain ?? "", raw, limit).catch(() => [] as HolderRow[]) : [];
+  if (hosted.length) {
+    const top10 = hosted.reduce((sum, row) => sum + (row.share ?? 0), 0);
+    return { rows: hosted.slice(0, limit), top10: top10 > 0 ? top10 : null, count: hosted.length, bands: [] };
+  }
   const near = token?.chain === "NEAR" || (!token && Boolean(raw) && !raw.startsWith("0x"));
   const solana = token?.chain === "Solana" || (!token?.chain && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw));
   const network = token ? GECKO_NET[token.chain] : "";

@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as ApiGeckoRouteImport } from './routes/api/gecko'
+import { Route as ApiHoldersRouteImport } from './routes/api/holders'
 import { Route as ApiNetRouteImport } from './routes/api/net'
 import { Route as ApiRefPathRouteImport } from './routes/api/ref-path'
 
@@ -30,6 +31,11 @@ const ApiGeckoRoute = ApiGeckoRouteImport.update({
   path: '/api/gecko',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiHoldersRoute = ApiHoldersRouteImport.update({
+  id: '/api/holders',
+  path: '/api/holders',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiNetRoute = ApiNetRouteImport.update({
   id: '/api/net',
   path: '/api/net',
@@ -45,6 +51,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/api/gecko': typeof ApiGeckoRoute
+  '/api/holders': typeof ApiHoldersRoute
   '/api/net': typeof ApiNetRoute
   '/api/ref-path': typeof ApiRefPathRoute
 }
@@ -52,6 +59,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/api/gecko': typeof ApiGeckoRoute
+  '/api/holders': typeof ApiHoldersRoute
   '/api/net': typeof ApiNetRoute
   '/api/ref-path': typeof ApiRefPathRoute
 }
@@ -60,21 +68,32 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/api/gecko': typeof ApiGeckoRoute
+  '/api/holders': typeof ApiHoldersRoute
   '/api/net': typeof ApiNetRoute
   '/api/ref-path': typeof ApiRefPathRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/app' | '/api/gecko' | '/api/net' | '/api/ref-path'
+  fullPaths:
+    '/' | '/app' | '/api/gecko' | '/api/holders' | '/api/net' | '/api/ref-path'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/app' | '/api/gecko' | '/api/net' | '/api/ref-path'
-  id: '__root__' | '/' | '/app' | '/api/gecko' | '/api/net' | '/api/ref-path'
+  to:
+    '/' | '/app' | '/api/gecko' | '/api/holders' | '/api/net' | '/api/ref-path'
+  id:
+    | '__root__'
+    | '/'
+    | '/app'
+    | '/api/gecko'
+    | '/api/holders'
+    | '/api/net'
+    | '/api/ref-path'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRoute
   ApiGeckoRoute: typeof ApiGeckoRoute
+  ApiHoldersRoute: typeof ApiHoldersRoute
   ApiNetRoute: typeof ApiNetRoute
   ApiRefPathRoute: typeof ApiRefPathRoute
 }
@@ -102,6 +121,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiGeckoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/holders': {
+      id: '/api/holders'
+      path: '/api/holders'
+      fullPath: '/api/holders'
+      preLoaderRoute: typeof ApiHoldersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/net': {
       id: '/api/net'
       path: '/api/net'
@@ -123,6 +149,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRoute,
   ApiGeckoRoute: ApiGeckoRoute,
+  ApiHoldersRoute: ApiHoldersRoute,
   ApiNetRoute: ApiNetRoute,
   ApiRefPathRoute: ApiRefPathRoute,
 }
