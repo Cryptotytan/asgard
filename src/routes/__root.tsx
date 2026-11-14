@@ -24,6 +24,11 @@ export const Route = createRootRoute({
   component: () => (
     <html lang="en" suppressHydrationWarning>
       <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){var key="asgard-chunk-reload";function stale(reason){var text=String(reason&&reason.message||reason||"");return /dynamically imported module|Importing a module script failed|Unable to preload CSS/i.test(text);}function recover(reason){if(!stale(reason))return false;try{var last=Number(sessionStorage.getItem(key)||0);if(Date.now()-last<15000)return false;sessionStorage.setItem(key,String(Date.now()));}catch(e){return false;}location.reload();return true;}window.addEventListener("vite:preloadError",function(event){if(recover(event&&event.payload))event.preventDefault();});window.addEventListener("unhandledrejection",function(event){if(recover(event&&event.reason))event.preventDefault();});})();`,
+          }}
+        />
         <HeadContent />
       </head>
       <body>
