@@ -823,7 +823,16 @@ function publish(marks: Record<string, number>) {
   rememberMarketSnapshot();
 }
 
-export type HolderRow = { account: string; amount: number; share: number | null };
+export type HolderRow = {
+  account: string;
+  amount: number;
+  share: number | null;
+  buyPx?: number;
+  sellPx?: number;
+  pnl?: number | null;
+  funded?: string;
+  label?: string;
+};
 export type HolderBand = { label: string; pct: number };
 
 function contractOf(symbol: string, address?: string) {

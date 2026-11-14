@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Copy } from "lucide-react";
 import { fmt, money, px, type Print, type Token } from "@/lib/market";
-import { loadMemeBoard } from "@/lib/live";
+import { loadMemeBoard, type HolderRow } from "@/lib/live";
 import { useDesk } from "@/lib/store";
 import { useTradeLog } from "@/lib/trade-log";
 import { readTracker } from "@/lib/tracker";
@@ -27,7 +27,7 @@ export function MemeBook({ token }: { token: Token }) {
   const [tab, setTab] = useState<Tab>("Trades");
   const [lens, setLens] = useState<"all" | "tracked">("all");
   const [trades, setTrades] = useState<Print[] | null>(null);
-  const [holders, setHolders] = useState<{ account: string; amount: number; share: number | null }[] | null>(null);
+  const [holders, setHolders] = useState<HolderRow[] | null>(null);
   const [count, setCount] = useState<number | null>(null);
   const orders = useDesk((s) => s.orders);
   const balances = useDesk((s) => s.balances);
@@ -227,7 +227,7 @@ function Holders({
   lens,
   onLens,
 }: {
-  rows: { account: string; amount: number; share: number | null }[] | null;
+  rows: HolderRow[] | null;
   topShare: number;
   price: number;
   mcap: number;
@@ -267,6 +267,9 @@ function Holders({
           <tbody className="font-mono">
             {rows.map((row, index) => {
               const stat = book.get(row.account.toLowerCase());
+              const buyPx = stat && stat.buyPx > 0 ? stat.buyPx : row.buyPx ?? 0;
+              const sellPx = stat && stat.sellPx > 0 ? stat.sellPx : row.sellPx ?? 0;
+              const pnl = stat?.pnl != null ? stat.pnl : row.pnl ?? null;
               const value = row.share != null && mcap > 0 ? (row.share / 100) * mcap : row.amount * price;
               return (
                 <tr key={row.account} className="border-b border-line hover:bg-surface">
@@ -274,7 +277,8 @@ function Holders({
                   <td className="px-2 py-2">
                     <span className="flex items-center gap-1.5">
                       <Wallet id={row.account} />
-                      {(row.share ?? 0) >= 1 && <span className="rounded-full border border-line bg-surface-2 px-1.5 font-sans text-[10px] text-muted">Whale</span>}
+                      {row.label && <span className="max-w-28 truncate rounded-full border border-line bg-surface-2 px-1.5 font-sans text-[10px] text-muted">{row.label}</span>}
+                      {!row.label && (row.share ?? 0) >= 1 && <span className="rounded-full border border-line bg-surface-2 px-1.5 font-sans text-[10px] text-muted">Whale</span>}
                     </span>
                   </td>
                   <td className="px-2 py-2">
@@ -286,10 +290,10 @@ function Holders({
                       <span className="text-fg/80">{value > 0 ? money(value) : "—"}</span>
                     </span>
                   </td>
-                  <td className="px-2 py-2 text-primary">{stat ? mc(stat.buyPx, price, mcap) : "—"}</td>
-                  <td className="px-2 py-2 text-danger">{stat ? mc(stat.sellPx, price, mcap) : "—"}</td>
-                  <td className={`px-2 py-2 ${stat?.pnl == null ? "text-muted" : stat.pnl >= 0 ? "text-primary" : "text-danger"}`}>{stat?.pnl == null ? "—" : signed(stat.pnl)}</td>
-                  <td className="px-2 py-2 text-right text-muted">—</td>
+                  <td className="px-2 py-2 text-primary">{buyPx > 0 ? mc(buyPx, price, mcap) : "—"}</td>
+                  <td className="px-2 py-2 text-danger">{sellPx > 0 ? mc(sellPx, price, mcap) : "—"}</td>
+                  <td className={`px-2 py-2 ${pnl == null ? "text-muted" : pnl >= 0 ? "text-primary" : "text-danger"}`}>{pnl == null ? "—" : signed(pnl)}</td>
+                  <td className="px-2 py-2 text-muted">{row.funded ? <Wallet id={row.funded} /> : "—"}</td>
                 </tr>
               );
             })}
