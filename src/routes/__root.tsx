@@ -24,11 +24,6 @@ export const Route = createRootRoute({
   component: () => (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `(function(){var key="asgard-chunk-tries";try{sessionStorage.removeItem(key+"-go");}catch(e){}function stale(reason){var text=String(reason&&reason.message||reason||"");return /dynamically imported module|Importing a module script failed|Unable to preload CSS/i.test(text);}function recover(reason){if(!stale(reason))return false;try{if(sessionStorage.getItem(key+"-go")==="1")return true;var n=Number(sessionStorage.getItem(key)||0);if(n>=2)return false;sessionStorage.setItem(key+"-go","1");sessionStorage.setItem(key,String(n+1));}catch(e){return false;}var url=new URL(location.href);url.searchParams.set("asgard",String(Date.now()));location.replace(url.toString());return true;}window.addEventListener("vite:preloadError",function(event){if(recover(event&&event.payload))event.preventDefault();});window.addEventListener("unhandledrejection",function(event){if(recover(event&&event.reason))event.preventDefault();});setTimeout(function(){try{sessionStorage.removeItem(key);}catch(e){}},8000);})();`,
-          }}
-        />
         <HeadContent />
       </head>
       <body>
