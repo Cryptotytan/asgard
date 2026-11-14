@@ -4,7 +4,6 @@ import { fmt, money, px, type Print, type Token } from "@/lib/market";
 import { loadMemeBoard, type HolderRow } from "@/lib/live";
 import { useDesk } from "@/lib/store";
 import { useTradeLog } from "@/lib/trade-log";
-import { readTracker } from "@/lib/tracker";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 
 const TABS = ["Trades", "Positions", "Orders", "Holders", "Top Traders", "History", "Dev"] as const;
@@ -25,14 +24,12 @@ type Trader = {
 
 export function MemeBook({ token }: { token: Token }) {
   const [tab, setTab] = useState<Tab>("Trades");
-  const [lens, setLens] = useState<"all" | "tracked">("all");
   const [trades, setTrades] = useState<Print[] | null>(null);
   const [holders, setHolders] = useState<HolderRow[] | null>(null);
   const [count, setCount] = useState<number | null>(null);
   const orders = useDesk((s) => s.orders);
   const balances = useDesk((s) => s.balances);
   const chain = useDesk((s) => s.chain);
-  const accountId = useDesk((s) => s.accountId);
   const cancelOrder = useDesk((s) => s.cancelOrder);
   const log = useTradeLog();
 
@@ -59,12 +56,7 @@ export function MemeBook({ token }: { token: Token }) {
   }, [token.symbol, token.address]);
 
   const traders = useMemo(() => rankTraders(trades ?? [], token.price), [trades, token.price]);
-  const tracked = useMemo(() => {
-    if (!accountId) return new Set<string>();
-    return new Set(readTracker(accountId).wallets.map((wallet) => wallet.address.toLowerCase()));
-  }, [accountId, tab]);
-  const holderRows = (holders ?? []).filter((row) => lens === "all" || tracked.has(row.account.toLowerCase()));
-  const topShare = holderRows.reduce((sum, row) => sum + (row.share ?? 0), 0);
+  const topShare = (holders ?? []).reduce((sum, row) => sum + (row.share ?? 0), 0);
   const held = Math.max(balances[token.symbol] ?? 0, chain[token.symbol] ?? 0, chain[token.symbol.toUpperCase()] ?? 0);
   const mine = log.filter((row) => row.symbol === token.symbol || row.title.toLowerCase().includes(token.symbol.toLowerCase()));
   const openOrders = orders.filter((order) => order.symbol === token.symbol || order.base === token.symbol);
@@ -90,13 +82,11 @@ export function MemeBook({ token }: { token: Token }) {
       {tab === "Orders" && <OrderBook rows={openOrders} onCancel={cancelOrder} />}
       {tab === "Holders" && (
         <Holders
-          rows={holders == null ? null : holderRows}
+          rows={holders}
           topShare={topShare}
           price={token.price}
           mcap={token.mcapN}
           traders={traders}
-          lens={lens}
-          onLens={setLens}
         />
       )}
       {tab === "Top Traders" && <TopTraders rows={trades == null ? null : traders} price={token.price} mcap={token.mcapN} />}
@@ -224,19 +214,15 @@ function Holders({
   price,
   mcap,
   traders,
-  lens,
-  onLens,
 }: {
   rows: HolderRow[] | null;
   topShare: number;
   price: number;
   mcap: number;
   traders: Trader[];
-  lens: "all" | "tracked";
-  onLens: (lens: "all" | "tracked") => void;
 }) {
   if (!rows) return <Skeleton cols={7} />;
-  if (!rows.length) return <Empty title={lens === "tracked" ? "None of your tracked wallets hold this token" : "No holder list has been published for this token"} />;
+  if (!rows.length) return <Empty title="No holder list has been published for this token" />;
   const book = new Map(traders.map((row) => [row.wallet.toLowerCase(), row]));
   const max = Math.max(...rows.map((row) => row.share ?? 0), 0.01);
   return (
@@ -250,10 +236,6 @@ function Holders({
             ["Avg PnL", avgPnl(traders)],
           ]}
         />
-        <div className="ml-auto rounded-full bg-surface p-0.5 text-[10px] font-semibold">
-          <button type="button" onClick={() => onLens("all")} className={`h-7 rounded-full px-2.5 ${lens === "all" ? "bg-surface-2 text-fg shadow-[inset_0_0_0_1px_var(--color-line)]" : "text-muted"}`}>All</button>
-          <button type="button" onClick={() => onLens("tracked")} className={`h-7 rounded-full px-2.5 ${lens === "tracked" ? "bg-surface-2 text-fg shadow-[inset_0_0_0_1px_var(--color-line)]" : "text-muted"}`}>Tracked</button>
-        </div>
       </div>
       <div className="scroll-x py-2">
         <table className="w-full min-w-[860px] text-left">
@@ -458,14 +440,30 @@ function Pill({ children, tone }: { children: string; tone?: "up" | "down" }) {
 }
 
 function Wallet({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false);
   const shown = id.length > 12 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id || "—";
   return (
     <span className="inline-flex items-center gap-1">
       <span title={id}>{shown}</span>
       {id && id !== "—" && (
-        <button type="button" aria-label="Copy wallet" onClick={() => void navigator.clipboard?.writeText(id)} className="text-muted hover:text-fg">
+        <button
+          type="button"
+          aria-label="Copy wallet"
+          onClick={() => {
+            void navigator.clipboard?.writeText(id).then(() => {
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1600);
+            });
+          }}
+          className="text-muted hover:text-fg"
+        >
           <Copy className="size-3" />
         </button>
+      )}
+      {copied && (
+        <span className="fixed left-1/2 top-4 z-[80] -translate-x-1/2 rounded-xl border border-line bg-bg px-4 py-2.5 font-sans text-sm text-fg shadow-[0_12px_40px_rgba(0,0,0,0.45)]">
+          Wallet copied
+        </span>
       )}
     </span>
   );
