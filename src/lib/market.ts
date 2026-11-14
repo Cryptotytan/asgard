@@ -688,7 +688,7 @@ export function candles(seed: string, last: number, count = 72): Candle[] {
   }));
 }
 
-export type Print = { age: string; side: "Buy" | "Sell"; amount: number; usd: number; price: number; trader: string };
+export type Print = { age: string; side: "Buy" | "Sell"; amount: number; usd: number; price: number; trader: string; wallet?: string; at?: number };
 
 export function tape(): Print[] {
   return [];

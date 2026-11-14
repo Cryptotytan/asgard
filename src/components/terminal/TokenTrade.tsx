@@ -8,6 +8,7 @@ import { SecurityGate } from "@/components/terminal/SecurityGate";
 import { TokenIcon, VerifiedMark, ChainBadge } from "@/components/terminal/TokenIcon";
 import { PnlCard } from "@/components/terminal/PnlCard";
 import { PnlPoster } from "@/components/terminal/PnlPoster";
+import { MemeBook } from "@/components/terminal/MemeBook";
 import {
   canPerp,
   displayName,
@@ -125,6 +126,7 @@ export function TokenTrade({
   const tvChart = token.kind !== "meme" && Boolean(plotted);
   const shownPx = !tvChart ? token.price : (mark ?? 0) > 0 ? (mark as number) : token.price;
   const showBook = Boolean(tradingViewSpot(symbol) || tradingViewPerp(symbol));
+  const memePanel = token.kind === "meme" && !tradingViewSpot(symbol) && deskMode !== "perp";
   useEffect(() => {
     const node = chartPane.current;
     if (!node) return;
@@ -168,7 +170,7 @@ export function TokenTrade({
         </dl>
       </header>
 
-      <div className={`flex flex-col lg:grid lg:items-start ${showBook ? "lg:grid-cols-[minmax(0,1fr)_18rem_22rem]" : "lg:grid-cols-[minmax(0,1fr)_22rem]"} lg:grid-rows-[auto_minmax(0,1fr)]`}>
+      <div className={`flex flex-col lg:grid lg:items-start ${memePanel || !showBook ? "lg:grid-cols-[minmax(0,1fr)_22rem]" : "lg:grid-cols-[minmax(0,1fr)_18rem_22rem]"} lg:grid-rows-[auto_minmax(0,1fr)]`}>
         <section ref={chartPane} className="relative order-1 shrink-0 lg:col-start-1 lg:row-start-1 lg:self-start lg:border-r lg:border-line">
           {tvChart ? (
             <TradingViewChart symbol={symbol} market={deskMode} />
@@ -201,11 +203,15 @@ export function TokenTrade({
           <LiveBook symbol={symbol} mark={Number.isFinite(shownPx) ? shownPx : 0} liquidity={token.liqN} />
         </div>
         )}
-        <div className={`border-t border-line lg:row-span-2 lg:row-start-1 lg:self-stretch lg:border-t-0 ${showBook ? "lg:col-start-3" : "lg:col-start-2"}`}>
+        <div className={`border-t border-line lg:self-stretch lg:border-t-0 ${memePanel ? "lg:col-start-2 lg:row-start-1" : `lg:row-span-2 lg:row-start-1 ${showBook ? "lg:col-start-3" : "lg:col-start-2"}`}`}>
           <Ticket token={token} mode={mode} quickUsd={quickUsd} scanning={scanning} onMode={onMode} onFlash={onFlash} onSwap={onSwap} onPlaced={() => setBook("Orders")} />
         </div>
         </div>
-        <section className={`book-hinge order-4 border-t border-line lg:col-start-1 lg:row-start-2 lg:self-stretch lg:border-r lg:border-t-0 ${showBook ? "lg:col-span-2" : "lg:col-span-1"}`}>
+        <section className={`book-hinge order-4 border-t border-line lg:col-start-1 lg:row-start-2 lg:self-stretch lg:border-t-0 ${memePanel ? "lg:col-span-2" : showBook ? "lg:col-span-2 lg:border-r" : "lg:col-span-1 lg:border-r"}`}>
+          {memePanel ? (
+            <MemeBook token={token} />
+          ) : (
+          <>
           <div className="scroll-x flex gap-3 border-b border-line bg-bg px-3 py-0 sm:gap-1 sm:px-3 sm:py-1.5">
             {BOOKS.map((item) => (
               <button
@@ -227,6 +233,8 @@ export function TokenTrade({
             {book === "Trade history" && <WalletTrades symbol={token.symbol} />}
             {book === "Transactions" && <TxHistory />}
           </div>
+          </>
+          )}
         </section>
       </div>
     </div>
@@ -1075,7 +1083,7 @@ function Ticket({
   }
 
   return (
-    <aside className="px-1.5 py-2 lg:p-4">
+    <aside data-trade-ticket className="px-1.5 py-2 lg:p-4">
       <div className="lg:deck lg:panel lg:p-3">
       <div className="mb-2 hidden grid-cols-4 gap-1 text-center font-mono text-xs lg:grid">
         {windows.map(([label, value]) => (

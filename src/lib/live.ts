@@ -841,12 +841,12 @@ async function evmHolders(address: string, decimals: number): Promise<HolderRow[
   return [];
 }
 
-export async function loadHolders(symbol: string, address?: string): Promise<{ rows: HolderRow[]; top10: number | null; count: number | null; bands: HolderBand[] }> {
+export async function loadHolders(symbol: string, address?: string, limit = 15): Promise<{ rows: HolderRow[]; top10: number | null; count: number | null; bands: HolderBand[] }> {
   const { token, raw } = contractOf(symbol, address);
   const near = token?.chain === "NEAR" || (!token && Boolean(raw));
   const network = token ? GECKO_NET[token.chain] : "";
   const [holdersRes, supply, decimals, info] = await Promise.all([
-    near && raw ? fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(raw)}/holders?page=1&per_page=15`).catch(() => null) : Promise.resolve(null),
+    near && raw ? fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(raw)}/holders?page=1&per_page=${limit}`).catch(() => null) : Promise.resolve(null),
     near && raw ? ftSupplyRaw(raw) : Promise.resolve("0"),
     near && raw ? ftDecimals(raw) : Promise.resolve(0),
     network && raw ? geckoGet(`https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${encodeURIComponent(raw)}/info`) : Promise.resolve(null),
@@ -858,7 +858,7 @@ export async function loadHolders(symbol: string, address?: string): Promise<{ r
       return { account: row.account || "—", amount: humanRaw(rawAmount, decimals), share: sharePct(rawAmount, supply) };
     })
     .filter((row) => row.amount > 0)
-    .slice(0, 15);
+    .slice(0, limit);
   if (rows.length === 0 && raw.startsWith("0x")) {
     const evm = await evmHolders(raw, token?.decimals ?? 0).catch(() => [] as HolderRow[]);
     if (evm.length) rows.push(...evm);
@@ -876,6 +876,14 @@ export async function loadHolders(symbol: string, address?: string): Promise<{ r
   const top10 = rows.some((row) => row.share != null) ? rows.reduce((sum, row) => sum + (row.share ?? 0), 0) : bands.find((band) => band.label === "Top 10")?.pct ?? null;
   const count = Number(holders?.count);
   return { rows, top10, count: count > 0 ? count : null, bands };
+}
+
+export async function loadMemeBoard(symbol: string, address?: string) {
+  const [trades, holders] = await Promise.all([
+    loadPrints(symbol, 80).catch(() => [] as Print[]),
+    loadHolders(symbol, address, 40).catch(() => ({ rows: [] as HolderRow[], top10: null, count: null, bands: [] as HolderBand[] })),
+  ]);
+  return { trades, holders: holders.rows, count: holders.count, top10: holders.top10 };
 }
 
 async function ftView(contract: string, method: string) {
@@ -1050,20 +1058,20 @@ function sameToken(left: string, right: string) {
   return tail(a) === tail(b);
 }
 
-async function poolPrints(symbol: string): Promise<Print[]> {
+async function poolPrints(symbol: string, limit = 16): Promise<Print[]> {
   const { token, raw } = contractOf(symbol);
   const network = token ? GECKO_NET[token.chain] : "";
   if (!network || !raw) return [];
   const hinted = token ? knownPool(token.chain, raw) : "";
   const matched = hinted || (await geckoPool(network, raw, token?.price ?? 0));
-  const first = matched ? await printsFromPool(network, matched, raw) : [];
+  const first = matched ? await printsFromPool(network, matched, raw, limit) : [];
   if (first.length) return first;
   const loose = await geckoPool(network, raw, 0, false);
   if (!loose || loose === matched) return first;
-  return printsFromPool(network, loose, raw);
+  return printsFromPool(network, loose, raw, limit);
 }
 
-async function printsFromPool(network: string, pool: string, raw: string): Promise<Print[]> {
+async function printsFromPool(network: string, pool: string, raw: string, limit = 16): Promise<Print[]> {
   const body = await geckoGet(`https://api.geckoterminal.com/api/v2/networks/${network}/pools/${encodeURIComponent(pool)}/trades`);
   const rows = (body as { data?: { attributes?: Record<string, string> }[] } | null)?.data ?? [];
   const prints: Print[] = [];
@@ -1078,25 +1086,29 @@ async function printsFromPool(network: string, pool: string, raw: string): Promi
     const price = Number(buying ? trade.price_to_in_usd : trade.price_from_in_usd);
     const usd = Number(trade.volume_in_usd);
     if (!(amount > 0)) continue;
+    const wallet = String(trade.tx_from_address ?? "");
+    const at = Date.parse(String(trade.block_timestamp ?? ""));
     prints.push({
       age: agoIso(String(trade.block_timestamp ?? "")),
       side: buying ? "Buy" : "Sell",
       amount,
       usd: Number.isFinite(usd) ? usd : 0,
       price: Number.isFinite(price) ? price : 0,
-      trader: shortAccount(String(trade.tx_from_address ?? "—")),
+      trader: shortAccount(wallet || "—"),
+      wallet,
+      at: Number.isFinite(at) ? at : 0,
     });
-    if (prints.length >= 16) break;
+    if (prints.length >= limit) break;
   }
   return prints;
 }
 
-export async function loadPrints(symbol: string) {
+export async function loadPrints(symbol: string, limit = 16) {
   const { token, raw } = contractOf(symbol);
   const near = token?.chain === "NEAR";
   const [pool, response] = await Promise.all([
-    poolPrints(symbol).catch(() => [] as Print[]),
-    near && raw ? fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(raw)}/txns?page=1&per_page=16`).catch(() => null) : Promise.resolve(null),
+    poolPrints(symbol, limit).catch(() => [] as Print[]),
+    near && raw ? fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(raw)}/txns?page=1&per_page=${limit}`).catch(() => null) : Promise.resolve(null),
   ]);
   const nearRows: Print[] = [];
   if (response && response.ok) {
@@ -1104,22 +1116,26 @@ export async function loadPrints(symbol: string) {
       txns?: { delta_amount?: string; block_timestamp?: string; involved_account_id?: string; ft?: { decimals?: number } }[];
     };
     const price = token?.price ?? 0;
-    for (const tx of (body.txns ?? []).slice(0, 16)) {
+    for (const tx of (body.txns ?? []).slice(0, limit)) {
       const decimals = tx.ft?.decimals ?? 0;
       const delta = tx.delta_amount ?? "0";
       const amount = Number(delta.replace("-", "")) / 10 ** (Number.isFinite(decimals) ? decimals : 0);
       if (!(amount > 0)) continue;
+      const wallet = tx.involved_account_id ?? "";
+      const at = tx.block_timestamp ? Number(BigInt(tx.block_timestamp) / 1_000_000n) : 0;
       nearRows.push({
         age: tx.block_timestamp ? agoFrom(tx.block_timestamp) : "—",
         side: delta.startsWith("-") ? "Sell" : "Buy",
         amount,
         usd: amount * price,
         price,
-        trader: shortAccount(tx.involved_account_id ?? raw),
+        trader: shortAccount(wallet || raw),
+        wallet,
+        at,
       });
     }
   }
-  const rows = (pool.length ? pool : nearRows).slice(0, 16);
+  const rows = (pool.length ? pool : nearRows).slice(0, limit);
   prints.set(symbol, rows);
   useDesk.setState((state) => ({ clock: state.clock + 1 }));
   return rows;
