@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Zap } from "lucide-react";
+import { Copy } from "lucide-react";
 import { fmt, money, px, type Print, type Token } from "@/lib/market";
 import { loadMemeBoard } from "@/lib/live";
 import { useDesk } from "@/lib/store";
@@ -7,7 +7,7 @@ import { useTradeLog } from "@/lib/trade-log";
 import { readTracker } from "@/lib/tracker";
 import { TokenIcon } from "@/components/terminal/TokenIcon";
 
-const TABS = ["Trades", "Positions", "Orders", "Alerts", "Holders", "Top Traders", "History", "Dev"] as const;
+const TABS = ["Trades", "Positions", "Orders", "Holders", "Top Traders", "History", "Dev"] as const;
 type Tab = (typeof TABS)[number];
 
 type Trader = {
@@ -71,46 +71,23 @@ export function MemeBook({ token }: { token: Token }) {
 
   return (
     <div className="flex min-h-[28rem] flex-col bg-bg text-xs">
-      <div className="flex items-center gap-2 border-b border-line bg-bg px-2 py-1.5 sm:px-3">
-        <div className="scroll-x flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-          {TABS.map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setTab(item)}
-              className={`h-8 shrink-0 rounded-full px-3 text-xs font-semibold ${tab === item ? "bg-surface-2 text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}
-            >
-              {item === "Holders" ? `Holders${count ? ` (${compact(count)})` : ""}` : item}
-            </button>
-          ))}
-        </div>
-        {tab === "Holders" && (
-          <div className="hidden shrink-0 rounded-full bg-surface p-0.5 text-[10px] font-semibold sm:flex">
-            <button type="button" onClick={() => setLens("all")} className={`h-7 rounded-full px-2.5 ${lens === "all" ? "bg-surface-2 text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}>All</button>
-            <button type="button" onClick={() => setLens("tracked")} className={`h-7 rounded-full px-2.5 ${lens === "tracked" ? "bg-surface-2 text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}>Tracked</button>
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={() => document.querySelector("[data-trade-ticket]")?.scrollIntoView({ behavior: "smooth", block: "nearest" })}
-          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full bg-primary px-3 text-[11px] font-semibold text-primary-fg"
-        >
-          <Zap className="size-3" /> Instant trade
-        </button>
+      <div className="scroll-x flex gap-3 border-b border-line bg-bg px-3 py-0 sm:gap-1 sm:px-3 sm:py-1.5">
+        {TABS.map((item) => (
+          <button
+            key={item}
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => setTab(item)}
+            className={`h-9 shrink-0 border-b-2 px-1 text-xs font-semibold sm:h-8 sm:flex-1 sm:rounded-full sm:border-b-0 sm:px-3 sm:text-sm ${tab === item ? "border-primary text-fg sm:bg-surface-2 sm:shadow-[inset_0_0_0_1px_var(--color-line)]" : "border-transparent text-muted"}`}
+          >
+            {item === "Holders" ? `Holders${count ? ` (${compact(count)})` : ""}` : item === "Orders" ? "Open orders" : item}
+          </button>
+        ))}
       </div>
-      {tab === "Holders" && (
-        <div className="flex border-b border-line px-3 py-2 sm:hidden">
-          <div className="rounded-full bg-surface p-0.5 text-[10px] font-semibold">
-            <button type="button" onClick={() => setLens("all")} className={`h-7 rounded-full px-2.5 ${lens === "all" ? "bg-surface-2 text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}>All</button>
-            <button type="button" onClick={() => setLens("tracked")} className={`h-7 rounded-full px-2.5 ${lens === "tracked" ? "bg-surface-2 text-fg shadow-[inset_0_-2px_0_var(--color-primary)]" : "text-muted"}`}>Tracked</button>
-          </div>
-        </div>
-      )}
-
+      <div key={tab} className="book-page px-3 pb-3 pt-1 sm:px-4 lg:min-h-[26rem]">
       {tab === "Trades" && <TradeTape rows={trades} symbol={token.symbol} />}
       {tab === "Positions" && <Positions token={token} held={held} opened={mine[mine.length - 1]?.time} />}
       {tab === "Orders" && <OrderBook rows={openOrders} onCancel={cancelOrder} />}
-      {tab === "Alerts" && <Empty title="No alerts on this token yet" />}
       {tab === "Holders" && (
         <Holders
           rows={holders == null ? null : holderRows}
@@ -119,11 +96,13 @@ export function MemeBook({ token }: { token: Token }) {
           mcap={token.mcapN}
           traders={traders}
           lens={lens}
+          onLens={setLens}
         />
       )}
       {tab === "Top Traders" && <TopTraders rows={trades == null ? null : traders} price={token.price} mcap={token.mcapN} />}
       {tab === "History" && <History rows={mine} />}
       {tab === "Dev" && <Dev token={token} count={count} />}
+      </div>
     </div>
   );
 }
@@ -132,12 +111,12 @@ function TradeTape({ rows, symbol }: { rows: Print[] | null; symbol: string }) {
   if (!rows) return <Skeleton cols={6} />;
   if (!rows.length) return <Empty title="No trades published for this token yet" />;
   return (
-    <div className="scroll-x overflow-auto">
+    <div className="scroll-x py-2">
       <table className="w-full min-w-[720px] text-left">
         <thead className="text-[10px] uppercase tracking-wide text-muted">
           <tr className="border-b border-line">
             {["Time", "Type", `Amount ${symbol}`, "Total USD", "Price", "Trader"].map((label) => (
-              <th key={label} className={`px-3 py-2 font-medium ${label === "Time" || label === "Type" || label === "Trader" ? "" : "text-right"}`}>{label}</th>
+              <th key={label} className={`px-2 py-2 font-medium ${label === "Time" || label === "Type" || label === "Trader" ? "" : "text-right"}`}>{label}</th>
             ))}
           </tr>
         </thead>
@@ -146,13 +125,15 @@ function TradeTape({ rows, symbol }: { rows: Print[] | null; symbol: string }) {
             const buy = row.side === "Buy";
             const tone = buy ? "text-primary" : "text-danger";
             return (
-              <tr key={`${row.wallet ?? row.trader}-${row.at ?? index}-${index}`} className="border-b border-line/50 hover:bg-surface">
-                <td className="px-3 py-2 text-muted">{stamp(row)}</td>
-                <td className={`px-3 py-2 font-sans font-semibold ${tone}`}>{row.side}</td>
-                <td className="px-3 py-2 text-right">{fmt(row.amount)}</td>
-                <td className={`px-3 py-2 text-right ${tone}`}>{cash(row.usd)}</td>
-                <td className="px-3 py-2 text-right">{px(row.price)}</td>
-                <td className="px-3 py-2">
+              <tr key={`${row.wallet ?? row.trader}-${row.at ?? index}-${index}`} className="border-b border-line hover:bg-surface">
+                <td className="px-2 py-2 text-muted">{stamp(row)}</td>
+                <td className="px-2 py-2">
+                  <span className={`inline-grid h-6 min-w-12 place-items-center rounded-full px-2 font-sans text-[10px] font-semibold uppercase ${buy ? "bg-primary/15 text-primary" : "bg-danger/15 text-danger"}`}>{row.side}</span>
+                </td>
+                <td className="px-2 py-2 text-right">{fmt(row.amount)}</td>
+                <td className={`px-2 py-2 text-right ${tone}`}>{cash(row.usd)}</td>
+                <td className="px-2 py-2 text-right">{px(row.price)}</td>
+                <td className="px-2 py-2">
                   <Wallet id={row.wallet || row.trader} />
                 </td>
               </tr>
@@ -175,29 +156,29 @@ function Positions({ token, held, opened }: { token: Token; held: number; opened
   }
   const value = held * (token.price > 0 ? token.price : 0);
   return (
-    <div className="scroll-x overflow-auto">
+    <div className="scroll-x py-2">
       <table className="w-full min-w-[760px] text-left">
         <thead className="text-[10px] uppercase tracking-wide text-muted">
           <tr className="border-b border-line">
             {["Token", "Invested", "Remaining", "Avg entry", "PnL", "Opened", "Action"].map((label) => (
-              <th key={label} className="px-3 py-2 font-medium">{label}</th>
+              <th key={label} className="px-2 py-2 font-medium">{label}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          <tr className="border-b border-line/50">
-            <td className="px-3 py-2.5">
+          <tr className="border-b border-line">
+            <td className="px-2 py-2">
               <span className="flex items-center gap-2 font-semibold">
                 <TokenIcon token={token} className="size-6" />
                 {token.symbol}
               </span>
             </td>
-            <td className="px-3 py-2.5 font-mono text-muted">—</td>
-            <td className="px-3 py-2.5 font-mono">{fmt(held)} <span className="text-muted">{cash(value)}</span></td>
-            <td className="px-3 py-2.5 font-mono text-muted">—</td>
-            <td className="px-3 py-2.5 font-mono text-muted">—</td>
-            <td className="px-3 py-2.5 text-muted">{opened ? new Date(opened).toLocaleString() : "—"}</td>
-            <td className="px-3 py-2.5 text-muted">—</td>
+            <td className="px-2 py-2 font-mono text-muted">—</td>
+            <td className="px-2 py-2 font-mono">{fmt(held)} <span className="text-muted">{cash(value)}</span></td>
+            <td className="px-2 py-2 font-mono text-muted">—</td>
+            <td className="px-2 py-2 font-mono text-muted">—</td>
+            <td className="px-2 py-2 text-muted">{opened ? new Date(opened).toLocaleString() : "—"}</td>
+            <td className="px-2 py-2 text-muted">—</td>
           </tr>
         </tbody>
       </table>
@@ -208,25 +189,25 @@ function Positions({ token, held, opened }: { token: Token; held: number; opened
 function OrderBook({ rows, onCancel }: { rows: { id: string; symbol: string; side: string; amount: number; limit: number; guard?: string }[]; onCancel: (id: string) => void }) {
   if (!rows.length) return <Empty title="No open orders" detail="A trigger you set on this token shows here until it fills or you cancel it." />;
   return (
-    <div className="scroll-x overflow-auto">
+    <div className="scroll-x py-2">
       <table className="w-full min-w-[760px] text-left">
         <thead className="text-[10px] uppercase tracking-wide text-muted">
           <tr className="border-b border-line">
             {["Token", "Type", "Trigger price", "Amount", "Expiry", "Status", "Actions"].map((label) => (
-              <th key={label} className="px-3 py-2 font-medium">{label}</th>
+              <th key={label} className="px-2 py-2 font-medium">{label}</th>
             ))}
           </tr>
         </thead>
         <tbody className="font-mono">
           {rows.map((order) => (
-            <tr key={order.id} className="border-b border-line/50">
-              <td className="px-3 py-2 font-sans font-semibold">{order.symbol}</td>
-              <td className="px-3 py-2 font-sans">{order.guard === "tp" ? "Take profit" : order.guard === "sl" ? "Stop loss" : order.side}</td>
-              <td className="px-3 py-2">{px(order.limit)}</td>
-              <td className="px-3 py-2">{fmt(order.amount)}</td>
-              <td className="px-3 py-2 text-muted">—</td>
-              <td className="px-3 py-2 text-primary">Open</td>
-              <td className="px-3 py-2">
+            <tr key={order.id} className="border-b border-line">
+              <td className="px-2 py-2 font-sans font-semibold">{order.symbol}</td>
+              <td className="px-2 py-2 font-sans">{order.guard === "tp" ? "Take profit" : order.guard === "sl" ? "Stop loss" : order.side}</td>
+              <td className="px-2 py-2">{px(order.limit)}</td>
+              <td className="px-2 py-2">{fmt(order.amount)}</td>
+              <td className="px-2 py-2 text-muted">—</td>
+              <td className="px-2 py-2 text-primary">Open</td>
+              <td className="px-2 py-2">
                 <button type="button" onClick={() => onCancel(order.id)} className="font-sans text-xs text-danger">Cancel</button>
               </td>
             </tr>
@@ -244,6 +225,7 @@ function Holders({
   mcap,
   traders,
   lens,
+  onLens,
 }: {
   rows: { account: string; amount: number; share: number | null }[] | null;
   topShare: number;
@@ -251,6 +233,7 @@ function Holders({
   mcap: number;
   traders: Trader[];
   lens: "all" | "tracked";
+  onLens: (lens: "all" | "tracked") => void;
 }) {
   if (!rows) return <Skeleton cols={7} />;
   if (!rows.length) return <Empty title={lens === "tracked" ? "None of your tracked wallets hold this token" : "No holder list has been published for this token"} />;
@@ -258,20 +241,26 @@ function Holders({
   const max = Math.max(...rows.map((row) => row.share ?? 0), 0.01);
   return (
     <div>
-      <Statline
-        items={[
-          ["Top holders", topShare > 0 ? `${topShare.toFixed(1)}%` : "—"],
-          ["Avg buy MC", avgMc(traders, "buy", price, mcap)],
-          ["Avg sell MC", avgMc(traders, "sell", price, mcap)],
-          ["Avg PnL", avgPnl(traders)],
-        ]}
-      />
-      <div className="scroll-x overflow-auto">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line py-2 text-[11px]">
+        <Statline
+          items={[
+            ["Top holders", topShare > 0 ? `${topShare.toFixed(1)}%` : "—"],
+            ["Avg buy MC", avgMc(traders, "buy", price, mcap)],
+            ["Avg sell MC", avgMc(traders, "sell", price, mcap)],
+            ["Avg PnL", avgPnl(traders)],
+          ]}
+        />
+        <div className="ml-auto rounded-full bg-surface p-0.5 text-[10px] font-semibold">
+          <button type="button" onClick={() => onLens("all")} className={`h-7 rounded-full px-2.5 ${lens === "all" ? "bg-surface-2 text-fg shadow-[inset_0_0_0_1px_var(--color-line)]" : "text-muted"}`}>All</button>
+          <button type="button" onClick={() => onLens("tracked")} className={`h-7 rounded-full px-2.5 ${lens === "tracked" ? "bg-surface-2 text-fg shadow-[inset_0_0_0_1px_var(--color-line)]" : "text-muted"}`}>Tracked</button>
+        </div>
+      </div>
+      <div className="scroll-x py-2">
         <table className="w-full min-w-[860px] text-left">
           <thead className="text-[10px] uppercase tracking-wide text-muted">
             <tr className="border-b border-line">
               {["#", "Wallet", "Share", "Avg buy MC", "Avg sell MC", "PnL", "Funded by"].map((label) => (
-                <th key={label} className="px-3 py-2 font-medium">{label}</th>
+                <th key={label} className="px-2 py-2 font-medium">{label}</th>
               ))}
             </tr>
           </thead>
@@ -280,15 +269,15 @@ function Holders({
               const stat = book.get(row.account.toLowerCase());
               const value = row.share != null && mcap > 0 ? (row.share / 100) * mcap : row.amount * price;
               return (
-                <tr key={row.account} className="border-b border-line/50 hover:bg-surface">
-                  <td className="px-3 py-2 text-muted">{index + 1}</td>
-                  <td className="px-3 py-2">
+                <tr key={row.account} className="border-b border-line hover:bg-surface">
+                  <td className="px-2 py-2 text-muted">{index + 1}</td>
+                  <td className="px-2 py-2">
                     <span className="flex items-center gap-1.5">
                       <Wallet id={row.account} />
                       {(row.share ?? 0) >= 1 && <span className="rounded-full border border-line bg-surface-2 px-1.5 font-sans text-[10px] text-muted">Whale</span>}
                     </span>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-2 py-2">
                     <span className="flex items-center gap-2">
                       <span className="w-12">{row.share == null ? "—" : `${row.share.toFixed(1)}%`}</span>
                       <span className="h-1 w-16 overflow-hidden rounded-full bg-surface-2">
@@ -297,10 +286,10 @@ function Holders({
                       <span className="text-fg/80">{value > 0 ? money(value) : "—"}</span>
                     </span>
                   </td>
-                  <td className="px-3 py-2 text-primary">{stat ? mc(stat.buyPx, price, mcap) : "—"}</td>
-                  <td className="px-3 py-2 text-danger">{stat ? mc(stat.sellPx, price, mcap) : "—"}</td>
-                  <td className={`px-3 py-2 ${stat?.pnl == null ? "text-muted" : stat.pnl >= 0 ? "text-primary" : "text-danger"}`}>{stat?.pnl == null ? "—" : signed(stat.pnl)}</td>
-                  <td className="px-3 py-2 text-right text-muted">—</td>
+                  <td className="px-2 py-2 text-primary">{stat ? mc(stat.buyPx, price, mcap) : "—"}</td>
+                  <td className="px-2 py-2 text-danger">{stat ? mc(stat.sellPx, price, mcap) : "—"}</td>
+                  <td className={`px-2 py-2 ${stat?.pnl == null ? "text-muted" : stat.pnl >= 0 ? "text-primary" : "text-danger"}`}>{stat?.pnl == null ? "—" : signed(stat.pnl)}</td>
+                  <td className="px-2 py-2 text-right text-muted">—</td>
                 </tr>
               );
             })}
@@ -319,6 +308,7 @@ function TopTraders({ rows, price, mcap }: { rows: Trader[] | null; price: numbe
   const took = rows.reduce((sum, row) => sum + row.sellUsd, 0);
   return (
     <div>
+      <div className="border-b border-line py-2">
       <Statline
         items={[
           ["Still holding", `${share.toFixed(1)}%`],
@@ -327,30 +317,31 @@ function TopTraders({ rows, price, mcap }: { rows: Trader[] | null; price: numbe
           ["Took out", took > 0 ? money(took) : "—"],
         ]}
       />
-      <div className="scroll-x overflow-auto">
+      </div>
+      <div className="scroll-x py-2">
         <table className="w-full min-w-[760px] text-left">
           <thead className="text-[10px] uppercase tracking-wide text-muted">
             <tr className="border-b border-line">
               {["#", "Wallet", "Avg buy MC", "Avg sell MC", "PnL", "Holding"].map((label) => (
-                <th key={label} className="px-3 py-2 font-medium">{label}</th>
+                <th key={label} className="px-2 py-2 font-medium">{label}</th>
               ))}
             </tr>
           </thead>
           <tbody className="font-mono">
             {rows.map((row, index) => (
-              <tr key={row.wallet} className="border-b border-line/50 hover:bg-surface">
-                <td className="px-3 py-2 text-muted">{index + 1}</td>
-                <td className="px-3 py-2"><Wallet id={row.wallet} /></td>
-                <td className="px-3 py-2">
+              <tr key={row.wallet} className="border-b border-line hover:bg-surface">
+                <td className="px-2 py-2 text-muted">{index + 1}</td>
+                <td className="px-2 py-2"><Wallet id={row.wallet} /></td>
+                <td className="px-2 py-2">
                   <span className="block text-primary">{mc(row.buyPx, price, mcap)}</span>
                   {row.buyN > 0 && <span className="block text-[10px] text-muted">{row.buyN} · {cash(row.buyUsd / row.buyN)}</span>}
                 </td>
-                <td className="px-3 py-2">
+                <td className="px-2 py-2">
                   <span className="block text-danger">{mc(row.sellPx, price, mcap)}</span>
                   {row.sellN > 0 && <span className="block text-[10px] text-muted">{row.sellN} · {cash(row.sellUsd / row.sellN)}</span>}
                 </td>
-                <td className={`px-3 py-2 ${row.pnl == null ? "text-muted" : row.pnl >= 0 ? "text-primary" : "text-danger"}`}>{row.pnl == null ? "—" : signed(row.pnl)}</td>
-                <td className={`px-3 py-2 font-sans ${row.net > 0 ? "text-primary" : "text-danger"}`}>{row.net > 0 ? "✓ holds" : "Sold"}</td>
+                <td className={`px-2 py-2 ${row.pnl == null ? "text-muted" : row.pnl >= 0 ? "text-primary" : "text-danger"}`}>{row.pnl == null ? "—" : signed(row.pnl)}</td>
+                <td className={`px-2 py-2 font-sans ${row.net > 0 ? "text-primary" : "text-danger"}`}>{row.net > 0 ? "✓ holds" : "Sold"}</td>
               </tr>
             ))}
           </tbody>
@@ -364,24 +355,24 @@ function History({ rows }: { rows: { id: string; title: string; detail: string; 
   const trades = rows.filter((row) => row.status !== "open");
   if (!trades.length) return <Empty title="No trades yet" detail="Your buys and sells of this token in the terminal land here." />;
   return (
-    <div className="scroll-x overflow-auto">
+    <div className="scroll-x py-2">
       <table className="w-full min-w-[640px] text-left">
         <thead className="text-[10px] uppercase tracking-wide text-muted">
           <tr className="border-b border-line">
             {["Type", "Amount", "Price", "PnL", "Time", "Action"].map((label) => (
-              <th key={label} className="px-3 py-2 font-medium">{label}</th>
+              <th key={label} className="px-2 py-2 font-medium">{label}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {trades.map((row) => (
-            <tr key={row.id} className="border-b border-line/50">
-              <td className="px-3 py-2 font-semibold">{row.title}</td>
-              <td className="px-3 py-2 font-mono text-muted">{row.detail || "—"}</td>
-              <td className="px-3 py-2 font-mono text-muted">—</td>
-              <td className={`px-3 py-2 font-mono ${row.value >= 0 ? "text-primary" : "text-danger"}`}>{row.value ? signed(row.value) : "—"}</td>
-              <td className="px-3 py-2 text-muted">{new Date(row.time).toLocaleString()}</td>
-              <td className="px-3 py-2 capitalize text-muted">{row.status}</td>
+            <tr key={row.id} className="border-b border-line">
+              <td className="px-2 py-2 font-semibold">{row.title}</td>
+              <td className="px-2 py-2 font-mono text-muted">{row.detail || "—"}</td>
+              <td className="px-2 py-2 font-mono text-muted">—</td>
+              <td className={`px-2 py-2 font-mono ${row.value >= 0 ? "text-primary" : "text-danger"}`}>{row.value ? signed(row.value) : "—"}</td>
+              <td className="px-2 py-2 text-muted">{new Date(row.time).toLocaleString()}</td>
+              <td className="px-2 py-2 capitalize text-muted">{row.status}</td>
             </tr>
           ))}
         </tbody>
@@ -394,22 +385,22 @@ function Dev({ token, count }: { token: Token; count: number | null }) {
   const age = token.ageH > 0 ? (token.ageH < 48 ? `${Math.max(1, Math.round(token.ageH))}h` : `${Math.round(token.ageH / 24)}d`) : "";
   return (
     <div>
-      <div className="flex flex-wrap gap-4 border-b border-line px-3 py-2 text-[11px] text-muted">
+      <div className="flex flex-wrap gap-4 border-b border-line px-2 py-2 text-[11px] text-muted">
         <span>Holders {count ? count.toLocaleString("en-US") : token.holdersN > 0 ? token.holdersN.toLocaleString("en-US") : "—"}</span>
         <span>Pair age {age || "—"}</span>
       </div>
-      <div className="scroll-x overflow-auto">
+      <div className="scroll-x py-2">
         <table className="w-full min-w-[860px] text-left">
           <thead className="text-[10px] uppercase tracking-wide text-muted">
             <tr className="border-b border-line">
               {["Token", "Market cap", "Token stats", "Liquidity", "Volume", "Txns"].map((label) => (
-                <th key={label} className="px-3 py-2 font-medium">{label}</th>
+                <th key={label} className="px-2 py-2 font-medium">{label}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            <tr className="border-b border-line/50">
-              <td className="px-3 py-2.5">
+            <tr className="border-b border-line">
+              <td className="px-2 py-2">
                 <span className="flex items-center gap-2">
                   <TokenIcon token={token} className="size-7 rounded-md" />
                   <span>
@@ -418,20 +409,20 @@ function Dev({ token, count }: { token: Token; count: number | null }) {
                   </span>
                 </span>
               </td>
-              <td className="px-3 py-2.5 font-mono">
+              <td className="px-2 py-2 font-mono">
                 <span className="block">{token.mcapN > 0 ? money(token.mcapN) : "—"}</span>
                 <span className={`block text-[10px] ${token.change >= 0 ? "text-primary" : "text-danger"}`}>{token.change ? `24h ${token.change >= 0 ? "+" : ""}${token.change.toFixed(1)}%` : "—"}</span>
               </td>
-              <td className="px-3 py-2.5">
+              <td className="px-2 py-2">
                 <span className="flex flex-wrap gap-1 text-[10px]">
                   {count ? <Pill>{compact(count)}</Pill> : null}
                   {token.buys > 0 && <Pill tone="up">{`${token.buys.toLocaleString("en-US")} buys`}</Pill>}
                   {token.sells > 0 && <Pill tone="down">{`${token.sells.toLocaleString("en-US")} sells`}</Pill>}
                 </span>
               </td>
-              <td className="px-3 py-2.5 font-mono">{token.liqN > 0 ? money(token.liqN) : "—"}</td>
-              <td className="px-3 py-2.5 font-mono">{token.volN > 0 ? money(token.volN) : "—"}</td>
-              <td className="px-3 py-2.5 font-mono">
+              <td className="px-2 py-2 font-mono">{token.liqN > 0 ? money(token.liqN) : "—"}</td>
+              <td className="px-2 py-2 font-mono">{token.volN > 0 ? money(token.volN) : "—"}</td>
+              <td className="px-2 py-2 font-mono">
                 <span className="block">{token.txnsN > 0 ? token.txnsN.toLocaleString("en-US") : "—"}</span>
                 {(token.buys > 0 || token.sells > 0) && (
                   <span className="block text-[10px]"><span className="text-primary">{token.buys.toLocaleString("en-US")}</span> / <span className="text-danger">{token.sells.toLocaleString("en-US")}</span></span>
@@ -447,7 +438,7 @@ function Dev({ token, count }: { token: Token; count: number | null }) {
 
 function Statline({ items }: { items: [string, string][] }) {
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1 border-b border-line px-3 py-2 text-[11px]">
+    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
       {items.map(([label, value]) => (
         <span key={label} className="text-muted">
           {label} <span className={value.startsWith("+") ? "text-primary" : value.startsWith("-") ? "text-danger" : "text-fg"}>{value}</span>
@@ -478,10 +469,10 @@ function Wallet({ id }: { id: string }) {
 
 function Empty({ title, detail }: { title: string; detail?: string }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-6 py-16 text-center">
-      <p className="text-sm font-semibold text-fg">{title}</p>
-      {detail && <p className="mt-1 max-w-sm text-xs text-muted">{detail}</p>}
-    </div>
+    <p className="px-2 py-10 text-center text-sm text-muted">
+      {title}
+      {detail ? ` ${detail}` : ""}
+    </p>
   );
 }
 
