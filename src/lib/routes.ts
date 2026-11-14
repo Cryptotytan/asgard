@@ -59,6 +59,16 @@ function gap(inUsd: number, outUsd: number) {
   return Math.max(0, (1 - outUsd / inUsd) * 100);
 }
 
+/** A missing or stale meme price is not a 100% spread. Trust a quoted USD value, otherwise the pool fee. */
+function pricedImpact(inUsd: number, outAmount: number, outPrice: number, feePct: number, quotedOutUsd = 0) {
+  if (quotedOutUsd > 0) return gap(inUsd, quotedOutUsd);
+  if (!(inUsd > 0) || !(outAmount > 0) || !(outPrice > 0)) return feePct;
+  const implied = inUsd / outAmount;
+  const drift = implied > outPrice ? implied / outPrice : outPrice / implied;
+  if (!Number.isFinite(drift) || drift > 5) return feePct;
+  return gap(inUsd, outAmount * outPrice);
+}
+
 function bookTrade(from: Token, to: Token, amountIn: number, amountOut: number, accountId?: string) {
   if (!(amountIn > 0) && !(amountOut > 0)) return;
   if (from.chain === "NEAR" && accountId) {
@@ -114,11 +124,48 @@ function decimalsOf(token: Token) {
     if (base === "ETH" || base === "WETH" || base === "AURORA") return 18;
     if (base === "WBTC" || base === "BTC") return 8;
     if (base === "NEAR" || base === "WNEAR" || base === "STNEAR") return 24;
-    return 24;
+    return null;
   }
   if (kind === "sol") return base === "SOL" ? 9 : 6;
   if (kind === "evm") return base === "USDT" || base === "USDC" ? 6 : 18;
   return null;
+}
+
+const decimalCache = new Map<string, number>();
+
+async function resolvedDecimals(token: Token) {
+  const known = decimalsOf(token);
+  if (known != null) return known;
+  const address = (token.address ?? "").replace(/^nep141:/i, "");
+  if (!address || chainByLabel(token.chain)?.kind !== "near") return null;
+  const key = address.toLowerCase();
+  const cached = decimalCache.get(key);
+  if (cached != null) return cached;
+  try {
+    const response = await fetch("https://rpc.mainnet.near.org", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "ft_metadata",
+        method: "query",
+        params: { request_type: "call_function", finality: "final", account_id: address, method_name: "ft_metadata", args_base64: "e30=" },
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { result?: { result?: number[] } };
+    const bytes = body.result?.result ?? [];
+    if (!bytes.length) return null;
+    const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes))) as { decimals?: number };
+    const decimals = Number(meta.decimals);
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 24) return null;
+    decimalCache.set(key, decimals);
+    token.decimals = decimals;
+    return decimals;
+  } catch {
+    return null;
+  }
 }
 
 function lifiAsset(token: Token) {
@@ -383,7 +430,13 @@ async function debridgeRoute(from: Token, to: Token, amount: string, sender: str
   const out = Number(quote.estimation?.dstChainTokenOut?.amount);
   if (!(out > 0)) return null;
   const receive = out / 10 ** destination.decimals;
-  const impact = gap(Number(amount) * (from.price || 0), Number(quote.estimation?.dstChainTokenOut?.approximateUsdValue) || receive * (to.price || 0));
+  const impact = pricedImpact(
+    Number(amount) * (from.price || 0),
+    receive,
+    to.price || 0,
+    0.3,
+    Number(quote.estimation?.dstChainTokenOut?.approximateUsdValue) || 0,
+  );
   return {
     id: "debridge",
     name: "deBridge",
@@ -430,8 +483,8 @@ function decodeCallArgs(args: string) {
 async function intearRoute(from: Token, to: Token, amount: string, accountId: string, slippageBps = 1500): Promise<LiveRoute | null> {
   const tokenIn = intearId(from);
   const tokenOut = intearId(to);
-  const decimals = decimalsOf(from);
-  const outDecimals = decimalsOf(to);
+  const decimals = await resolvedDecimals(from);
+  const outDecimals = await resolvedDecimals(to);
   if (!tokenIn || !tokenOut || tokenIn === tokenOut || decimals == null || outDecimals == null) return null;
   const units = parseUnits(amount, decimals);
   if (!units) return null;
@@ -454,7 +507,7 @@ async function intearRoute(from: Token, to: Token, amount: string, accountId: st
     name: best.dex_id || "Rhea",
     kind: "Swap",
     feeBps: 30,
-    impact: gap(Number(amount) * (from.price || 0), receive * (to.price || 0)),
+    impact: pricedImpact(Number(amount) * (from.price || 0), receive, to.price || 0, 0.3),
     receive,
     eta: "live",
     execute: async () => {
@@ -530,8 +583,8 @@ function nearContract(token: Token) {
 async function refRoute(from: Token, to: Token, amount: string, accountId: string, slippageBps = 1500): Promise<LiveRoute | null> {
   const tokenIn = nearContract(from);
   const tokenOut = nearContract(to);
-  const decimals = decimalsOf(from);
-  const outDecimals = decimalsOf(to);
+  const decimals = await resolvedDecimals(from);
+  const outDecimals = await resolvedDecimals(to);
   if (!tokenIn || !tokenOut || tokenIn === tokenOut || decimals == null || outDecimals == null) return null;
   const units = parseUnits(amount, decimals);
   if (!units) return null;
@@ -552,7 +605,7 @@ async function refRoute(from: Token, to: Token, amount: string, accountId: strin
     name: "Ref Finance",
     kind: "Swap",
     feeBps: 30,
-    impact: gap(Number(amount) * (from.price || 0), receive * (to.price || 0)),
+    impact: pricedImpact(Number(amount) * (from.price || 0), receive, to.price || 0, 0.3),
     receive,
     eta: "live",
     execute: async () => {

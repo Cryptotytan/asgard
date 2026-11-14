@@ -22,6 +22,16 @@ function tokenForWallet(symbol: string, chain: string | null, walletId: LinkedWa
   return tokenBySymbol(symbol);
 }
 
+function outputValue(spent: number, receive: number, price: number, impact: number) {
+  const marked = receive * price;
+  if (!(spent > 0) || !(receive > 0)) return marked;
+  if (!(price > 0)) return spent * (1 - Math.min(Math.max(impact, 0), 5) / 100);
+  const implied = spent / receive;
+  const drift = implied > price ? implied / price : price / implied;
+  if (!Number.isFinite(drift) || drift > 5) return spent * (1 - Math.min(Math.max(impact, 0), 5) / 100);
+  return marked;
+}
+
 function bestHeld(
   walletId: LinkedWallet["id"],
   book: Record<string, number>,
@@ -401,7 +411,7 @@ export function SwapDesk({ focus, seed }: { focus?: string; seed?: { symbol: str
           label="Buying"
           token={buy}
           amount={best && !fetching ? fmt(best.receive) : "0"}
-          usdValue={best && !fetching ? best.receive * buy.price : 0}
+          usdValue={best && !fetching ? outputValue(amountN * sell.price, best.receive, buy.price, best.impact) : 0}
           motion={turn}
           readOnly
           address={buyActive?.address ?? recipient}
