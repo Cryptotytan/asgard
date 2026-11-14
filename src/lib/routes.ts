@@ -91,12 +91,33 @@ function toolName(tool: string) {
   return known[tool] ?? tool;
 }
 
+const NEAR_DECIMALS: Record<string, number> = {
+  "wrap.near": 24,
+  "meta-pool.near": 24,
+  "usdt.tether-token.near": 6,
+  "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1": 6,
+  "eth.bridge.near": 18,
+  "2260fac5e5542a773aa44fbcfedf7c193bc2c599.factory.bridge.near": 8,
+  "aaaaaa20d9e0e2461697782ef11675f668207961.factory.bridge.near": 18,
+  "token.sweat": 18,
+  "token.rhealab.near": 18,
+};
+
 function decimalsOf(token: Token) {
   if (token.decimals != null) return token.decimals;
+  const address = (token.address ?? "").replace(/^nep141:/i, "").toLowerCase();
+  if (address && NEAR_DECIMALS[address] != null) return NEAR_DECIMALS[address];
   const kind = chainByLabel(token.chain)?.kind;
-  if (kind === "sol") return token.symbol.split(".")[0]?.toUpperCase() === "SOL" ? 9 : 6;
-  if (kind === "evm") return token.symbol.split(".")[0]?.toUpperCase() === "USDT" || token.symbol.split(".")[0]?.toUpperCase() === "USDC" ? 6 : 18;
-  if (kind === "near") return 24;
+  const base = token.symbol.split(".")[0]?.toUpperCase() ?? "";
+  if (kind === "near") {
+    if (base === "USDT" || base === "USDC" || base === "DAI") return 6;
+    if (base === "ETH" || base === "WETH" || base === "AURORA") return 18;
+    if (base === "WBTC" || base === "BTC") return 8;
+    if (base === "NEAR" || base === "WNEAR" || base === "STNEAR") return 24;
+    return 24;
+  }
+  if (kind === "sol") return base === "SOL" ? 9 : 6;
+  if (kind === "evm") return base === "USDT" || base === "USDC" ? 6 : 18;
   return null;
 }
 

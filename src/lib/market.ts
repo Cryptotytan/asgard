@@ -283,6 +283,7 @@ export const TOKENS: Token[] = [
     kind: kind as Token["kind"],
   });
   token.address = address;
+  token.decimals = ({ NEAR: 24, USDC: 6, USDT: 6, ETH: 18, wBTC: 8, AURORA: 18, STNEAR: 24, SWEAT: 18, RHEA: 18 } as Record<string, number>)[symbol];
   token.listed = false;
   return token;
 });

@@ -32,13 +32,13 @@ import {
 import { useDesk, type Position, type Side } from "@/lib/store";
 import { loadHolders, warmCharts, type HolderRow } from "@/lib/live";
 import { searchTokens, syncNearMarkets } from "@/lib/dex";
-import { logoOf } from "@/lib/logo-book";
 import { quoteRoutes, type LiveRoute } from "@/lib/routes";
 import { chainByLabel, validAddress } from "@/lib/chains";
 import { linkedWallets, foreignWallets, useForeign, type ForeignWallets } from "@/lib/foreign-wallet";
 import { creditHolding, holdingOf, refreshBalances } from "@/lib/wallet-holdings";
 import { loadChainHistory, rememberTx, useWalletHistory, type WalletTx } from "@/lib/wallet-history";
 import { logTrade, useTradeLog } from "@/lib/trade-log";
+import { armWalletPopup, closeSparePopup } from "@/lib/near-wallet";
 
 const FRAMES = ["1m", "5m", "15m", "1H", "4H", "1D"] as const;
 const BOOKS = ["Trades", "Positions", "Orders", "Order history", "Trade history", "Transactions"] as const;
@@ -114,6 +114,14 @@ export function TokenTrade({
   useEffect(() => {
     if (!canPerp(symbol) && mode === "perp") onMode("spot");
   }, [symbol, mode, onMode]);
+  useEffect(() => {
+    if (mode !== "spot") return;
+    const current = tokenBySymbol(symbol);
+    if (current.chain === "NEAR" || current.kind === "meme") return;
+    const base = symbol.split(".")[0]?.toUpperCase() ?? "";
+    const near = TOKENS.find((item) => item.chain === "NEAR" && item.symbol.split(".")[0].toUpperCase() === base && item.price > 0 && tradingViewSpot(item.symbol));
+    if (near && near.symbol !== symbol) onSymbol(near.symbol);
+  }, [mode, symbol, onSymbol]);
   useEffect(() => {
     if (mode !== "perp" || !canPerp(symbol)) return;
     const base = symbol.split(".")[0]?.toUpperCase() ?? "";
@@ -285,18 +293,19 @@ function TokenMenu({ token, mode, onPick }: { token: Token; scanning: boolean; m
         .filter((row) => tradingViewPerp(row.token.symbol) && (!needle || `${row.token.symbol} ${row.token.name} near perp`.toLowerCase().includes(needle) || row.label.toLowerCase().includes(needle)))
         .sort((a, b) => b.token.volN - a.token.volN || a.label.localeCompare(b.label));
     }
-    const SPOT_CHAINS = new Set(["NEAR", "Ethereum", "Solana", "Base", "Arbitrum", "Optimism", "BNB", "Polygon", "Avalanche", "Bitcoin", "Tron", "TON", "Sui", "Aptos", "Gnosis"]);
     return TOKENS.filter((item) => {
-      if (!SPOT_CHAINS.has(item.chain)) return false;
-      if (!item.assetId || !(item.price > 0)) return false;
-      if (!logoOf(item.symbol)) return false;
+      if (item.chain !== "NEAR") return false;
+      if (!(item.price > 0)) return false;
+      if (item.kind === "meme") return false;
       if (!tradingViewSpot(item.symbol)) return false;
-      const hay = `${item.symbol} ${item.name} ${item.chain} spot`.toLowerCase();
+      const base = item.symbol.split(".")[0].toUpperCase();
+      if (base === "USDT" || base === "USDC") return false;
+      const hay = `${item.symbol} ${item.name} near spot`.toLowerCase();
       return !needle || hay.includes(needle);
     })
-      .sort((a, b) => a.chain.localeCompare(b.chain) || b.volN - a.volN || a.symbol.localeCompare(b.symbol))
+      .sort((a, b) => b.volN - a.volN || a.symbol.localeCompare(b.symbol))
       .slice(0, needle ? 160 : 200)
-      .map((item) => ({ id: `${item.chain}:${item.symbol}`, label: displayName(item), token: item }));
+      .map((item) => ({ id: item.symbol, label: displayName(item), token: item }));
   }, [clock, mode, query]);
 
   useEffect(() => {
@@ -888,6 +897,7 @@ function Ticket({
   const [routesOpen, setRoutesOpen] = useState(false);
   const [deck, setDeck] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [signing, setSigning] = useState(false);
   const [acked, setAcked] = useState(false);
   const [gate, setGate] = useState(false);
   const [fills, setFills] = useState({ bought: 0, sold: 0 });
@@ -925,7 +935,16 @@ function Ticket({
         slippageBps: Math.round(slipPct * 100),
         purpose: "Spot",
       })
-        .then((next) => setRoutes(next))
+        .then((next) => {
+          if (pay.chain === "NEAR" && receiveToken.chain === "NEAR") {
+            const onchain = next.filter((route) => route.id === "ref" || route.id.startsWith("intear"));
+            const rest = next.filter((route) => route.id !== "ref" && !route.id.startsWith("intear"));
+            onchain.sort((a, b) => a.impact - b.impact || b.receive - a.receive);
+            setRoutes(onchain.length ? [...onchain, ...rest] : next);
+            return;
+          }
+          setRoutes(next);
+        })
         .catch(() => setRoutes([]))
         .finally(() => setQuoting(false));
     }, 400);
@@ -952,21 +971,25 @@ function Ticket({
     ["24H", token.windows.h24],
   ] as const;
 
-  function execute() {
+  async function execute() {
     if (token.symbol.split(".")[0]?.toUpperCase() === "USDT") {
+      closeSparePopup();
       onFlash("USDT is the quote. Pick another token.");
       return;
     }
     if (viewMode === "spot" && side === "sell" && !(token.price > 0)) {
+      closeSparePopup();
       onFlash("This token has no price yet.");
       return;
     }
     if (qty <= 0 || (viewMode === "spot" && spend <= 0)) {
+      closeSparePopup();
       onFlash("Enter an amount.");
       return;
     }
     const desk = useDesk.getState();
     if (viewMode === "perp") {
+      closeSparePopup();
       if (!desk.connected || !desk.accountId) {
         desk.connect();
         onFlash("Connect a NEAR wallet. Perps use that account's USDT.");
@@ -1002,11 +1025,13 @@ function Ticket({
       return;
     }
     if (!desk.connected) {
+      closeSparePopup();
       desk.connect();
       onFlash("Connect a NEAR wallet to trade.");
       return;
     }
     if (orderType === "limit") {
+      closeSparePopup();
       const limit = Number(limitPrice) || token.price;
       const ok = useDesk.getState().placeOrder({
         symbol: token.symbol,
@@ -1021,65 +1046,66 @@ function Ticket({
       if (ok) onPlaced();
       return;
     }
-    const accountId = useDesk.getState().accountId;
-    if (!accountId) {
+    const signerId = useDesk.getState().accountId;
+    if (!signerId) {
+      closeSparePopup();
       onFlash("Connect a NEAR wallet to trade.");
       return;
     }
     if (!picked) {
+      closeSparePopup();
       onFlash(quoting ? "Still finding a route." : "No pool can fill this size yet.");
       return;
     }
-    onFlash(`Confirm the deposit. ${picked.name} has the lowest fee inside your slippage.`);
-    void picked
-      .execute()
-      .then(async (result) => {
-        const state = useDesk.getState();
-        const wallets = linkedWallets(state.accountId, foreignWallets());
-        const signer = wallets[0];
-        if (signer) {
-          rememberTx({
-            wallet: signer.label,
-            address: signer.address,
-            chain: pay.chain,
-            title: `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}`,
-            detail: `${picked.name} · ${fmt(result.amountOutHuman)} ${receiveToken.symbol}`,
-            hash: result.status.startsWith("0x") || result.status.length > 20 ? result.status : "",
-            value: qty,
-          });
-        }
-        state.log(`${side === "buy" ? "Buy" : "Sell"} via ${picked.name}`, `${pay.symbol} → ${receiveToken.symbol}`, qty);
-        logTrade({ bucket: "trade", symbol: token.symbol, title: `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}/USDT`, detail: picked.name, value: qty, status: "filled", account: state.accountId ?? "" });
-        const received = result.amountOutHuman;
-        const credited = side === "buy" ? token : stable;
-        const walletKind = chainByLabel(credited.chain)?.kind;
-        const walletAddress = walletKind === "near" ? state.accountId ?? "" : walletKind === "evm" ? foreign.evm ?? "" : walletKind === "sol" ? foreign.sol ?? "" : walletKind === "btc" ? foreign.btc ?? "" : "";
-        const keyKind = walletKind === "near" || walletKind === "evm" || walletKind === "sol" || walletKind === "btc" ? walletKind : null;
-        const before = keyKind && walletAddress ? holdingOf(keyKind, walletAddress, credited.symbol) : 0;
-        await refreshBalances(wallets);
-        const after = keyKind && walletAddress ? holdingOf(keyKind, walletAddress, credited.symbol) : 0;
-        if (received > 0 && keyKind && walletAddress && after + 1e-8 < before + received * 0.5) creditHolding(keyKind, walletAddress, credited.symbol, received, credited.chain);
-        setFills((prev) => (side === "buy" ? { ...prev, bought: prev.bought + received } : { ...prev, sold: prev.sold + qty }));
-        onFlash(`${side === "buy" ? "Bought" : "Sold"} ${token.symbol} via ${picked.name} · ${fmt(result.amountOutHuman)} ${receiveToken.symbol} · ${result.status}`);
-      })
-      .catch((error: unknown) => onFlash(error instanceof Error ? error.message : "The route rejected the trade."));
+    onFlash(`Confirm in your wallet. ${picked.name} is filling this on NEAR.`);
+    try {
+      const result = await picked.execute();
+      const state = useDesk.getState();
+      const wallets = linkedWallets(state.accountId, foreignWallets());
+      const signer = wallets[0];
+      if (signer) {
+        rememberTx({
+          wallet: signer.label,
+          address: signer.address,
+          chain: pay.chain,
+          title: `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}`,
+          detail: `${picked.name} · ${fmt(result.amountOutHuman)} ${receiveToken.symbol}`,
+          hash: result.status.startsWith("0x") || result.status.length > 20 ? result.status : "",
+          value: qty,
+        });
+      }
+      state.log(`${side === "buy" ? "Buy" : "Sell"} via ${picked.name}`, `${pay.symbol} → ${receiveToken.symbol}`, qty);
+      logTrade({ bucket: "trade", symbol: token.symbol, title: `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}/USDT`, detail: picked.name, value: qty, status: "filled", account: state.accountId ?? "" });
+      const received = result.amountOutHuman;
+      const credited = side === "buy" ? token : stable;
+      const walletKind = chainByLabel(credited.chain)?.kind;
+      const walletAddress = walletKind === "near" ? state.accountId ?? "" : walletKind === "evm" ? foreign.evm ?? "" : walletKind === "sol" ? foreign.sol ?? "" : walletKind === "btc" ? foreign.btc ?? "" : "";
+      const keyKind = walletKind === "near" || walletKind === "evm" || walletKind === "sol" || walletKind === "btc" ? walletKind : null;
+      const before = keyKind && walletAddress ? holdingOf(keyKind, walletAddress, credited.symbol) : 0;
+      await refreshBalances(wallets);
+      const after = keyKind && walletAddress ? holdingOf(keyKind, walletAddress, credited.symbol) : 0;
+      if (received > 0 && keyKind && walletAddress && after + 1e-8 < before + received * 0.5) creditHolding(keyKind, walletAddress, credited.symbol, received, credited.chain);
+      setFills((prev) => (side === "buy" ? { ...prev, bought: prev.bought + received } : { ...prev, sold: prev.sold + qty }));
+      onFlash(`${side === "buy" ? "Bought" : "Sold"} ${token.symbol} via ${picked.name} · ${fmt(result.amountOutHuman)} ${receiveToken.symbol} · ${result.status}`);
+    } catch (error) {
+      closeSparePopup();
+      onFlash(error instanceof Error ? error.message : "The route rejected the trade.");
+    }
   }
 
   function submit() {
-    if (scanning || busy || blocked) return;
-    if (viewMode === "spot" && side === "buy") {
+    if (scanning || busy || signing || blocked) return;
+    if (memeSwap) {
       onSwap?.(token.symbol, amount, token.chain);
       return;
     }
-    setBusy(true);
-    window.setTimeout(() => {
-      setBusy(false);
-      if (failedScan(token) && !acked) {
-        setGate(true);
-        return;
-      }
-      execute();
-    }, 320);
+    if (failedScan(token) && !acked) {
+      setGate(true);
+      return;
+    }
+    if (viewMode === "spot" && orderType === "market" && connected) armWalletPopup();
+    setSigning(true);
+    void execute().finally(() => setSigning(false));
   }
 
   return (
@@ -1386,11 +1412,11 @@ function Ticket({
 
       <button
         type="button"
-        disabled={scanning || busy || blocked}
+        disabled={scanning || busy || signing || blocked}
         onClick={submit}
         className="press mt-2 h-10 w-full rounded-full bg-primary text-sm font-semibold text-primary-fg disabled:opacity-50 lg:rounded-xl lg:h-12"
       >
-        {blocked ? "Swap blocked" : scanning || busy ? "Scanning" : memeSwap ? `Buy ${token.symbol}` : connected ? (viewMode === "perp" ? `Open ${perpSide} ${token.symbol}/USDT` : `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}/USDT`) : "Enable Trading"}
+        {blocked ? "Swap blocked" : signing ? "Confirm in wallet" : scanning || busy ? "Scanning" : memeSwap ? `Buy ${token.symbol}` : connected ? (viewMode === "perp" ? `Open ${perpSide} ${token.symbol}/USDT` : `${side === "buy" ? "Buy" : "Sell"} ${token.symbol}/USDT`) : "Enable Trading"}
       </button>
 
       <dl className="mt-3 hidden grid-cols-2 gap-2 font-mono text-xs sm:grid">
@@ -1407,7 +1433,9 @@ function Ticket({
           onConfirm={() => {
             setAcked(true);
             setGate(false);
-            execute();
+            if (viewMode === "spot" && orderType === "market" && connected) armWalletPopup();
+            setSigning(true);
+            void execute().finally(() => setSigning(false));
           }}
         />
       )}
