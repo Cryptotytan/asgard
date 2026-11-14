@@ -711,13 +711,11 @@ async function loadWallet(key: string) {
   if (!inventory && invRes?.ok) inventory = (await invRes.json()) as InventoryAccount;
   const missing = missingContracts(fast, inventory, meta);
   let book = assembleWallet(fast, inventory, meta);
-  const keptStake = useDesk.getState().chain.STNEAR ?? 0;
-  if (keptStake > (book.STNEAR ?? 0)) book.STNEAR = keptStake;
   if (book.NEAR || Object.keys(book).length) publishHoldings(key, book, missing.length || !(fast || inventory) ? "merge" : "replace");
   void applyWalletPrices(book);
   void stakeP.then((staked) => {
-    if (useDesk.getState().accountId !== key) return;
-    if (!(staked != null && staked > 0)) return;
+    if (staked == null || useDesk.getState().accountId !== key) return;
+    pendingBalances.delete("STNEAR");
     publishHoldings(key, { STNEAR: staked }, "merge");
     publishStNearMark();
   });
@@ -726,18 +724,15 @@ async function loadWallet(key: string) {
       if (useDesk.getState().accountId !== key) return;
       for (const [id, row] of localMeta) meta.set(id, row);
       const richer = assembleWallet(fast, inventory, meta);
-      const kept = useDesk.getState().chain.STNEAR ?? 0;
-      if (kept > (richer.STNEAR ?? 0)) richer.STNEAR = kept;
       if (Object.keys(richer).length) publishHoldings(key, richer, "merge");
       void applyWalletPrices(richer);
     });
   }
   void metaStakeOf(key)
     .then((staked) => {
-      if (!(staked > 0) || useDesk.getState().accountId !== key) return;
-      const current = { ...useDesk.getState().chain };
-      if (staked > (current.STNEAR ?? 0)) current.STNEAR = staked;
-      publishHoldings(key, current);
+      if (staked == null || useDesk.getState().accountId !== key) return;
+      pendingBalances.delete("STNEAR");
+      publishHoldings(key, { STNEAR: staked }, "merge");
       publishStNearMark();
     })
     .catch(() => undefined);
@@ -752,8 +747,6 @@ async function loadWallet(key: string) {
     void refMetadata().then(async (full) => {
       if (useDesk.getState().accountId !== key) return;
       const richer = assembleWallet(fast, inventory, full);
-      const kept = useDesk.getState().chain.STNEAR ?? 0;
-      if (kept > (richer.STNEAR ?? 0)) richer.STNEAR = kept;
       const left = missingContracts(fast, inventory, full);
       await applyWalletPrices(richer);
       if (richer.NEAR || Object.keys(richer).length) publishHoldings(key, richer, left.length ? "merge" : "replace");
@@ -1231,10 +1224,17 @@ export function warmMetaPool(accountId: string) {
 }
 
 export async function metaStakeOf(accountId: string) {
-  const info = (await metaView("get_account_info", { account_id: accountId }).catch(() => null)) as { st_near?: string } | null;
-  const raw = info?.st_near && /^\d+$/.test(info.st_near) ? BigInt(info.st_near) : 0n;
+  const raw = await liquidStNear(accountId);
+  if (raw == null) return null;
   metaYocto = raw;
   return Number(raw) / 1e24;
+}
+
+async function liquidStNear(accountId: string) {
+  const ft = await ftBalance(accountId, "meta-pool.near");
+  const digits = ft?.match(/\d+/)?.[0];
+  if (digits == null) return null;
+  return BigInt(digits);
 }
 
 export function stakeMintEstimate(near: number) {
@@ -1269,41 +1269,35 @@ function publishStNearMark() {
 }
 
 async function readStNearAmount(accountId: string): Promise<number | null> {
-  const [ft, info, priceRaw] = await Promise.all([
+  const [ft, priceRaw] = await Promise.all([
     ftBalance(accountId, "meta-pool.near"),
-    metaView("get_account_info", { account_id: accountId }).catch(() => null),
     metaView("get_st_near_price", {}).catch(() => null),
   ]);
   const priceText = typeof priceRaw === "string" ? priceRaw.replace(/"/g, "") : "";
   if (/^\d+$/.test(priceText)) stNearPriceYocto = BigInt(priceText);
-  if (ft == null && info == null) return null;
-  const fromFt = ft && /^\d+$/.test(ft) ? Number(ft) / 1e24 : 0;
-  const raw = (info as { st_near?: string } | null)?.st_near;
-  const fromInfo = raw && /^\d+$/.test(raw) ? Number(raw) / 1e24 : 0;
-  const amount = Math.max(fromFt, fromInfo);
-  if (fromInfo > 0) metaYocto = BigInt(raw as string);
-  return amount;
+  if (ft == null) return null;
+  const fromFt = /^\d+$/.test(ft) ? Number(ft) / 1e24 : 0;
+  if (/^\d+$/.test(ft)) metaYocto = BigInt(ft);
+  return fromFt;
 }
 
 async function stakeSnapshot(accountId: string) {
-  const [info, priceRaw, state, ft] = await Promise.all([
-    metaView("get_account_info", { account_id: accountId }).catch(() => null),
+  const [priceRaw, state, ft] = await Promise.all([
     metaView("get_st_near_price", {}).catch(() => null),
     metaView("get_contract_state", {}).catch(() => null),
     ftBalance(accountId, "meta-pool.near"),
   ]);
-  const raw = (info as { st_near?: string } | null)?.st_near;
-  const fromInfo = raw && /^\d+$/.test(raw) ? BigInt(raw) : 0n;
-  const fromFt = ft && /^\d+$/.test(ft) ? BigInt(ft) : 0n;
+  const digits = ft?.match(/\d+/)?.[0];
+  const fromFt = digits ? BigInt(digits) : 0n;
   const priceText = typeof priceRaw === "string" ? priceRaw.replace(/"/g, "") : "";
   const price = /^\d+$/.test(priceText) ? BigInt(priceText) : stNearPriceYocto;
   const available = (state as { total_available?: string } | null)?.total_available;
   const liquidity = available && /^\d+$/.test(available) ? BigInt(available) : metaLiquidity;
-  if (fromInfo > 0n) metaYocto = fromInfo;
+  if (digits) metaYocto = fromFt;
   if (price > 0n) stNearPriceYocto = price;
   if (liquidity > 0n) metaLiquidity = liquidity;
   publishStNearMark();
-  return { held: fromInfo > fromFt ? fromInfo : fromFt, price, liquidity, known: price > 0n && liquidity > 0n };
+  return { held: fromFt, price, liquidity, known: digits != null && price > 0n && liquidity > 0n, ftRead: digits != null };
 }
 
 export function applyStake(nearSpent: number, stNearMinted: number, paid?: { symbol: string; amount: number }) {
@@ -1326,7 +1320,14 @@ export async function moveVault(accountId: string, symbol: string, amount: strin
     const yocto = units && /^\d+$/.test(units) ? BigInt(units) : 0n;
     if (yocto <= 0n) throw new Error("Enter an amount.");
     const snap = await stakeSnapshot(accountId);
-    if (snap.held > 0n && snap.held + 1n < yocto) throw new Error("This account does not hold that much stNEAR.");
+    if (snap.ftRead && snap.held + 1n < yocto) {
+      const shown = Number(snap.held) / 1e24;
+      if (useDesk.getState().accountId === accountId) {
+        pendingBalances.delete("STNEAR");
+        useDesk.getState().applyChain({ ...useDesk.getState().chain, STNEAR: shown });
+      }
+      throw new Error(shown > 0 ? `This account holds ${shown.toFixed(4)} stNEAR.` : "This account does not hold stNEAR.");
+    }
     const expected = snap.price > 0n ? (yocto * snap.price) / 10n ** 24n : 0n;
     const instant = !snap.known || snap.liquidity >= expected;
     if (instant) {
