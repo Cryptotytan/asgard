@@ -351,7 +351,8 @@ export function SwapDesk({ focus, seed }: { focus?: string; seed?: { symbol: str
         </div>
       </aside>
 
-      <section className="deck panel flex h-full max-h-full min-h-0 min-w-0 w-full flex-col overflow-y-auto overscroll-contain p-3 pb-6 sm:p-4">
+      <section className="deck panel flex h-full max-h-full min-h-0 min-w-0 w-full flex-col overflow-hidden p-3 sm:p-4">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <h2 className="text-base font-semibold tracking-tight sm:text-xl">Swap your assets</h2>
         <div className="mt-2 flex items-center justify-between gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-bg px-2 py-1.5">
@@ -472,17 +473,20 @@ export function SwapDesk({ focus, seed }: { focus?: string; seed?: { symbol: str
             ))}
           </ul>
         )}
+        </div>
 
+        <div className="shrink-0">
         <button
           type="button"
           disabled={settling || (!needsWallet && amountN > 0 && (fetching || !best || short || (risk && !acked) || (sell.symbol === buy.symbol && sell.chain === buy.chain) || (best?.impact ?? 0) > slipPct))}
           onClick={() => void submit()}
-          className="mt-2 h-10 w-full rounded-xl bg-primary font-semibold text-primary-fg disabled:opacity-40"
+          className="mt-3 h-12 w-full rounded-xl bg-primary text-base font-semibold text-primary-fg disabled:opacity-40"
         >
           {settling ? "Settling…" : fetching ? "Fetching routes…" : amountN <= 0 ? "Enter an amount" : !sellActive ? "Connect wallet" : !originConnected ? `Connect a ${sell.chain} wallet` : short ? "Not enough balance" : best && best.impact > slipPct ? `Spread ${best.impact.toFixed(1)}%` : best ? `${best.kind} via ${best.name}` : "No live route"}
         </button>
         {quoteError && !note && <p className="mt-2 font-mono text-xs text-danger">{quoteError}</p>}
         {note && <p className="mt-3 break-words font-mono text-xs text-primary">{note}</p>}
+        </div>
       </section>
       <TokenPicker
         open={picking !== null}
