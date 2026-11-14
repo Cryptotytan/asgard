@@ -56,6 +56,7 @@ export function TokenTrade({
   onSymbol,
   onFlash,
   onSwap,
+  booked = false,
 }: {
   symbol: string;
   mode: TicketMode;
@@ -64,6 +65,7 @@ export function TokenTrade({
   onSymbol: (symbol: string) => void;
   onFlash: (message: string) => void;
   onSwap?: (symbol: string, amount?: string, chain?: string) => void;
+  booked?: boolean;
 }) {
   const mark = useDesk((s) => s.marks[symbol]);
   useDesk((s) => s.clock);
@@ -115,26 +117,27 @@ export function TokenTrade({
     if (!canPerp(symbol) && mode === "perp") onMode("spot");
   }, [symbol, mode, onMode]);
   useEffect(() => {
-    if (mode !== "spot") return;
+    if (!booked || mode !== "spot") return;
     const current = tokenBySymbol(symbol);
     if (current.chain === "NEAR" || current.kind === "meme") return;
     const base = symbol.split(".")[0]?.toUpperCase() ?? "";
     const near = TOKENS.find((item) => item.chain === "NEAR" && item.symbol.split(".")[0].toUpperCase() === base && item.price > 0 && tradingViewSpot(item.symbol));
     if (near && near.symbol !== symbol) onSymbol(near.symbol);
-  }, [mode, symbol, onSymbol]);
+  }, [booked, mode, symbol, onSymbol]);
   useEffect(() => {
-    if (mode !== "perp" || !canPerp(symbol)) return;
+    if (!booked || mode !== "perp" || !canPerp(symbol)) return;
     const base = symbol.split(".")[0]?.toUpperCase() ?? "";
     const near = TOKENS.find((item) => item.chain === "NEAR" && item.symbol.split(".")[0].toUpperCase() === base);
     if (near && near.symbol !== symbol) onSymbol(near.symbol);
-  }, [mode, symbol, onSymbol]);
+  }, [booked, mode, symbol, onSymbol]);
 
   const deskMode: TicketMode = canPerp(symbol) ? mode : "spot";
   const plotted = deskMode === "perp" ? tradingViewPerp(symbol) : tradingViewSpot(symbol);
   const tvChart = token.kind !== "meme" && Boolean(plotted);
   const shownPx = !tvChart ? token.price : (mark ?? 0) > 0 ? (mark as number) : token.price;
-  const showBook = Boolean(tradingViewSpot(symbol) || tradingViewPerp(symbol));
-  const memePanel = token.kind === "meme" && !tradingViewSpot(symbol) && deskMode !== "perp";
+  const listedSpot = token.chain === "NEAR" && token.kind !== "meme" && Boolean(tradingViewSpot(symbol));
+  const showBook = booked && (deskMode === "perp" ? Boolean(tradingViewPerp(symbol)) : listedSpot);
+  const memePanel = token.kind === "meme" && deskMode !== "perp";
   useEffect(() => {
     const node = chartPane.current;
     if (!node) return;

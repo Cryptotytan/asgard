@@ -835,21 +835,120 @@ function contractOf(symbol: string, address?: string) {
   return { token, raw };
 }
 
-async function evmHolders(address: string, decimals: number): Promise<HolderRow[]> {
-  void address;
-  void decimals;
-  return [];
+const SCOUTS: Record<string, string> = {
+  Ethereum: "https://eth.blockscout.com",
+  Base: "https://base.blockscout.com",
+  Arbitrum: "https://arbitrum.blockscout.com",
+  Optimism: "https://optimism.blockscout.com",
+  Polygon: "https://polygon.blockscout.com",
+  Gnosis: "https://gnosis.blockscout.com",
+  Scroll: "https://scroll.blockscout.com",
+  BNB: "https://bsc.blockscout.com",
+  Avalanche: "https://avalanche.blockscout.com",
+};
+
+const SOL_RPCS = ["https://solana-rpc.publicnode.com", "https://api.mainnet-beta.solana.com", "https://solana.drpc.org"];
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+function b58(bytes: Uint8Array) {
+  let zeros = 0;
+  while (zeros < bytes.length && bytes[zeros] === 0) zeros += 1;
+  const digits = [0];
+  for (let i = zeros; i < bytes.length; i += 1) {
+    let carry = bytes[i];
+    for (let j = 0; j < digits.length; j += 1) {
+      carry += digits[j] << 8;
+      digits[j] = carry % 58;
+      carry = (carry / 58) | 0;
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = (carry / 58) | 0;
+    }
+  }
+  let out = "1".repeat(zeros);
+  for (let i = digits.length - 1; i >= 0; i -= 1) out += B58[digits[i]];
+  return out;
+}
+
+function tokenOwner(data: string) {
+  try {
+    const raw = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
+    if (raw.length < 64) return "";
+    return b58(raw.slice(32, 64));
+  } catch {
+    return "";
+  }
+}
+
+async function solRpc(method: string, params: unknown[]) {
+  for (const rpc of SOL_RPCS) {
+    const response = await fetch(rpc, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: AbortSignal.timeout(8000),
+    }).catch(() => null);
+    if (!response?.ok) continue;
+    const body = (await response.json()) as { result?: { value?: unknown }; error?: unknown };
+    if (body.error || body.result == null) continue;
+    return body.result.value;
+  }
+  return null;
+}
+
+async function solanaHolders(mint: string, limit: number): Promise<HolderRow[]> {
+  const largest = (await solRpc("getTokenLargestAccounts", [mint])) as { address?: string; amount?: string; decimals?: number; uiAmount?: number }[] | null;
+  const accounts = (largest ?? []).filter((row) => row.address).slice(0, limit);
+  if (!accounts.length) return [];
+  const [infos, supply] = await Promise.all([
+    solRpc("getMultipleAccounts", [accounts.map((row) => row.address), { encoding: "base64" }]) as Promise<({ data?: [string, string] } | null)[] | null>,
+    solRpc("getTokenSupply", [mint]) as Promise<{ amount?: string } | null>,
+  ]);
+  const total = String(supply?.amount ?? "0");
+  return accounts
+    .map((row, index) => {
+      const raw = String(row.amount ?? "0").replace(/\D/g, "") || "0";
+      const decimals = Number(row.decimals ?? 0);
+      const owner = tokenOwner(infos?.[index]?.data?.[0] ?? "");
+      return { account: owner || row.address || "—", amount: row.uiAmount && row.uiAmount > 0 ? row.uiAmount : humanRaw(raw, decimals), share: sharePct(raw, total) };
+    })
+    .filter((row) => row.amount > 0);
+}
+
+async function scoutHolders(chain: string, address: string, limit: number): Promise<HolderRow[]> {
+  const host = SCOUTS[chain];
+  if (!host || !address.startsWith("0x")) return [];
+  const [listRes, tokenRes] = await Promise.all([
+    fetch(`${host}/api/v2/tokens/${address}/holders`, { signal: AbortSignal.timeout(8000) }).catch(() => null),
+    fetch(`${host}/api/v2/tokens/${address}`, { signal: AbortSignal.timeout(8000) }).catch(() => null),
+  ]);
+  if (!listRes?.ok) return [];
+  const list = (await listRes.json()) as { items?: { address?: { hash?: string }; value?: string }[] };
+  const token = tokenRes?.ok ? ((await tokenRes.json()) as { total_supply?: string; decimals?: string | number }) : {};
+  const decimals = Number(token.decimals ?? 18);
+  const supply = String(token.total_supply ?? "0").replace(/\D/g, "") || "0";
+  return (list.items ?? [])
+    .slice(0, limit)
+    .map((item) => {
+      const raw = String(item.value ?? "0").replace(/\D/g, "") || "0";
+      return { account: item.address?.hash || "—", amount: humanRaw(raw, Number.isFinite(decimals) ? decimals : 18), share: sharePct(raw, supply) };
+    })
+    .filter((row) => row.amount > 0 && row.account !== "—");
 }
 
 export async function loadHolders(symbol: string, address?: string, limit = 15): Promise<{ rows: HolderRow[]; top10: number | null; count: number | null; bands: HolderBand[] }> {
   const { token, raw } = contractOf(symbol, address);
-  const near = token?.chain === "NEAR" || (!token && Boolean(raw));
+  const near = token?.chain === "NEAR" || (!token && Boolean(raw) && !raw.startsWith("0x"));
+  const solana = token?.chain === "Solana" || (!token?.chain && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw));
   const network = token ? GECKO_NET[token.chain] : "";
-  const [holdersRes, supply, decimals, info] = await Promise.all([
-    near && raw ? fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(raw)}/holders?page=1&per_page=${limit}`).catch(() => null) : Promise.resolve(null),
-    near && raw ? ftSupplyRaw(raw) : Promise.resolve("0"),
-    near && raw ? ftDecimals(raw) : Promise.resolve(0),
+  const [holdersRes, supply, decimals, info, solRows, evmRows] = await Promise.all([
+    near && raw && !solana ? fetch(`https://api.nearblocks.io/v1/fts/${encodeURIComponent(raw)}/holders?page=1&per_page=${limit}`).catch(() => null) : Promise.resolve(null),
+    near && raw && !solana ? ftSupplyRaw(raw) : Promise.resolve("0"),
+    near && raw && !solana ? ftDecimals(raw) : Promise.resolve(0),
     network && raw ? geckoGet(`https://api.geckoterminal.com/api/v2/networks/${network}/tokens/${encodeURIComponent(raw)}/info`) : Promise.resolve(null),
+    solana && raw ? solanaHolders(raw, limit).catch(() => [] as HolderRow[]) : Promise.resolve([] as HolderRow[]),
+    !near && !solana && raw.startsWith("0x") ? scoutHolders(token?.chain ?? "", raw, limit).catch(() => [] as HolderRow[]) : Promise.resolve([] as HolderRow[]),
   ]);
   const body = holdersRes && holdersRes.ok ? ((await holdersRes.json()) as { holders?: { account?: string; amount?: string }[] }) : {};
   const rows = (body.holders ?? [])
@@ -859,10 +958,8 @@ export async function loadHolders(symbol: string, address?: string, limit = 15):
     })
     .filter((row) => row.amount > 0)
     .slice(0, limit);
-  if (rows.length === 0 && raw.startsWith("0x")) {
-    const evm = await evmHolders(raw, token?.decimals ?? 0).catch(() => [] as HolderRow[]);
-    if (evm.length) rows.push(...evm);
-  }
+  if (!rows.length && solRows.length) rows.push(...solRows);
+  if (!rows.length && evmRows.length) rows.push(...evmRows);
   const holders = (info as { data?: { attributes?: { holders?: { count?: number; distribution_percentage?: Record<string, string> } } } } | null)?.data?.attributes?.holders;
   const dist = holders?.distribution_percentage ?? {};
   const bands = [
@@ -875,7 +972,7 @@ export async function loadHolders(symbol: string, address?: string, limit = 15):
     .filter((band) => band.label && band.pct > 0);
   const top10 = rows.some((row) => row.share != null) ? rows.reduce((sum, row) => sum + (row.share ?? 0), 0) : bands.find((band) => band.label === "Top 10")?.pct ?? null;
   const count = Number(holders?.count);
-  return { rows, top10, count: count > 0 ? count : null, bands };
+  return { rows, top10, count: count > 0 ? count : rows.length || null, bands };
 }
 
 export async function loadMemeBoard(symbol: string, address?: string) {

@@ -31,6 +31,7 @@ export function Terminal() {
   const [view, setView] = useState<View>("markets");
   const [symbol, setSymbol] = useState("NEAR");
   const [deskMode, setDeskMode] = useState<"spot" | "perp">("spot");
+  const [booked, setBooked] = useState(false);
   const [swapFocus, setSwapFocus] = useState<string | undefined>(undefined);
   const [swapSeed, setSwapSeed] = useState<{ symbol: string; chain: string; amount: string; at: number } | null>(null);
   const [query, setQuery] = useState("");
@@ -109,6 +110,7 @@ export function Terminal() {
   function openToken(next: string) {
     setSymbol(next);
     setDeskMode("spot");
+    setBooked(false);
     setView("trade");
     setQuery("");
     visitToken(next);
@@ -179,6 +181,7 @@ export function Terminal() {
   function go(next: View) {
     if (next === "swap") setSwapFocus(undefined);
     if (next === "trade") {
+      setBooked(true);
       visitToken(symbol);
       setView("trade");
       return;
@@ -283,9 +286,14 @@ export function Terminal() {
           <TokenTrade
             symbol={symbol}
             mode={deskMode}
+            booked={booked}
             quickUsd={quickUsd}
-            onMode={setDeskMode}
+            onMode={(next) => {
+              setBooked(true);
+              setDeskMode(next);
+            }}
             onSymbol={(next) => {
+              setBooked(true);
               setSymbol(next);
               visitToken(next);
             }}
