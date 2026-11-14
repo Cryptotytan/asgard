@@ -307,7 +307,7 @@ export function SwapDesk({ focus, seed }: { focus?: string; seed?: { symbol: str
   }
 
   return (
-    <div className="mx-auto grid h-full max-h-full min-h-0 w-full min-w-0 max-w-5xl content-center overflow-hidden lg:grid-cols-[16rem_minmax(0,1fr)] lg:gap-4">
+    <div className="mx-auto grid h-full max-h-full min-h-0 w-full min-w-0 max-w-5xl overflow-hidden lg:grid-cols-[16rem_minmax(0,1fr)] lg:gap-4">
       <aside className="deck panel hidden max-h-full overflow-hidden p-3 lg:block">
         <div className="flex items-center gap-3">
           <TokenIcon token={buy} className="size-11" />
@@ -351,7 +351,7 @@ export function SwapDesk({ focus, seed }: { focus?: string; seed?: { symbol: str
         </div>
       </aside>
 
-      <section className="deck panel flex h-full max-h-full min-h-0 min-w-0 w-full flex-col justify-center overflow-hidden p-3 sm:p-4">
+      <section className="deck panel flex h-full max-h-full min-h-0 min-w-0 w-full flex-col overflow-y-auto overscroll-contain p-3 pb-6 sm:p-4">
         <h2 className="text-base font-semibold tracking-tight sm:text-xl">Swap your assets</h2>
         <div className="mt-2 flex items-center justify-between gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-bg px-2 py-1.5">
