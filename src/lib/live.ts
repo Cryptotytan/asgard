@@ -829,6 +829,8 @@ export type HolderRow = {
   share: number | null;
   buyPx?: number;
   sellPx?: number;
+  buyMc?: number;
+  sellMc?: number;
   pnl?: number | null;
   funded?: string;
   label?: string;

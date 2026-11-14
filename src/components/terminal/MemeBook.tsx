@@ -272,10 +272,10 @@ function Holders({
                       <span className="text-fg/80">{value > 0 ? money(value) : "—"}</span>
                     </span>
                   </td>
-                  <td className="px-2 py-2 text-primary">{buyPx > 0 ? mc(buyPx, price, mcap) : "—"}</td>
-                  <td className="px-2 py-2 text-danger">{sellPx > 0 ? mc(sellPx, price, mcap) : "—"}</td>
+                  <td className="px-2 py-2 text-primary">{row.buyMc ? money(row.buyMc) : buyPx > 0 ? mc(buyPx, price, mcap) : "—"}</td>
+                  <td className="px-2 py-2 text-danger">{row.sellMc ? money(row.sellMc) : sellPx > 0 ? mc(sellPx, price, mcap) : "—"}</td>
                   <td className={`px-2 py-2 ${pnl == null ? "text-muted" : pnl >= 0 ? "text-primary" : "text-danger"}`}>{pnl == null ? "—" : signed(pnl)}</td>
-                  <td className="px-2 py-2 text-muted">{row.funded ? <Wallet id={row.funded} /> : "—"}</td>
+                  <td className="px-2 py-2 text-muted">{row.funded ? <Wallet id={row.funded} /> : row.label ? <span className="font-sans text-[11px] text-fg">{row.label}</span> : "—"}</td>
                 </tr>
               );
             })}
